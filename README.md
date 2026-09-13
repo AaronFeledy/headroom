@@ -10,6 +10,10 @@ Critical.
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/headroom)](https://github.com/AaronFeledy/headroom/releases/latest)
 [![License](https://img.shields.io/github/license/AaronFeledy/headroom)](LICENSE)
 
+![Headroom desktop showing Claude, ChatGPT, Cursor, and Grok usage meters with pacing indicators](docs/images/headroom-desktop.png)
+
+*Illustrative readings. Available meters vary by provider and plan.*
+
 ## Supported desktop packages
 
 | Package | Tested baseline | Connection default |
