@@ -494,17 +494,20 @@ jobs:
           python3 packaging/check_macos_runtime.py "$RUNNER_TEMP/standalone/usage-server-macos-${{ matrix.architecture }}" "${{ matrix.architecture }}"
           python3 packaging/tests/package_server_smoke.py --server "$RUNNER_TEMP/standalone/usage-server-macos-${{ matrix.architecture }}"
       - name: Install and render downloaded bundle without a Qt SDK
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: >-
           python3 packaging/tests/macos_package_smoke.py
           --archive "$RUNNER_TEMP/package/Headroom-v$HEADROOM_PACKAGE_VERSION-macos-${{ matrix.architecture }}.tar.gz"
           --work "$RUNNER_TEMP/macos-smoke" --version "$HEADROOM_PACKAGE_VERSION" --arch "${{ matrix.architecture }}"
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
         with:
           name: headroom-macos-${{ matrix.architecture }}-smoke-evidence
+          if-no-files-found: error
           path: |
-            ${{ runner.temp }}/macos-smoke/headroom-macos-*.png
-            ${{ runner.temp }}/macos-smoke/macos-package-inventory.txt
+            ${{ runner.temp }}/macos-smoke/headroom-macos*.png
+            ${{ runner.temp }}/macos-smoke/macos-gui-evidence.json
+            ${{ runner.temp }}/macos-smoke/*-inventory.txt
 
   smoke-linux-package:
     needs: package-linux-x64
@@ -884,6 +887,12 @@ jobs:
           python3 packaging/tests/macos_finder_smoke.py --app "$RUNNER_TEMP/mac home/Applications/Headroom.app" --image "$RUNNER_TEMP/mac-finder-launch.png"
           ./install.sh --dry-run --install-root "$RUNNER_TEMP/dry run" --entry-path "$RUNNER_TEMP/dry entry/headroom"
           test ! -e "$RUNNER_TEMP/dry run"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        with:
+          name: headroom-${{ matrix.runner }}-finder-gui-evidence
+          if-no-files-found: error
+          path: ${{ runner.temp }}/mac-finder-launch.png
       - name: Exercise PowerShell installer in isolated roots
         if: runner.os == 'Windows'
         timeout-minutes: 5

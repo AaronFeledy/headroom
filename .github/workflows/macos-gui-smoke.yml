@@ -1,0 +1,79 @@
+name: Mac GUI smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Install Headroom from the latest published release via install.sh
+        type: choice
+        default: latest-release
+        options:
+          - latest-release
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-gui-smoke.yml'
+      - 'packaging/tests/macos_gui_evidence.py'
+      - 'packaging/tests/macos_package_smoke.py'
+      - 'packaging/tests/macos_finder_smoke.py'
+      - 'packaging/tests/test_macos_gui_evidence.py'
+      - 'install.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  macos-gui-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15-intel, architecture: x86_64}
+          - {runner: macos-15, architecture: arm64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the published release the way users do
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export HOME="$RUNNER_TEMP/mac-home"
+          mkdir -p "$HOME"
+          installer="$RUNNER_TEMP/published-install.sh"
+          # README path is curl -fsSL …/install.sh | sh. HOME must be exported
+          # before the pipe so sh, not curl, sees the isolated user root.
+          curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh -o "$installer"
+          # --no-launch keeps CI from starting a live provider-polling desktop.
+          if sh "$installer" --no-launch; then
+            exit 0
+          fi
+          echo "Online install failed (GitHub-hosted runners often get api.github.com 403). Staging the latest published macOS assets with gh."
+          mkdir -p "$RUNNER_TEMP/published-release"
+          gh release download --repo AaronFeledy/headroom \
+            --pattern "Headroom-v*-macos-${{ matrix.architecture }}.tar.gz" \
+            --pattern "Headroom-v*-release-all.json" \
+            --dir "$RUNNER_TEMP/published-release"
+          package=$(echo "$RUNNER_TEMP/published-release"/Headroom-v*-macos-${{ matrix.architecture }}.tar.gz)
+          manifest=$(echo "$RUNNER_TEMP/published-release"/Headroom-v*-release-all.json)
+          test -f "$package" && test -f "$manifest"
+          sh "$installer" --no-launch --package "$package" --release-manifest "$manifest"
+      - name: Launch the installed GUI and capture screenshots
+        timeout-minutes: 5
+        env:
+          HEADROOM_SMOKE_INSTALL_SOURCE: curl-main-install.sh
+        run: >-
+          python3 packaging/tests/macos_package_smoke.py
+          --from-home "$RUNNER_TEMP/mac-home"
+          --work "$RUNNER_TEMP/macos-gui-smoke"
+          --arch "${{ matrix.architecture }}"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: headroom-macos-${{ matrix.architecture }}-release-gui-evidence
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/macos-gui-smoke/headroom-macos*.png
+            ${{ runner.temp }}/macos-gui-smoke/macos-gui-evidence.json
+            ${{ runner.temp }}/macos-gui-smoke/*-inventory.txt
