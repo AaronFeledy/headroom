@@ -58,14 +58,6 @@ class InstallerPlatformTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("/tmp/custom root/headroom-launcher", result.stdout)
 
-    def test_macos_quarantine_clear_is_a_no_op_off_macos(self):
-        env = os.environ | {"HEADROOM_INSTALLER_SOURCE_ONLY": "1", "INSTALLER": str(INSTALLER)}
-        result = subprocess.run(
-            ["sh", "-c", 'set -eu; . "$INSTALLER"; clear_macos_download_quarantine linux /tmp/unused /tmp/unused/headroom'],
-            env=env, capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "")
-
 
 if __name__ == "__main__":
     unittest.main()

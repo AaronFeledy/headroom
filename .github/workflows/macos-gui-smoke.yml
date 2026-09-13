@@ -34,13 +34,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Install the latest published release the way users do
+      - name: Install the published release the way users do
         timeout-minutes: 5
         run: |
           mkdir -p "$RUNNER_TEMP/mac-home"
-          HOME="$RUNNER_TEMP/mac-home" ./install.sh --no-launch
+          # README path: curl -fsSL …/install.sh | sh. --no-launch keeps CI from
+          # starting a live desktop that could poll providers; screenshots use
+          # an isolated --config afterwards.
+          HOME="$RUNNER_TEMP/mac-home" curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh -s -- --no-launch
       - name: Launch the installed GUI and capture screenshots
         timeout-minutes: 5
+        env:
+          HEADROOM_SMOKE_INSTALL_SOURCE: curl-main-install.sh
         run: >-
           python3 packaging/tests/macos_package_smoke.py
           --from-home "$RUNNER_TEMP/mac-home"

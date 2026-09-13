@@ -152,25 +152,6 @@ PY
   exit 1
 }
 
-# After hash + manager validation, leftover Safari/Finder quarantine must not
-# block a verified current-user install. Only the roots this installer wrote.
-clear_macos_download_quarantine() {
-  [ "$1" = macos ] || return 0
-  command -v xattr >/dev/null 2>&1 || return 0
-  xattr -d -r com.apple.quarantine "$2" 2>/dev/null || true
-  app=$(python3 - "$3" <<'PY'
-import pathlib, sys
-entry = pathlib.Path(sys.argv[1])
-if (entry.name == 'headroom' and entry.parent.name == 'MacOS' and
-        entry.parent.parent.name == 'Contents' and entry.parent.parent.parent.suffix == '.app'):
-    print(entry.parent.parent.parent)
-PY
-)
-  if [ -n "$app" ]; then
-    xattr -d -r com.apple.quarantine "$app" 2>/dev/null || true
-  fi
-}
-
 if [ "${HEADROOM_INSTALLER_SOURCE_ONLY:-0}" -eq 1 ]; then
   return 0 2>/dev/null || exit 0
 fi
@@ -310,7 +291,6 @@ PY
 if [ "$platform" = macos ] && [ "$package_kind" != cli ]; then macos_entry check; fi
 "$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
   --cli-entry-path "$cli_entry_path" --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
-clear_macos_download_quarantine "$platform" "$install_root" "$entry_path"
 
 if [ "$package_kind" = cli ]; then
   printf 'Installed Headroom %s at %s\nRun %s for usage, %s serve for the server, or %s update to update.\n' "$version" "$install_root" "$cli_entry_path" "$cli_entry_path" "$cli_entry_path"
@@ -319,7 +299,6 @@ fi
 
 if [ "$platform" = macos ]; then
   macos_entry write
-  clear_macos_download_quarantine macos "$install_root" "$entry_path"
 else
 applications=${XDG_DATA_HOME:-"$HOME/.local/share"}/applications
 mkdir -p -- "$applications"

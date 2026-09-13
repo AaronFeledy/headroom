@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Install a macOS Headroom package and prove the desktop GUI renders.
 
-Uses the public install.sh path (the way users install) plus the manager's
-spaces-in-path contract. Capture mode writes an isolated config and never
-polls providers. Do not add banked-reset or ConsumeResetCredit coverage.
+`--archive` uses the manager spaces-in-path contract. `--from-home` screenshots
+a user-layout install created by the public install.sh. Capture mode writes an
+isolated config and never polls providers. Do not add banked-reset coverage.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from macos_finder_smoke import capture_finder_launch
-from macos_gui_evidence import assert_rendered_png, write_evidence, write_installer_manifest
+from macos_gui_evidence import assert_rendered_png, write_evidence
 
 
 def run(*arguments, timeout=90, **kwargs):
@@ -84,23 +84,6 @@ def extract_manager(archive: Path, destination: Path) -> Path:
     return destination
 
 
-def install_with_install_sh(archive: Path, work: Path, version: str, architecture: str, home: Path):
-    repository = Path(__file__).resolve().parents[2]
-    home.mkdir(parents=True, exist_ok=True)
-    manifest = write_installer_manifest(archive, work / "ci-release-manifest.json", version, architecture)
-    env = isolated_environment() | {"HOME": str(home)}
-    run("sh", repository / "install.sh", "--package", archive, "--release-manifest", manifest,
-        "--no-launch", env=env, timeout=180)
-    install = home / "Library/Application Support/Headroom"
-    finder = home / "Applications/Headroom.app"
-    app = generation_app(install)
-    clear_quarantine(install, finder, app)
-    run("codesign", "--verify", "--deep", "--strict", app)
-    assert (finder / "Contents/MacOS/headroom").is_file()
-    assert (finder / "Contents/MacOS/headroom.root").is_file()
-    return install, finder, app
-
-
 def screenshot_installed(work: Path, version: str, launcher: Path,
                          app: Path, prefix: str, finder_app: Path | None = None) -> list[dict]:
     captures = []
@@ -111,7 +94,8 @@ def screenshot_installed(work: Path, version: str, launcher: Path,
         image = work / f"{prefix}-finder.png"
         capture_finder_launch(finder_app, image)
         captures.append(assert_rendered_png(image) | {"platform": "cocoa-finder"})
-    (work / f"{prefix}-inventory.txt").write_text(
+    inventory = work / ("macos-package-inventory.txt" if prefix == "headroom-macos" else f"{prefix}-inventory.txt")
+    inventory.write_text(
         "\n".join(sorted(str(path.relative_to(app.parent)) for path in app.parent.rglob("*") if path.is_file())) + "\n")
     return captures
 
@@ -151,7 +135,7 @@ def main():
         if args.version and args.version != version:
             parser.error(f"--version {args.version} does not match installed {version}")
         evidence["version"] = version
-        evidence["install_methods"].append("install.sh-existing")
+        evidence["install_methods"].append(os.environ.get("HEADROOM_SMOKE_INSTALL_SOURCE", "install.sh-existing"))
         clear_quarantine(install, finder, app)
         run("codesign", "--verify", "--deep", "--strict", app)
         evidence["screenshots"].extend(screenshot_installed(
@@ -169,12 +153,6 @@ def main():
         evidence["install_methods"].append("headroom-package")
         evidence["screenshots"].extend(screenshot_installed(
             args.work, version, stable, app, "headroom-macos"))
-        user_install, finder, user_app = install_with_install_sh(
-            args.archive, args.work, version, args.arch, args.work / "mac home")
-        evidence["install_methods"].append("install.sh")
-        evidence["screenshots"].extend(screenshot_installed(
-            args.work, version, finder / "Contents/MacOS/headroom", user_app,
-            "headroom-macos-install-sh", finder_app=finder))
         run(sys.executable, Path(__file__).resolve().parent / "package_server_smoke.py",
             "--server", app / "Contents/MacOS/usage-server", timeout=180)
 
