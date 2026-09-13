@@ -74,7 +74,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp startup.cpp appinfo.cpp updateservice.cpp popup.cpp
+    controller.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp startup.cpp appinfo.cpp updateservice.cpp popup.cpp displayplatform.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -179,7 +179,7 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
     set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
-    foreach(feature startup appinfo update tray trayattention popup settings instance)
+    foreach(feature startup appinfo update tray trayattention popup displayplatform settings instance)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)

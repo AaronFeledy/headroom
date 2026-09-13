@@ -6,6 +6,7 @@
 #include "appinfo.h"
 #include "updateservice.h"
 #include "popup.h"
+#include "displayplatform.h"
 #include "instance.h"
 #include "palette.h"
 #include <QCursor>
@@ -56,6 +57,8 @@ int main(int argc, char **argv) {
     // The CLI bridge is headless and only talks to an existing desktop. It must
     // never instantiate Controller, discover credentials, or start a poller.
     if (argc == 2 && std::strcmp(argv[1], "--headroom-cli-request") == 0) return desktopCLIRequest(argc, argv);
+    // Select the positioning-capable display backend before Qt creates it.
+    DesktopPlatform::configure();
     QQuickStyle::setStyle("Basic");
     // QML windows need an alpha buffer before creation for transparent corners.
     QQuickWindow::setDefaultAlphaBuffer(true);

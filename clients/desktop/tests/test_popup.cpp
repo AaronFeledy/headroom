@@ -1,6 +1,7 @@
 #include "popup.h"
 #include <QtTest>
 #include <QQuickWindow>
+#include <QScreen>
 class PopupTest : public QObject {
     Q_OBJECT
 private slots:
@@ -23,6 +24,27 @@ private slots:
         TrayPopup popup(&window, true);
         popup.toggle({}, false); QTRY_VERIFY(window.isVisible());
         popup.toggle({}, false); QVERIFY(!window.isVisible());
+    }
+    void reopeningTracksClickedIconAndKeepsSize() {
+        QQuickWindow window;
+        window.setFlags(Qt::Tool | Qt::FramelessWindowHint);
+        const QRect screen = window.screen()->geometry();
+        const QRect work = window.screen()->availableGeometry();
+        const QSize preferred(520, 440);
+        TrayPopup popup(&window, true, preferred);
+        const QPoint firstAnchor(screen.left() + 50, screen.top() + 10);
+        popup.toggle(firstAnchor);
+        QTRY_VERIFY(window.isVisible());
+        QTRY_COMPARE(window.geometry(), PopupPlacement::bounds(screen, work, firstAnchor, preferred));
+        const QRect first = window.geometry();
+        popup.toggle(firstAnchor);
+        QVERIFY(!window.isVisible());
+        const QPoint secondAnchor(screen.right() - 50, screen.bottom() - 10);
+        popup.toggle(secondAnchor);
+        QTRY_VERIFY(window.isVisible());
+        QTRY_COMPARE(window.geometry(), PopupPlacement::bounds(screen, work, secondAnchor, preferred));
+        QCOMPARE(window.size(), first.size());
+        QVERIFY(window.position() != first.topLeft());
     }
     void placement_data() {
         QTest::addColumn<QRect>("screen"); QTest::addColumn<QRect>("work");
