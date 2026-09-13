@@ -73,6 +73,14 @@ another provider poller or falls back to TCP. Native Windows receivers are not
 supported; Windows, macOS, and Linux desktop clients can use Linux/WSL receivers.
 Keep usage, version, and credential requests on the same selected transport.
 
+An explicit desktop **Update server** action uses the selected SSH connection
+to run only `headroom update --this-install-only`. The remote managed CLI owns
+validation, apply, service restart, and rollback; a successful command exit is
+followed by SSH health checks for the exact target version. Never retry the update
+command automatically, pass arbitrary commands/paths from the UI, weaken a
+usage-only forced key, or expose this action over HTTP. Source, capture,
+explicit-config, and system-managed desktop sessions cannot invoke it.
+
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 

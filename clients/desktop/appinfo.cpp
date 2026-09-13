@@ -68,6 +68,9 @@ QString AppInfo::applicationVersion() const {
 }
 QString AppInfo::serverUpdateNotice() const {
     if (!m_remote || !newerVersion(applicationVersion(), m_serverVersion)) return {};
+    if (m_healthUrl.scheme() == QStringLiteral("ssh"))
+        return QStringLiteral("Your desktop is newer than the remote server (%1). Use Update server in About & Updates, or run headroom update on the server.")
+            .arg(m_serverVersion);
     return QStringLiteral("Your desktop is newer than the remote server (%1). Run headroom update on the server's machine to update it.")
         .arg(m_serverVersion);
 }

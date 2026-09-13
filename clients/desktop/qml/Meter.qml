@@ -92,6 +92,7 @@ ColumnLayout {
             objectName: "paceLabel_" + meter.providerName + "_" + meter.bucket.id
             visible: !meter.statusOnly
             text: meter.pace.label
+            Layout.fillWidth: true; elide: Text.ElideRight
             color: meter.warning ? meter.usageColor : !meter.pace.available || meter.pace.over ? Theme.muted : Theme.cyan
             font.pixelSize: 11
             HoverHandler { id: paceHover }

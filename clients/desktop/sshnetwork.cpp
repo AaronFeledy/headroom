@@ -276,6 +276,15 @@ QStringList SshTransport::arguments(const QUrl &address)
     return args;
 }
 
+QStringList SshTransport::updateArguments(const QUrl &address)
+{
+    auto args = arguments(address);
+    // This is a fixed command, never assembled from UI text. Native Windows/WSL
+    // pairing remains a separate, explicit action; this updates only this host.
+    args.last() = QStringLiteral("headroom update --this-install-only");
+    return args;
+}
+
 SshNetworkAccessManager::SshNetworkAccessManager(SshOptions options, QObject *parent)
     : QNetworkAccessManager(parent), m_options(std::move(options)) {}
 

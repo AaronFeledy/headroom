@@ -5,6 +5,7 @@
 #include "startup.h"
 #include "appinfo.h"
 #include "updateservice.h"
+#include "remoteupdate.h"
 #include "popup.h"
 #include "displayplatform.h"
 #include "instance.h"
@@ -104,6 +105,15 @@ int main(int argc, char **argv) {
     UpdateServiceOptions updateOptions;
     updateOptions.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
     UpdateService updateService(!capture && !isolated, std::move(updateOptions));
+    RemoteUpdateOptions remoteOptions;
+    remoteOptions.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
+    RemoteUpdateService remoteUpdate(std::move(remoteOptions));
+    QObject::connect(&updateService, &UpdateService::changed, &remoteUpdate, [&] {
+        remoteUpdate.setEnabled(updateService.publicUpdatesAllowed() && !updateService.busy());
+    });
+    QObject::connect(&remoteUpdate, &RemoteUpdateService::completed, &app, [&] {
+        appInfo.refreshServer(); controller.refresh();
+    });
     if (!capture && !isolated) instance.setRequestHandler([&](const QByteArray &request) {
         const auto document = QJsonDocument::fromJson(request);
         if (!document.isObject()) return QByteArray();
@@ -144,6 +154,8 @@ int main(int argc, char **argv) {
     const auto syncServices = [&] {
         startup.setAllowChanges(!capture && !isolated);
         updateService.setPublicTrafficAllowed(!capture && !isolated);
+        remoteUpdate.setBackend(capture || isolated ? QString() : controller.backendUrl());
+        remoteUpdate.setEnabled(updateService.publicUpdatesAllowed() && !updateService.busy());
         appInfo.setBackend(capture ? QString() : controller.backendUrl(),
                            capture ? QString() : controller.backendToken(),
                            capture ? QSslCertificate() : controller.backendCertificate(),
@@ -158,6 +170,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("startupService", &startup);
     engine.rootContext()->setContextProperty("appInfo", &appInfo);
     engine.rootContext()->setContextProperty("updateService", &updateService);
+    engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
     const bool hasTray = !capture && QSystemTrayIcon::isSystemTrayAvailable();
     engine.rootContext()->setContextProperty("trayAvailable", hasTray);
     engine.rootContext()->setContextProperty("startHidden", true);

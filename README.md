@@ -191,7 +191,9 @@ matching package, then offers **Restart to apply**. Restart switches to a new
 immutable generation, checks native readiness, and rolls back on failure. A
 CLI-initiated update uses the same operation for the local desktop and server.
 An explicitly paired Windows desktop and WSL server stage the same release on
-both sides before applying it. Other remote servers are updated manually on their
+both sides before applying it. For SSH connections, **Update server** in
+**About & Updates** invokes the remote managed CLI and verifies the server's
+version after restart. Direct HTTP(S) servers are updated manually on their
 own host; the desktop shows a notice when it is newer than the connected server. A
 trusted installation with a missing server or Windows credential helper can
 stage an exact-version repair. Capture and explicit-config sessions do not

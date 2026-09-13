@@ -89,10 +89,28 @@ use public self-update acquisition. Update those with their original deployment
 method. A server outside the managed installation is not adopted merely because
 it responds on localhost.
 
-A remote server is updated on its own host. If the desktop is newer than the
-connected remote server, its footer and About/settings view explain that the
-server needs a manual `headroom update`. Version checks use the selected
-connection, including SSH, and refresh after reconnecting.
+With an SSH connection, **About & Updates → Update server** runs the fixed
+`headroom update --this-install-only` command on the selected SSH host. Install
+the official CLI there and make `headroom` available in that account's SSH PATH.
+The remote installation performs its own package verification, restart, and
+rollback; the desktop waits for the connected server to report the expected
+version before reporting success. Only that remote installation is updated;
+Windows/WSL pairing is a separate action described below.
+
+The action requires a normal installed desktop session and SSH key/agent
+authentication that permits the update command. A key restricted to the usage
+receiver cannot update the server. Headroom does not broaden the key's permissions,
+send a bearer token, invoke sudo, or add an update HTTP endpoint. Source, capture,
+explicit-config, and system-managed desktop sessions do not run this action.
+Progress and authored error summaries appear in desktop diagnostics. If SSH drops
+or verification times out, the result is uncertain and the update may still
+finish; check the server before retrying. Only health reads are retried
+automatically, never the update command.
+
+Direct HTTP(S) connections still need `headroom update` on the server's machine,
+or an explicitly paired Windows/WSL installation. An older remote server is
+called out in the footer and About/settings view. Version checks use the selected
+connection and refresh after reconnecting.
 
 ## Linux and WSL automatic server startup
 
