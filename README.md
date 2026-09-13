@@ -62,9 +62,10 @@ Widget users should follow the [upgrade guide](docs/upgrading-to-headroom.md)
 for the one-time transition.
 
 The published v2.0.0 app predates the repository rename, and its in-app updater
-does not follow GitHub's redirect from the former release API. After the next
-release is published, v2.0.0 users must run the current installer once to move
-to it; subsequent builds use the canonical Headroom release endpoint.
+does not follow GitHub's redirect from the former release API. If **Check for
+updates** reports that it did not complete, quit Headroom and run the current
+installer above once to move to v2.0.1 or newer, then reopen it. Subsequent builds
+use the canonical Headroom release endpoint.
 See [desktop build instructions](clients/desktop/README.md) for source builds.
 
 Windows installs under `%LOCALAPPDATA%\Headroom`, adds a Start menu shortcut,

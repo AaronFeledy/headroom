@@ -101,7 +101,9 @@ int main(int argc, char **argv) {
     serverVersionTimer.setInterval(5 * 60 * 1000);
     QObject::connect(&serverVersionTimer, &QTimer::timeout, &appInfo, &AppInfo::refreshServer);
     if (!capture) serverVersionTimer.start();
-    UpdateService updateService(!capture && !isolated);
+    UpdateServiceOptions updateOptions;
+    updateOptions.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
+    UpdateService updateService(!capture && !isolated, std::move(updateOptions));
     if (!capture && !isolated) instance.setRequestHandler([&](const QByteArray &request) {
         const auto document = QJsonDocument::fromJson(request);
         if (!document.isObject()) return QByteArray();

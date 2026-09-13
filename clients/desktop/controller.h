@@ -32,6 +32,8 @@ public:
     QVariantList diagnostics() const { return m_diagnostics; }
     Q_INVOKABLE void clearDiagnostics();
     Q_INVOKABLE QString diagnosticText() const;
+    // C++ integration only; UpdateService supplies safe, authored summaries.
+    void logUpdate(const QString &message) { log(QStringLiteral("update"), message); }
     // C++ integration only: the bearer token is never a QML property.
     QString backendUrl() const;
     QString backendToken() const;
