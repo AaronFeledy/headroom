@@ -55,6 +55,18 @@ ctest --test-dir clients/desktop/build --output-on-failure
 open clients/desktop/build/headroom.app
 ```
 
+With the official Qt 6.8.3 kit and Xcode/Command Line Tools 26, select an
+installed macOS 15 SDK when configuring. The macOS 26 SDK omits the AGL
+framework referenced by that Qt kit. For example, if this SDK is installed:
+
+```bash
+cmake -S clients/desktop -B clients/desktop/build \
+  -DCMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk
+```
+
+Use the SDK path available in your Xcode or Command Line Tools installation;
+this does not change Headroom's macOS 12 deployment target.
+
 Mac test builds generate fresh synthetic TLS certificates with the system
 `/usr/bin/openssl`. On macOS 15, local TLS fixture runs need a Qt kit built with
 the macOS 15 SDK or newer. Native CI tests the official Qt 6.8.3 kit in a

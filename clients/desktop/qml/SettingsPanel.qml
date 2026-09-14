@@ -148,7 +148,12 @@ Popup {
                 }
             }
             Check { id: notifications; text: "Notify when meters enter Warning or Critical"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
-            Text { text: "Closing the window keeps Headroom in your system tray.\nUse the tray menu to quit."; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.4; visible: trayAvailable }
+            Text {
+                text: Qt.platform.os === "osx"
+                      ? "Closing the window keeps Headroom in your menu bar.\nRight-click its icon to quit."
+                      : "Closing the window keeps Headroom in your system tray.\nUse the tray menu to quit."
+                color: Theme.muted; font.pixelSize: 12; lineHeight: 1.4; visible: trayAvailable
+            }
             StartupSettings { Layout.fillWidth: true }
             AppInfoSettings { Layout.fillWidth: true }
             ActionButton { text: "Open diagnostics"; quiet: true; onClicked: { panel.close(); panel.diagnosticsRequested() } }
