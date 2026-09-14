@@ -38,6 +38,12 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
+    onVisibleChanged: if (visible && !settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+        restoreEscapeFocus()
+    function restoreEscapeFocus() {
+        window.requestActivate()
+        escapeFocus.forceActiveFocus()
+    }
     function dismissOverlayOrHide() {
         if (resetConfirmation.opened) resetConfirmation.close()
         else if (settings.opened) settings.close()
@@ -54,8 +60,9 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         onActivated: window.dismissOverlayOrHide()
     }
-    SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open() }
-    DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel" }
+    Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true }
+    SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
+    DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
 
     // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
     // code that might trigger a reset: doing so can burn a very valuable reset.
@@ -198,6 +205,7 @@ ApplicationWindow {
                             id: filterMenu; objectName: "providerFilterMenu"
                             y: -height - 8
                             closePolicy: Popup.CloseOnPressOutside
+                            onClosed: restoreEscapeFocus()
                             Instantiator {
                                 model: ["All providers"].concat(window.providers.map(p => p.provider_name))
                                 delegate: MenuItem {

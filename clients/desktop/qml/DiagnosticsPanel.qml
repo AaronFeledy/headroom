@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 Popup {
     id: panel
@@ -35,6 +36,17 @@ Popup {
                     background: null
                     placeholderText: "No events recorded."; placeholderTextColor: Theme.muted
                     Accessible.name: "Diagnostic events"
+                    Keys.priority: Keys.BeforeItem
+                    Keys.onShortcutOverride: (event) => { if (event.key === Qt.Key_Escape) event.accepted = true }
+                    Keys.onPressed: (event) => {
+                        if (event.key !== Qt.Key_Escape) return
+                        const host = Window.window
+                        if (host && typeof host.dismissOverlayOrHide === "function")
+                            host.dismissOverlayOrHide()
+                        else
+                            panel.close()
+                        event.accepted = true
+                    }
                 }
             }
         }
