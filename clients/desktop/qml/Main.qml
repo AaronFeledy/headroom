@@ -60,7 +60,7 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         onActivated: window.dismissOverlayOrHide()
     }
-    Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true }
+    Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
 
@@ -76,7 +76,7 @@ ApplicationWindow {
         modal: true; focus: true; padding: 24
         closePolicy: Popup.NoAutoClose
         onOpened: resetCancel.forceActiveFocus()
-        onClosed: backend.cancelChatGptResetConfirmation()
+        onClosed: { backend.cancelChatGptResetConfirmation(); restoreEscapeFocus() }
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
         Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
