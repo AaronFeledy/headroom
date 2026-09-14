@@ -118,7 +118,7 @@ QStringList installedApplications(const QString &root, const QString &exactVersi
     return result;
 }
 
-QByteArray launchAgentContents(const QString &executable)
+QByteArray launchAgentContents(const QString &executable, bool associateBundles = true)
 {
     QString escaped = executable.toHtmlEscaped();
     return QStringLiteral(
@@ -127,8 +127,20 @@ QByteArray launchAgentContents(const QString &executable)
         "<plist version=\"1.0\">\n<dict>\n"
         "  <key>Label</key>\n  <string>io.headroom.Headroom</string>\n"
         "  <key>ProgramArguments</key>\n  <array>\n    <string>%1</string>\n    <string>--background</string>\n  </array>\n"
+        "%2"
         "  <key>RunAtLoad</key>\n  <true/>\n"
-        "</dict>\n</plist>\n").arg(escaped).toUtf8();
+        "</dict>\n</plist>\n").arg(escaped, associateBundles ? QStringLiteral(
+            "  <key>AssociatedBundleIdentifiers</key>\n  <array>\n"
+            "    <string>io.headroom.launcher</string>\n"
+            "    <string>io.headroom.Headroom</string>\n  </array>\n") : QString()).toUtf8();
+}
+
+bool ownedLaunchAgent(const QByteArray &contents, const QString &executable)
+{
+    // Accept only our exact current or pre-attribution format. Existing users
+    // must be able to retain or remove their saved startup registration.
+    return contents == launchAgentContents(executable)
+        || contents == launchAgentContents(executable, false);
 }
 
 QByteArray privateRegularFile(const QString &path)
@@ -242,8 +254,9 @@ void StartupService::repairPackagedRegistration()
     }
     if (m_platform == Platform::Mac) {
         const QByteArray original = privateRegularFile(m_entryPath);
+        candidates.append(m_executable);
         if (original.isEmpty() || std::none_of(candidates.cbegin(), candidates.cend(), [&](const QString &candidate) {
-                return original == launchAgentContents(candidate);
+                return ownedLaunchAgent(original, candidate);
             })) return;
         const QByteArray replacement = launchAgentContents(m_executable);
         if (!writePrivateFile(m_entryPath, replacement) || privateRegularFile(m_entryPath) != replacement)
@@ -303,7 +316,7 @@ void StartupService::refresh()
         return;
     }
     if (m_platform == Platform::Mac) {
-        const bool active = privateRegularFile(m_entryPath) == launchAgentContents(m_executable);
+        const bool active = ownedLaunchAgent(privateRegularFile(m_entryPath), m_executable);
         if (m_enabled != active) { m_enabled = active; emit enabledChanged(); }
         return;
     }
@@ -405,7 +418,7 @@ bool StartupService::setEnabled(bool enabled)
         const bool existed = existingInfo.exists();
         const QByteArray previous = privateRegularFile(m_entryPath);
         const QByteArray expected = launchAgentContents(m_executable);
-        if (existed && previous != expected)
+        if (existed && !ownedLaunchAgent(previous, m_executable))
             return fail(tr("Headroom refused to replace an unrecognized startup entry."));
         if (enabled) {
             // Only launching at the next login needs a usable binary. Removing an

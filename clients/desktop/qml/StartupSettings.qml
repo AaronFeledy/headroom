@@ -32,8 +32,9 @@ ColumnLayout {
     }
     Text {
         Layout.fillWidth: true
-        text: startupService.available ? "Opens in the system tray. This setting applies immediately."
-                                       : "Start at login is disabled for this session."
+        text: !startupService.available ? "Start at login is disabled for this session."
+              : Qt.platform.os === "osx" ? "Opens in the menu bar at your next login."
+              : "Opens in the system tray. This setting applies immediately."
         wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
     }
     Text {

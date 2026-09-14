@@ -28,6 +28,19 @@ QByteArray readFile(const QString &path)
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
 }
+// Frozen v2.0.1 format: migration must recognize the entry installed before
+// bundle attribution was added, while preserving the exact ownership check.
+QByteArray legacyMacLaunchAgent(const QString &executable)
+{
+    return QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\">\n<dict>\n"
+        "  <key>Label</key>\n  <string>io.headroom.Headroom</string>\n"
+        "  <key>ProgramArguments</key>\n  <array>\n    <string>%1</string>\n    <string>--background</string>\n  </array>\n"
+        "  <key>RunAtLoad</key>\n  <true/>\n"
+        "</dict>\n</plist>\n").arg(executable.toHtmlEscaped()).toUtf8();
+}
 QString currentExecutable()
 {
     return QCoreApplication::applicationFilePath();
@@ -308,8 +321,20 @@ private slots:
         QVERIFY(!QFileInfo::exists(reloaded.entryPath()));
     }
 
+    void macPriorGenerationEntryRepairsToStableLauncher_data()
+    {
+        QTest::addColumn<bool>("stableEntry");
+        QTest::addColumn<bool>("legacyFormat");
+        QTest::newRow("prior-generation") << false << false;
+        QTest::newRow("legacy-prior-generation") << false << true;
+        QTest::newRow("stable-launcher") << true << false;
+        QTest::newRow("legacy-stable-launcher") << true << true;
+    }
+
     void macPriorGenerationEntryRepairsToStableLauncher()
     {
+        QFETCH(bool, stableEntry);
+        QFETCH(bool, legacyFormat);
         QTemporaryDir dir; QVERIFY(dir.isValid());
         const QString root = QFileInfo(dir.path()).canonicalFilePath();
         const QString launcher = QDir(root).filePath(QStringLiteral("stable/Headroom.app/Contents/MacOS/headroom"));
@@ -326,7 +351,9 @@ private slots:
         seed.setPreferenceWriter([](bool) { return QString(); });
         QVERIFY(seed.setEnabled(true));
         QByteArray oldEntry = readFile(seed.entryPath());
-        oldEntry.replace(currentExecutable().toHtmlEscaped().toUtf8(), previous.toHtmlEscaped().toUtf8());
+        const QString oldExecutable = stableEntry ? launcher : previous;
+        if (legacyFormat) oldEntry = legacyMacLaunchAgent(oldExecutable);
+        else oldEntry.replace(currentExecutable().toHtmlEscaped().toUtf8(), oldExecutable.toHtmlEscaped().toUtf8());
         QVERIFY(writeFile(seed.entryPath(), oldEntry));
         QVERIFY(QFile::setPermissions(seed.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
 
@@ -341,6 +368,34 @@ private slots:
         const QByteArray entry = readFile(repaired.entryPath());
         QVERIFY(entry.contains(launcher.toHtmlEscaped().toUtf8()));
         QVERIFY(!entry.contains(previous.toUtf8()));
+        QVERIFY(entry.contains("<key>AssociatedBundleIdentifiers</key>"));
+        QVERIFY(entry.contains("<string>io.headroom.launcher</string>"));
+    }
+
+    void macLegacyEntryRemainsEnabledAndRemovable()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        StartupService service(dir.path(), currentExecutable(), true, nullptr, StartupService::Platform::Mac);
+        const QByteArray legacy = legacyMacLaunchAgent(currentExecutable());
+        QVERIFY(writeFile(service.entryPath(), legacy));
+        QVERIFY(QFile::setPermissions(service.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
+        service.refresh();
+        QVERIFY(service.enabled());
+        QVERIFY(service.setEnabled(false));
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(writeFile(service.entryPath(), legacy));
+        QVERIFY(QFile::setPermissions(service.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
+        QVERIFY(service.setEnabled(true));
+        QVERIFY(readFile(service.entryPath()).contains("<key>AssociatedBundleIdentifiers</key>"));
+
+        QByteArray modified = readFile(service.entryPath());
+        modified.replace("io.headroom.launcher", "io.foreign.launcher");
+        QVERIFY(writeFile(service.entryPath(), modified));
+        service.refresh();
+        QVERIFY(!service.enabled());
+        QVERIFY(!service.setEnabled(true));
+        QVERIFY(!service.setEnabled(false));
+        QCOMPARE(readFile(service.entryPath()), modified);
     }
 
     void macLaunchAgentPreservesForeignEntries()
