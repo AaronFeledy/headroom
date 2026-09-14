@@ -483,7 +483,11 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "open"));
         QTRY_VERIFY(diagnostics->property("opened").toBool());
         auto log = findItem(window->contentItem(), "diagnosticLog"); QVERIFY(log);
-        escapeFocusedItem(log);
+        QVERIFY(log->property("readOnly").toBool());
+        QVERIFY(log->property("selectByMouse").toBool());
+        QCOMPARE(log->property("placeholderText").toString(), QString("No events recorded."));
+        QVERIFY(QMetaObject::invokeMethod(diagnostics, "forceActiveFocus"));
+        QTest::keyClick(window, Qt::Key_Escape);
         QTRY_VERIFY(!diagnostics->property("opened").toBool());
         QVERIFY(window->isVisible());
 

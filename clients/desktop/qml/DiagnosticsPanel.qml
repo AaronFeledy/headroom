@@ -25,17 +25,16 @@ Popup {
             Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.inset; radius: 8
             ScrollView {
                 anchors.fill: parent; anchors.margins: 10; clip: true
-                Text {
+                TextArea {
                     objectName: "diagnosticLog"
-                    width: parent.width
                     text: backend.diagnosticText()
                     property var entries: backend.diagnostics
                     onEntriesChanged: text = backend.diagnosticText()
-                    wrapMode: Text.Wrap
+                    readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
                     color: Theme.foreground; font.family: "monospace"; font.pixelSize: 11
-                    textFormat: Text.PlainText
+                    background: null
+                    placeholderText: "No events recorded."; placeholderTextColor: Theme.muted
                     Accessible.name: "Diagnostic events"
-                    activeFocusOnTab: true
                 }
             }
         }
