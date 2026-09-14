@@ -53,13 +53,30 @@ func openWindowsProcess(pid int, access uintptr) (syscall.Handle, string, string
 	return handle, syscall.UTF16ToString(buffer[:size]), token, nil
 }
 
+// sameWindowsProcessExecutable accepts Windows path aliases only when both
+// names resolve to the same on-disk file. MSIX app-data virtualization can make
+// os.Executable and QueryFullProcessImageNameW report different names for it.
+// Keep this separate from package/receipt path validation, which remains strict.
+func sameWindowsProcessExecutable(actual, expected string) bool {
+	if samePath(actual, expected) {
+		return true
+	}
+	if !filepath.IsAbs(actual) || !filepath.IsAbs(expected) {
+		return false
+	}
+	actualInfo, actualErr := os.Stat(actual)
+	expectedInfo, expectedErr := os.Stat(expected)
+	return actualErr == nil && expectedErr == nil && actualInfo.Mode().IsRegular() &&
+		expectedInfo.Mode().IsRegular() && os.SameFile(actualInfo, expectedInfo)
+}
+
 func captureProcessToken(pid int, expected string) (string, error) {
 	h, actual, token, err := openWindowsProcess(pid, processSynchronize|processQueryLimitedInformation)
 	if err != nil {
 		return "", err
 	}
 	procCloseHandle.Call(uintptr(h))
-	if !samePath(actual, expected) {
+	if !sameWindowsProcessExecutable(actual, expected) {
 		return "", errProcessExecutableMismatch
 	}
 	return token, nil
@@ -67,7 +84,7 @@ func captureProcessToken(pid int, expected string) (string, error) {
 
 func watchProcess(pid int, expected, token string) (processWatch, error) {
 	h, actual, got, err := openWindowsProcess(pid, processSynchronize|processQueryLimitedInformation|processTerminate)
-	if err != nil || !samePath(actual, expected) || got != token {
+	if err != nil || !sameWindowsProcessExecutable(actual, expected) || got != token {
 		if h != 0 {
 			procCloseHandle.Call(uintptr(h))
 		}

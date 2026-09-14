@@ -16,7 +16,7 @@ func LauncherLifetimeContext(ctx context.Context, pid int, executable, token str
 	if err != nil {
 		return nil, nil, err
 	}
-	if token == "" || got != token || !samePath(actual, executable) {
+	if token == "" || got != token || !sameWindowsProcessExecutable(actual, executable) {
 		procCloseHandle.Call(uintptr(handle))
 		return nil, nil, errors.New("public launcher process identity changed")
 	}
