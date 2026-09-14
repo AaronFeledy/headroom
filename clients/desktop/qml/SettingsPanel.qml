@@ -24,7 +24,6 @@ Popup {
     height: Math.min(650, parent.height - 32)
     modal: true; focus: true; padding: 28
     closePolicy: Popup.CloseOnPressOutside
-    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
     Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     onOpened: {
@@ -70,7 +69,6 @@ Popup {
         Layout.fillWidth: true; implicitHeight: 44; color: Theme.foreground; font.pixelSize: 13; selectByMouse: true
         placeholderTextColor: Theme.muted; leftPadding: 12; rightPadding: 12
         background: Rectangle { radius: 8; color: Theme.inset; border.color: parent.activeFocus ? Theme.purple : Theme.selection }
-        Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     }
     ColumnLayout {
         anchors.fill: parent; spacing: 12
@@ -144,6 +142,7 @@ Popup {
                         background: Rectangle { color: parent.highlighted ? Theme.selection : Theme.inset }
                         highlighted: interval.highlightedIndex === index
                     }
+                    popup.closePolicy: Popup.CloseOnPressOutside
                     popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
                     onActivated: panel.selectedInterval = panel.intervalValues[currentIndex]
                 }

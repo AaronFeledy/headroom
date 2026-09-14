@@ -10,7 +10,6 @@ Popup {
     height: Math.min(640, parent.height - 32)
     modal: true; focus: true; padding: 24
     closePolicy: Popup.CloseOnPressOutside
-    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
     Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     ColumnLayout {
@@ -26,17 +25,17 @@ Popup {
             Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.inset; radius: 8
             ScrollView {
                 anchors.fill: parent; anchors.margins: 10; clip: true
-                TextArea {
+                Text {
                     objectName: "diagnosticLog"
+                    width: parent.width
                     text: backend.diagnosticText()
                     property var entries: backend.diagnostics
                     onEntriesChanged: text = backend.diagnosticText()
-                    readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
+                    wrapMode: Text.Wrap
                     color: Theme.foreground; font.family: "monospace"; font.pixelSize: 11
-                    background: null
-                    placeholderText: "No events recorded."; placeholderTextColor: Theme.muted
+                    textFormat: Text.PlainText
                     Accessible.name: "Diagnostic events"
-                    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
+                    activeFocusOnTab: true
                 }
             }
         }

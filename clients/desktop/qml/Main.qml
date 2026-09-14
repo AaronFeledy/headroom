@@ -39,10 +39,10 @@ ApplicationWindow {
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
     function dismissOverlayOrHide() {
-        if (settings.visible) settings.close()
-        else if (diagnostics.visible) diagnostics.close()
-        else if (resetConfirmation.visible) resetConfirmation.close()
-        else if (filterMenu.visible) filterMenu.close()
+        if (resetConfirmation.opened) resetConfirmation.close()
+        else if (settings.opened) settings.close()
+        else if (diagnostics.opened) diagnostics.close()
+        else if (filterMenu.opened) filterMenu.close()
         else if (trayAvailable) window.hide()
     }
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
@@ -68,7 +68,6 @@ ApplicationWindow {
         width: Math.min(440, parent.width - 32)
         modal: true; focus: true; padding: 24
         closePolicy: Popup.NoAutoClose
-        Keys.onEscapePressed: function(event) { resetConfirmation.close(); event.accepted = true }
         onOpened: resetCancel.forceActiveFocus()
         onClosed: backend.cancelChatGptResetConfirmation()
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
@@ -198,6 +197,7 @@ ApplicationWindow {
                         Menu {
                             id: filterMenu; objectName: "providerFilterMenu"
                             y: -height - 8
+                            closePolicy: Popup.CloseOnPressOutside
                             Instantiator {
                                 model: ["All providers"].concat(window.providers.map(p => p.provider_name))
                                 delegate: MenuItem {
