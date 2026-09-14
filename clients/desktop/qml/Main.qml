@@ -38,10 +38,22 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
+    function dismissOverlayOrHide() {
+        if (resetConfirmation.opened) resetConfirmation.close()
+        else if (settings.opened) settings.close()
+        else if (diagnostics.opened) diagnostics.close()
+        else if (filterMenu.opened) filterMenu.close()
+        else if (trayAvailable) window.hide()
+    }
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
     Shortcut { sequence: "Ctrl+,"; onActivated: settings.open() }
     Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
-    Shortcut { sequence: "Escape"; onActivated: { if (settings.opened) settings.close(); else if (trayAvailable) window.hide() } }
+    Shortcut {
+        objectName: "escapeShortcut"
+        sequence: "Escape"
+        context: Qt.ApplicationShortcut
+        onActivated: window.dismissOverlayOrHide()
+    }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel" }
 
@@ -55,7 +67,7 @@ ApplicationWindow {
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(440, parent.width - 32)
         modal: true; focus: true; padding: 24
-        closePolicy: Popup.CloseOnEscape
+        closePolicy: Popup.NoAutoClose
         onOpened: resetCancel.forceActiveFocus()
         onClosed: backend.cancelChatGptResetConfirmation()
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
@@ -185,6 +197,7 @@ ApplicationWindow {
                         Menu {
                             id: filterMenu; objectName: "providerFilterMenu"
                             y: -height - 8
+                            closePolicy: Popup.CloseOnPressOutside
                             Instantiator {
                                 model: ["All providers"].concat(window.providers.map(p => p.provider_name))
                                 delegate: MenuItem {

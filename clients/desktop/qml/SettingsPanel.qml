@@ -23,7 +23,7 @@ Popup {
     width: Math.min(480, parent.width - 32)
     height: Math.min(650, parent.height - 32)
     modal: true; focus: true; padding: 28
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    closePolicy: Popup.CloseOnPressOutside
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
     Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     onOpened: {
@@ -142,6 +142,7 @@ Popup {
                         background: Rectangle { color: parent.highlighted ? Theme.selection : Theme.inset }
                         highlighted: interval.highlightedIndex === index
                     }
+                    popup.closePolicy: Popup.CloseOnPressOutside
                     popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
                     onActivated: panel.selectedInterval = panel.intervalValues[currentIndex]
                 }
