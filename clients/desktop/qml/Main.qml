@@ -68,6 +68,7 @@ ApplicationWindow {
         width: Math.min(440, parent.width - 32)
         modal: true; focus: true; padding: 24
         closePolicy: Popup.NoAutoClose
+        Keys.onEscapePressed: function(event) { resetConfirmation.close(); event.accepted = true }
         onOpened: resetCancel.forceActiveFocus()
         onClosed: backend.cancelChatGptResetConfirmation()
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }

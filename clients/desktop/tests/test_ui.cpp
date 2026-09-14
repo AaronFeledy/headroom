@@ -437,6 +437,12 @@ private slots:
         auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
         QVERIFY(QMetaObject::invokeMethod(panel, "open"));
         QTRY_VERIFY(panel->property("opened").toBool());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QVERIFY(window->isVisible());
+
+        QVERIFY(QMetaObject::invokeMethod(panel, "open"));
+        QTRY_VERIFY(panel->property("opened").toBool());
         auto sshMode = findItem(window->contentItem(), "sshMode"); QVERIFY(sshMode);
         QVERIFY(sshMode->setProperty("checked", true));
         auto sshUrl = findItem(window->contentItem(), "sshUrl"); QVERIFY(sshUrl);
