@@ -54,12 +54,6 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
     Shortcut { sequence: "Ctrl+,"; onActivated: settings.open() }
     Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
-    Shortcut {
-        objectName: "escapeShortcut"
-        sequence: "Escape"
-        context: Qt.ApplicationShortcut
-        onActivated: window.dismissOverlayOrHide()
-    }
     Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }

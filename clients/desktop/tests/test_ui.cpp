@@ -438,9 +438,12 @@ private slots:
         engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        TrayPopup popup(window, true);
+        popup.show();
         window->requestActivate();
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QTRY_VERIFY(window->isVisible());
+        QVERIFY(!window->findChild<QObject *>("escapeShortcut"));
         QTRY_COMPARE(controller.providers().size(), 4);
 
         auto filterButton = findItem(window->contentItem(), "providerFilter"); QVERIFY(filterButton);
