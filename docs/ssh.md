@@ -106,6 +106,24 @@ restrict,command="/usr/local/bin/usage-server --ssh-stdio" ssh-ed25519 <public-k
 Verify host trust before restricting the key. This key then supports Headroom's
 receiver protocol rather than an interactive shell.
 
+## Update the remote server
+
+In an official desktop installation, **About & Updates → Update server** uses
+the selected SSH account to execute `headroom update --this-install-only`.
+Install the [managed CLI](cli.md#install-without-a-desktop) on that host first;
+both `headroom` and `usage-server` must be in its noninteractive SSH PATH.
+The CLI updates only its own managed installation and registered server. Migrate
+legacy standalone services to the documented per-user `headroom.service` if you
+want them restarted by the updater.
+
+This action needs permission to execute that command. The usage-only forced key
+above intentionally cannot do this; retain that restriction and update manually,
+or deliberately select an SSH account/key with update access. Headroom never
+changes authorized keys, falls back to HTTP, or requests administrator access.
+The desktop records progress in diagnostics and confirms the server's version
+after the update's restart. A lost connection leaves the outcome unconfirmed;
+it does not automatically repeat the update command.
+
 ## Troubleshooting
 
 - **Unknown or changed host key:** verify the host's identity with your SSH client.

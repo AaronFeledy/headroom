@@ -5,6 +5,7 @@
 #include "appinfo.h"
 #include "popup.h"
 #include "updateservice.h"
+#include "remoteupdate.h"
 #include "palette.h"
 #include <QApplication>
 #include <QQmlApplicationEngine>
@@ -49,11 +50,13 @@ private slots:
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
         UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
         engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
         engine.rootContext()->setContextProperty("trayAvailable", true);
         engine.rootContext()->setContextProperty("startHidden", true);
         engine.rootContext()->setContextProperty("captureMode", true);
@@ -217,14 +220,14 @@ private slots:
         QVERIFY(window->grabWindow().save(capture("headroom-diagnostics.png")));
         controller.clearDiagnostics(); QTRY_COMPARE(log->property("text").toString(), QString());
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "close"));
-        for (int width : {820, 460}) {
+        for (int width : {820, 460, 630, 460}) {
             window->resize(width, 800); QTest::qWait(100);
             QQuickItem *prior = nullptr;
             for (const auto &value : controller.providers()) {
                 auto provider = value.toMap();
                 auto name = provider["provider_name"].toString();
                 auto row = findItem(window->contentItem(), "providerCard_" + name); QVERIFY(row);
-                QCOMPARE(row->width(), rows->width());
+                QTRY_COMPARE(row->width(), rows->width());
                 if (prior) QVERIFY(std::abs(row->y() - prior->y() - prior->height() - 12) < 1);
                 bool firstMeter = true;
                 for (const auto &bucket : provider["buckets"].toList()) {
@@ -234,6 +237,9 @@ private slots:
                     QCOMPARE(meter->property("accent").value<QColor>(), QColor("#bd93f9"));
                     if (firstMeter) QCOMPARE(meter->width(), meter->parentItem()->width());
                     firstMeter = false;
+                    // Native resize/layout delivery can take more than a frame.
+                    // Keep the same bounds requirement while awaiting that pass.
+                    QTRY_VERIFY(meter->mapToItem(row, QPointF(0, 0)).x() + meter->width() <= row->width() + 1);
                     const auto origin = meter->mapToItem(row, QPointF(0, 0));
                     const QString geometry = QString(
                         "%1/%2 at window %3: origin=(%4,%5), meter=%6x%7, row=%8x%9")
@@ -293,11 +299,13 @@ private slots:
         ControllerFixture controller(dir.filePath("settings.json"));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
         engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
         engine.rootContext()->setContextProperty("trayAvailable", false);
         engine.rootContext()->setContextProperty("startHidden", false);
         engine.rootContext()->setContextProperty("captureMode", true);
@@ -376,11 +384,13 @@ private slots:
         ControllerFixture controller(settings.fileName());
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
         engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
         engine.rootContext()->setContextProperty("trayAvailable", false);
         engine.rootContext()->setContextProperty("startHidden", false);
         engine.rootContext()->setContextProperty("captureMode", true);
@@ -421,11 +431,13 @@ private slots:
                               QJsonDocument(providers).toJson(QJsonDocument::Compact));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
         engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
         engine.rootContext()->setContextProperty("trayAvailable", false);
         engine.rootContext()->setContextProperty("startHidden", false);
         engine.rootContext()->setContextProperty("captureMode", true);

@@ -234,8 +234,11 @@ manifest's exact size and digest are checked before the Go validator runs.
 
 The portable Linux x86_64 archive is built on Ubuntu 22.04. It bundles Qt but
 uses the baseline desktop's glibc, libstdc++, graphics, font, X11/XCB, Wayland,
-D-Bus and OpenSSL 3 ABI libraries. The generic bundle supports native X11 and
-Wayland rendering. On Ubuntu 22.04, install the runtime packages `libegl1`,
+D-Bus and OpenSSL 3 ABI libraries. The generic bundle uses X11, including
+XWayland in a Wayland session, so the popup can be positioned beside the tray.
+It falls back to native Wayland rendering when XWayland is unavailable; in that
+case the compositor controls window placement. Explicit `QT_QPA_PLATFORM` and
+Qt `-platform` overrides are preserved. On Ubuntu 22.04, install the runtime packages `libegl1`,
 `libgl1`, `libglx0`, `libopengl0`, `libdrm2`, `libgbm1`, `libfontconfig1`,
 `libfreetype6`, `libglib2.0-0`, `libgssapi-krb5-2`, `libssl3`,
 `libwayland-client0`, `libwayland-cursor0`, `libwayland-egl1`, `libx11-6`,
@@ -245,8 +248,7 @@ Wayland rendering. On Ubuntu 22.04, install the runtime packages `libegl1`,
 `libxcb-shape0`, `libxcb-shm0`, `libxcb-sync1`, `libxcb-xfixes0`,
 `libxcb-xkb1`, `zlib1g`, and `libzstd1`. `libc6`, `libgcc-s1`, `libstdc++6`,
 and `libdbus-1-3` are also part of the baseline and normally already installed
-on an Ubuntu desktop. Precise KDE
-Wayland tray attachment requires a distro/source
+on an Ubuntu desktop. Native KDE Wayland tray attachment requires a distro/source
 build with `HEADROOM_WITH_KDE_TRAY` and `HEADROOM_WITH_LAYER_SHELL`; those source
 options remain enabled by default. Package smoke tests do not count as an
 interactive tray-placement test.

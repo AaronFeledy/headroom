@@ -155,7 +155,10 @@ Rectangle {
             id: meters
             visible: !card.failed
             Layout.fillWidth: true
-            columns: Math.max(1, Math.min(card.provider.buckets.length - (card.stacked ? 1 : 0), Math.floor((width + columnSpacing) / 190)))
+            // Use the space the card supplies, not this grid's minimum width:
+            // its old column count can otherwise prevent it from shrinking.
+            readonly property real availableWidth: body.width - (card.stacked ? 0 : 138 + body.columnSpacing)
+            columns: Math.max(1, Math.min(card.provider.buckets.length - (card.stacked ? 1 : 0), Math.floor((availableWidth + columnSpacing) / (190 + columnSpacing))))
             columnSpacing: 24; rowSpacing: 22; uniformCellWidths: true
             Repeater {
                 model: card.provider.buckets

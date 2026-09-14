@@ -157,6 +157,14 @@ jobs:
           timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software
           clients/desktop/build-ci/headroom-ui-tests
           dragReordersAndDrivesTray preservesAndDisplaysCustomInterval
+      - name: Verify tray-positioning backend selection
+        timeout-minutes: 1
+        run: |
+          # Model a Wayland session with XWayland available but no layer-shell build.
+          timeout 30s xvfb-run -a env -u QT_QPA_PLATFORM XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY=headroom-unavailable clients/desktop/build-ci/headroom --version
+          # An explicit Qt argument must still override our automatic choice.
+          env -u QT_QPA_PLATFORM XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY=headroom-unavailable DISPLAY=:234567 clients/desktop/build-ci/headroom -platform offscreen --version
+          timeout 30s xvfb-run -a clients/desktop/build-ci/headroom-popup-tests reopeningTracksClickedIconAndKeepsSize
       - name: Load QML and capture disconnected setup
         env:
           QT_QPA_PLATFORM: offscreen

@@ -1,4 +1,5 @@
 #include "updateservice.h"
+#include "controller.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QDir>
@@ -33,6 +34,7 @@ private:
 private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
+        qunsetenv("HEADROOM_UPDATE_FIXTURE_ERROR");
         QFile::remove(m_record);
         QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();
         QDir(m_dir.filePath(QStringLiteral("staging"))).removeRecursively();
@@ -42,6 +44,69 @@ private slots:
 		qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS");
     }
 	void cleanup() { qunsetenv("HEADROOM_UPDATE_FIXTURE_RECORD"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS"); qunsetenv("USAGE_AUTH_TOKEN"); }
+    void updateLifecycleAppearsInDesktopDiagnostics() {
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(m_dir.filePath("diagnostics-settings.json"), nullptr, false, {}, credentials, {}, false);
+        auto config = options();
+        config.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
+        UpdateService service(true, config);
+        // The sink must be installed before construction to capture inspection.
+        QVERIFY(controller.diagnosticText().contains("inspect: Started."));
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        const auto diagnostics = controller.diagnosticText();
+        QVERIFY(diagnostics.contains("[update]"));
+        QVERIFY(diagnostics.contains("check-update: Started."));
+        QVERIFY(diagnostics.contains("Check completed: a newer package is available."));
+        QVERIFY(diagnostics.contains("stage-update: Started."));
+        QVERIFY(diagnostics.contains("Download and verification completed"));
+        QVERIFY(!diagnostics.contains(m_dir.path()));
+    }
+    void failedChecksExplainSafeCause_data() {
+        QTest::addColumn<QString>("error");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("renamed-repository") << "release server returned HTTP 301" << "current Headroom installer";
+        QTest::newRow("forbidden") << "release server returned HTTP 403" << "HTTP 403";
+        QTest::newRow("rate-limited") << "release server returned HTTP 429" << "rate limited";
+        QTest::newRow("unavailable") << "release server returned HTTP 503" << "HTTP 503";
+        QTest::newRow("dns") << "download release data: Get https://example.test/?token=private-token: no such host" << "DNS";
+        QTest::newRow("tls") << "download release data: Get https://example.test/?token=private-token: x509: certificate signed by unknown authority" << "TLS";
+        QTest::newRow("timeout") << "download release data: Get https://example.test/?token=private-token: context deadline exceeded" << "timed out";
+        QTest::newRow("proxy") << "download release data: Get https://user:private-token@example.test/: proxyconnect tcp: connection refused" << "proxy settings";
+        QTest::newRow("integrity") << "downloaded package checksum does not match release manifest" << "integrity verification";
+        QTest::newRow("unknown-private-error") << "private-token and https://example.test/private" << "exit code 2";
+    }
+    void failedChecksExplainSafeCause() {
+        QFETCH(QString, error); QFETCH(QString, expected);
+        QStringList events;
+        auto config = options(); config.diagnostic = [&](const QString &message) { events.append(message); };
+        UpdateService service(true, config); QTRY_VERIFY(service.canCheck());
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "error");
+        qputenv("HEADROOM_UPDATE_FIXTURE_ERROR", error.toUtf8());
+        service.checkForUpdates(); QTRY_COMPARE(service.state(), QString("failed"));
+        QVERIFY(service.statusText().contains(expected));
+        const auto diagnostics = events.join('\n');
+        QVERIFY(diagnostics.contains("check-update: Started."));
+        QVERIFY(diagnostics.contains("Package service exited with code 2."));
+        QVERIFY(diagnostics.contains(expected));
+        QVERIFY(!service.restartAvailable());
+        for (const auto &output : {service.statusText(), diagnostics}) {
+            QVERIFY(!output.contains("private-token"));
+            QVERIFY(!output.contains("private-stderr-value"));
+            QVERIFY(!output.contains("https://"));
+        }
+        qunsetenv("HEADROOM_UPDATE_FIXTURE_ERROR");
+    }
+    void failedProcessStartIsDiagnosed() {
+        QStringList events;
+        auto config = options(); config.managerPath = m_dir.filePath("absent-package-manager");
+        config.diagnostic = [&](const QString &message) { events.append(message); };
+        UpdateService service(true, config);
+        QTRY_COMPARE(service.state(), QString("failed"));
+        QVERIFY(events.join('\n').contains("package service could not be started"));
+        QVERIFY(!events.join('\n').contains(m_dir.path()));
+    }
     void sourceAndIsolatedModesNeverStartManager() {
         UpdateServiceOptions source;
         source.managerPath = QStringLiteral(UPDATE_FIXTURE_PATH);
@@ -346,10 +411,14 @@ private slots:
         QTRY_VERIFY(service.canRepair()); QVERIFY(service.statusText().contains(QStringLiteral("installation needs repair")));
     }
     void cancellationNeverAdvertisesRestart() {
-        UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        QStringList events;
+        auto config = options(); config.diagnostic = [&](const QString &message) { events.append(message); };
+        UpdateService service(true, config); QTRY_COMPARE(service.state(), QStringLiteral("current"));
         qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "hang");
         service.checkForUpdates(); QTRY_VERIFY(service.busy()); service.cancel();
         QTRY_COMPARE(service.state(), QStringLiteral("failed")); QVERIFY(!service.restartAvailable());
+        QVERIFY(events.join('\n').contains("Cancellation requested."));
+        QVERIFY(events.join('\n').contains("operation was cancelled."));
     }
     void malformedToolOutputFailsClosed() {
         UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));
@@ -358,9 +427,12 @@ private slots:
     }
     void timeoutAndOversizedStderrFailClosed() {
         auto shortOptions = options(); shortOptions.timeoutMs = 500;
+        QStringList events;
+        shortOptions.diagnostic = [&](const QString &message) { events.append(message); };
         UpdateService timed(true, shortOptions); QTRY_COMPARE(timed.state(), QStringLiteral("current"));
         qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "hang"); timed.checkForUpdates();
         QTRY_COMPARE(timed.state(), QStringLiteral("failed")); QVERIFY(timed.statusText().contains(QStringLiteral("timed out")));
+        QVERIFY(events.join('\n').contains("timed out"));
         qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE");
         UpdateService noisy(true, options()); QTRY_COMPARE(noisy.state(), QStringLiteral("current"));
         qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "stderr"); noisy.checkForUpdates();

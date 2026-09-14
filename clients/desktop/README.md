@@ -13,9 +13,11 @@ Widgets, Network, SVG image support, and Test. On Arch / EndeavourOS these come
 from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 `qt6-wayland` for a Wayland session). KDE tray anchoring uses the optional
 `kstatusnotifieritem` and `layer-shell-qt` (6.6+) libraries detected by CMake.
-Building with those optional packages enables KDE tray attachment. Without
-them, the client uses Qt tray activation and the positioning available from the
-desktop.
+Building with those optional packages enables native KDE Wayland tray attachment.
+Without LayerShellQt, the client prefers XWayland when available so tray clicks
+can position the popup beside the icon. Pure Wayland sessions without that
+integration leave window placement to the compositor. Explicit Qt platform
+overrides are preserved.
 
 macOS builds require macOS 12 or newer and Qt 6.8.3 or newer. CMake creates a
 menu-bar-only application bundle with the `io.headroom.Headroom` identifier.

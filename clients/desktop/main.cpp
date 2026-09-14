@@ -5,7 +5,9 @@
 #include "startup.h"
 #include "appinfo.h"
 #include "updateservice.h"
+#include "remoteupdate.h"
 #include "popup.h"
+#include "displayplatform.h"
 #include "instance.h"
 #include "palette.h"
 #include <QCursor>
@@ -56,6 +58,8 @@ int main(int argc, char **argv) {
     // The CLI bridge is headless and only talks to an existing desktop. It must
     // never instantiate Controller, discover credentials, or start a poller.
     if (argc == 2 && std::strcmp(argv[1], "--headroom-cli-request") == 0) return desktopCLIRequest(argc, argv);
+    // Select the positioning-capable display backend before Qt creates it.
+    DesktopPlatform::configure();
     QQuickStyle::setStyle("Basic");
     // QML windows need an alpha buffer before creation for transparent corners.
     QQuickWindow::setDefaultAlphaBuffer(true);
@@ -98,7 +102,18 @@ int main(int argc, char **argv) {
     serverVersionTimer.setInterval(5 * 60 * 1000);
     QObject::connect(&serverVersionTimer, &QTimer::timeout, &appInfo, &AppInfo::refreshServer);
     if (!capture) serverVersionTimer.start();
-    UpdateService updateService(!capture && !isolated);
+    UpdateServiceOptions updateOptions;
+    updateOptions.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
+    UpdateService updateService(!capture && !isolated, std::move(updateOptions));
+    RemoteUpdateOptions remoteOptions;
+    remoteOptions.diagnostic = [&controller](const QString &message) { controller.logUpdate(message); };
+    RemoteUpdateService remoteUpdate(std::move(remoteOptions));
+    QObject::connect(&updateService, &UpdateService::changed, &remoteUpdate, [&] {
+        remoteUpdate.setEnabled(updateService.publicUpdatesAllowed() && !updateService.busy());
+    });
+    QObject::connect(&remoteUpdate, &RemoteUpdateService::completed, &app, [&] {
+        appInfo.refreshServer(); controller.refresh();
+    });
     if (!capture && !isolated) instance.setRequestHandler([&](const QByteArray &request) {
         const auto document = QJsonDocument::fromJson(request);
         if (!document.isObject()) return QByteArray();
@@ -139,6 +154,8 @@ int main(int argc, char **argv) {
     const auto syncServices = [&] {
         startup.setAllowChanges(!capture && !isolated);
         updateService.setPublicTrafficAllowed(!capture && !isolated);
+        remoteUpdate.setBackend(capture || isolated ? QString() : controller.backendUrl());
+        remoteUpdate.setEnabled(updateService.publicUpdatesAllowed() && !updateService.busy());
         appInfo.setBackend(capture ? QString() : controller.backendUrl(),
                            capture ? QString() : controller.backendToken(),
                            capture ? QSslCertificate() : controller.backendCertificate(),
@@ -153,6 +170,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("startupService", &startup);
     engine.rootContext()->setContextProperty("appInfo", &appInfo);
     engine.rootContext()->setContextProperty("updateService", &updateService);
+    engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
     const bool hasTray = !capture && QSystemTrayIcon::isSystemTrayAvailable();
     engine.rootContext()->setContextProperty("trayAvailable", hasTray);
     engine.rootContext()->setContextProperty("startHidden", true);

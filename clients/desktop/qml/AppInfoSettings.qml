@@ -24,8 +24,23 @@ ColumnLayout {
         text: appInfo.serverUpdateNotice; Layout.fillWidth: true; wrapMode: Text.WordWrap
         color: Theme.orange; font.pixelSize: 12; textFormat: Text.PlainText
     }
-    Flow {
+    ColumnLayout {
+        visible: remoteUpdateService.available
         Layout.fillWidth: true; spacing: 8
+        Text {
+            text: remoteUpdateService.statusText; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            color: remoteUpdateService.state === "failed" ? Theme.red : Theme.muted
+            font.pixelSize: 12; textFormat: Text.PlainText
+        }
+        ActionButton {
+            objectName: "remoteServerUpdate"
+            text: remoteUpdateService.busy ? "Updating server…" : "Update server"
+            enabled: remoteUpdateService.canStart
+            onClicked: remoteUpdateService.start()
+        }
+    }
+    Flow {
+        Layout.fillWidth: true; spacing: 8; enabled: !remoteUpdateService.busy
         ActionButton { visible: updateService.canCheck || (updateService.busy && updateService.state !== "applying"); text: updateService.busy ? (updateService.state === "downloading" ? "Working…" : "Checking…") : "Check for updates"; enabled: updateService.canCheck; onClicked: updateService.checkForUpdates() }
         ActionButton { visible: updateService.canStage; text: "Download update"; onClicked: updateService.stageUpdate() }
         ActionButton { visible: updateService.canRepair; text: "Repair installation"; onClicked: updateService.repairInstallation() }

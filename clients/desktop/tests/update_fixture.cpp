@@ -115,6 +115,12 @@ int main(int argc, char **argv) {
         QTextStream(stdout) << QJsonDocument(QJsonObject{{"ok", true}, {"command", command}, {"result", result}}).toJson(QJsonDocument::Compact) << '\n';
         return 0;
     }
+    if (mode == QStringLiteral("error")) {
+        const QString error = qEnvironmentVariable("HEADROOM_UPDATE_FIXTURE_ERROR");
+        QTextStream(stdout) << QJsonDocument(QJsonObject{{"ok", false}, {"command", command}, {"error", error}}).toJson(QJsonDocument::Compact) << '\n';
+        QTextStream(stderr) << "private-stderr-value https://example.test/?token=private-token\n";
+        return 2;
+    }
     if (mode == QStringLiteral("hang")) {
         QFile input; if (input.open(stdin, QIODevice::ReadOnly)) input.read(1);
         QTextStream(stdout) << "{\"ok\":false,\"command\":\"" << command << "\",\"error\":\"cancelled\"}\n";

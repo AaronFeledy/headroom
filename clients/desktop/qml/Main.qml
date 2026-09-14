@@ -174,7 +174,7 @@ ApplicationWindow {
                     }
                     Text {
                         visible: !window.compact && window.attention > 0
-                        text: window.attention + " needs attention"; color: backend.warningColor(window.concernLevel); font.pixelSize: 11
+                        text: window.attention + (window.attention === 1 ? " needs attention" : " need attention"); color: backend.warningColor(window.concernLevel); font.pixelSize: 11
                     }
                     ActionButton {
                         objectName: "providerFilter"

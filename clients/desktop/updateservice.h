@@ -18,6 +18,8 @@ struct UpdateServiceOptions {
     int cancelGraceMs = 3000;
     bool fixtureIdentity = false;
     bool systemManaged = false;
+    // Receives only authored summaries, never raw package-tool output or URLs.
+    std::function<void(const QString &)> diagnostic;
 };
 
 class UpdateService : public QObject {
@@ -45,6 +47,7 @@ public:
     bool canRepair() const { return m_allowed && m_repairable && !busy() && !m_cliReply; }
     bool restartAvailable() const { return m_allowed && m_state == QStringLiteral("staged"); }
     QString updateMethod() const { return m_method; }
+    bool publicUpdatesAllowed() const { return m_allowed && m_official; }
     QJsonObject verifiedStage() const { return m_verifiedStage; }
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void stageUpdate();
@@ -66,6 +69,7 @@ private:
     void run(Operation operation, const QString &command, const QStringList &explicitArguments = {});
     void finish(Operation operation, int exitCode, QProcess::ExitStatus exitStatus);
     void fail(const QString &message);
+    void log(const QString &message) const;
     bool validateInstalledApplicationIdentity(const QJsonObject &result) const;
     bool validateIdentity(const QJsonObject &result) const;
     bool authorizePreparedApply(const QJsonObject &result) const;
@@ -93,6 +97,7 @@ private:
     QString m_architecture;
     QString m_packageKind;
     QString m_method = QStringLiteral("source");
+    QString m_diagnosticCommand;
     QString m_prePauseState;
     QString m_prePauseStatus;
     bool m_allowed = true;

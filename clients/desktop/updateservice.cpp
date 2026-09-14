@@ -46,6 +46,39 @@ QByteArray digest(const QString &path) {
     if (!hash.addData(&file)) return {};
     return hash.result();
 }
+
+QString recognizedToolFailure(const QJsonObject &object, const QString &command) {
+    if (object.value(QStringLiteral("ok")) != QJsonValue(false)
+        || object.value(QStringLiteral("command")).toString() != command) return {};
+    const QString error = object.value(QStringLiteral("error")).toString();
+    // Tool errors may contain signed download URLs, proxy credentials, paths,
+    // or server environment values. Classify them; never display or log them.
+    const auto http = QRegularExpression(QStringLiteral("^release server returned HTTP ([1-5][0-9]{2})$")).match(error);
+    if (http.hasMatch()) {
+        const int code = http.captured(1).toInt();
+        const QString prefix = QStringLiteral("The release service returned HTTP %1.").arg(code);
+        if (code >= 300 && code < 400)
+            return prefix + QStringLiteral(" Its address has moved; run the current Headroom installer to update.");
+        if (code == 403 || code == 429)
+            return prefix + QStringLiteral(" Access may be blocked or rate limited. Try again later.");
+        return prefix + QStringLiteral(" Try again later.");
+    }
+    if (error.startsWith(QStringLiteral("download release data: "))) {
+        if (error.contains(QStringLiteral("x509:")) || error.contains(QStringLiteral("tls:")))
+            return QStringLiteral("The update download could not establish a trusted TLS connection. Check certificates, system time, and any HTTPS proxy.");
+        if (error.contains(QStringLiteral("no such host")))
+            return QStringLiteral("The release service address could not be resolved. Check your network and DNS settings.");
+        if (error.contains(QStringLiteral("context deadline exceeded")) || error.contains(QStringLiteral("timeout"), Qt::CaseInsensitive))
+            return QStringLiteral("The release service request timed out. Check your connection and try again later.");
+        return QStringLiteral("The release service could not be reached. Check your connection and any proxy settings.");
+    }
+    if (error == QStringLiteral("downloaded package checksum does not match release manifest")
+        || error == QStringLiteral("downloaded package size does not match release manifest"))
+        return QStringLiteral("The downloaded package failed integrity verification. The current installation was not changed.");
+    if (error == QStringLiteral("Headroom installation identity is not valid"))
+        return QStringLiteral("The installed package identity could not be verified. Run the current Headroom installer to repair it.");
+    return {};
+}
 }
 
 UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions options, QObject *parent)
@@ -69,14 +102,17 @@ UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions optio
     m_method = m_options.systemManaged ? QStringLiteral("system") : QStringLiteral("source");
     if (!m_allowed) {
         m_status = QStringLiteral("Update checks are disabled for this session.");
+        log(m_status);
         return;
     }
     if (m_options.systemManaged) {
         m_status = QStringLiteral("This installation is managed by your system package manager.");
+        log(m_status);
         return;
     }
     if (m_options.installRoot.isEmpty() || m_options.launcherPath.isEmpty() || m_options.packageVersion.isEmpty()) {
         m_status = QStringLiteral("This source installation is updated from its source checkout.");
+        log(m_status);
         return;
     }
     inspectInstallation();
@@ -248,6 +284,7 @@ void UpdateService::restartToApply() {
 
 void UpdateService::startPairedUpdate() {
     if (m_pairProcess) return;
+    m_diagnosticCommand = QStringLiteral("paired-update");
     // This is a UI readiness check, not authorization. The coordinator still
     // validates the complete private pairing record and reciprocal identity.
     QFile pairing(QDir(m_options.installRoot).filePath(QStringLiteral("pairing/windows-wsl.json")));
@@ -260,6 +297,7 @@ void UpdateService::startPairedUpdate() {
         || pairingObject.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")
         || pairingObject.value(QStringLiteral("state")).toString() != QStringLiteral("active")) {
         m_status = QStringLiteral("Windows/WSL pairing needs attention. Complete pairing, or run headroom update --this-install-only for a local update. The downloaded package is still available.");
+        log(QStringLiteral("Paired update blocked: pairing is incomplete or invalid; the verified package was retained."));
         emit changed(); return;
     }
     if (!m_cliAvailable) { fail(QStringLiteral("Rerun the Headroom installer to enable updates for this paired installation.")); return; }
@@ -297,21 +335,25 @@ void UpdateService::startPairedUpdate() {
             // Keep it available while the user repairs the pairing or retries.
             m_state = QStringLiteral("staged");
             m_status = QStringLiteral("The Windows/WSL update did not finish. Run headroom update in a terminal for recovery details. The downloaded package is still available.");
+            log(QStringLiteral("Paired Windows/WSL update failed; the verified package was retained. Run headroom update for recovery details."));
             emit changed(); return;
         }
         m_verifiedStage = {}; m_state = QStringLiteral("current");
+        log(QStringLiteral("Paired Windows/WSL update completed."));
         m_status = QStringLiteral("The paired installations are up to date."); emit changed();
     };
     connect(process, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus status) { finish(code == 0 && status == QProcess::NormalExit); });
     connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) { if (error == QProcess::FailedToStart) finish(false); });
     QTimer::singleShot(15 * 60 * 1000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
     m_status = QStringLiteral("Preparing the Windows desktop and WSL server update…"); emit changed();
+    log(QStringLiteral("Paired Windows/WSL update started."));
     process->start();
 }
 
 void UpdateService::cancel() {
     if (!m_process || m_operation == Operation::Apply) return;
     m_cancelRequested = true;
+    log(QStringLiteral("Cancellation requested."));
     auto process = m_process;
     process->closeWriteChannel();
     QTimer::singleShot(m_options.cancelGraceMs, process, [process] {
@@ -325,6 +367,8 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
     auto process = new QProcess(this);
     m_process = process;
     m_operation = operation;
+    m_diagnosticCommand = command;
+    log(QStringLiteral("Started."));
     m_output.clear(); m_errorOutput.clear(); m_cancelRequested = false; m_timedOut = false;
     QStringList arguments;
     if (operation == Operation::Apply) {
@@ -403,6 +447,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         m_resumeAfterCancel = false;
         m_autoStage = false;
         m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
+        log(QStringLiteral("Stopped because update checks are paused for this session."));
         emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); return;
     }
     if (m_cancelRequested || m_timedOut) {
@@ -411,10 +456,21 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         m_state = QStringLiteral("failed");
         m_status = m_timedOut ? QStringLiteral("The update operation timed out. Try again later.")
                               : QStringLiteral("The update operation was cancelled.");
+        log(m_status);
 		emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); applyDeferredTrafficState(); return;
     }
-    if (m_output.size() > maximumToolOutput || m_errorOutput.size() > maximumToolOutput || exitStatus != QProcess::NormalExit || exitCode != 0) {
-        fail(QStringLiteral("The update operation did not complete. Try again later.")); return;
+    if (m_output.size() > maximumToolOutput || m_errorOutput.size() > maximumToolOutput) {
+        fail(QStringLiteral("The package service exceeded its output limit.")); return;
+    }
+    if (exitStatus != QProcess::NormalExit) {
+        fail(QStringLiteral("The Headroom package service stopped unexpectedly.")); return;
+    }
+    if (exitCode != 0) {
+        const auto object = QJsonDocument::fromJson(m_output).object();
+        const QString detail = recognizedToolFailure(object, m_diagnosticCommand);
+        log(QStringLiteral("Package service exited with code %1.").arg(exitCode));
+        fail(detail.isEmpty() ? QStringLiteral("The update operation did not complete (package service exit code %1). Try again later.").arg(exitCode) : detail);
+        return;
     }
     QJsonParseError error;
     const auto document = QJsonDocument::fromJson(m_output, &error);
@@ -433,7 +489,8 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
     }
     if (!object.value(QStringLiteral("ok")).toBool() || object.value(QStringLiteral("command")).toString() != expectedCommand
         || !object.value(QStringLiteral("result")).isObject()) {
-        fail(QStringLiteral("The update package was rejected. The current installation was not changed.")); return;
+        const QString detail = recognizedToolFailure(object, expectedCommand);
+        fail(detail.isEmpty() ? QStringLiteral("The update package was rejected. The current installation was not changed.") : detail); return;
     }
     const auto result = object.value(QStringLiteral("result")).toObject();
     if (operation == Operation::Apply) {
@@ -441,6 +498,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
             fail(QStringLiteral("The update transaction was not accepted.")); return;
         }
         m_status = QStringLiteral("Restarting into the verified Headroom package…"); emit changed();
+        log(QStringLiteral("Update transaction accepted; restarting into the verified package."));
         finishCLIRequest(QStringLiteral("accepted"), true);
         emit applyPrepared(); return;
     }
@@ -603,6 +661,7 @@ void UpdateService::handleInspection(const QJsonObject &result) {
             : validateInstalledApplicationIdentity(result)
                 ? QStringLiteral("The Headroom launcher is damaged. Rerun the official installer to repair this installation.")
                 : QStringLiteral("This source installation is updated from its source checkout.");
+        log(m_status);
         emit changed(); return;
     }
     m_official = true; m_method = QStringLiteral("automatic");
@@ -621,11 +680,13 @@ void UpdateService::handleInspection(const QJsonObject &result) {
             || path == QStringLiteral("bootstrap/headroom-package.exe") || path == QStringLiteral("bootstrap/association")) m_repairable = true;
     }
     if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("rolled_back")) {
+        log(QStringLiteral("The previous update was rolled back; the prior installation was restored."));
 	    m_suppressAutomaticCheck = true;
         m_state = QStringLiteral("failed");
         m_status = QStringLiteral("The update could not start, so Headroom restored the previous installation. %1")
                        .arg(result.value(QStringLiteral("apply_message")).toString());
     } else if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("recovery_required")) {
+        log(QStringLiteral("Update recovery is incomplete. Restart Headroom to retry recovery, or rerun the installer."));
         m_suppressAutomaticCheck = true;
         m_state = QStringLiteral("failed");
         m_status = QStringLiteral("Headroom could not finish restoring the previous installation. Restart Headroom to retry recovery; if the problem remains, rerun the installer. %1")
@@ -636,6 +697,10 @@ void UpdateService::handleInspection(const QJsonObject &result) {
             ? QStringLiteral("Headroom updated successfully.")
             : m_repairable ? QStringLiteral("The Headroom installation needs repair.")
                            : QStringLiteral("Headroom updates automatically after a startup check.");
+        log(result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("applied")
+            ? QStringLiteral("Update completed successfully.")
+            : m_repairable ? QStringLiteral("Installation verified; repair is needed.")
+                           : QStringLiteral("Installation verified; automatic updates are available."));
     }
     emit changed();
     if (m_autoPending) {
@@ -682,6 +747,7 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
     }
     m_latestVersion = version;
     if (status == QStringLiteral("available") && operation == Operation::Check && m_autoStage) {
+        log(QStringLiteral("Check completed: a newer package is available."));
         m_autoStage = false;
         m_state = QStringLiteral("available"); emit changed();
         run(Operation::Stage, QStringLiteral("stage-update")); return;
@@ -714,15 +780,19 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
         m_stageIsRepair = operation == Operation::Repair;
         m_status = operation == Operation::Repair ? QStringLiteral("A matching repair package is staged. Restart to apply it.")
                                                   : QStringLiteral("Headroom %1 is staged. Restart to apply it.").arg(version);
+        log(QStringLiteral("Download and verification completed; the package is staged for restart."));
     } else if (status == QStringLiteral("available")) {
         m_state = QStringLiteral("available");
         m_status = QStringLiteral("Headroom %1 is available.").arg(version);
+        log(QStringLiteral("Check completed: a newer package is available."));
     } else if (status == QStringLiteral("current")) {
         m_state = QStringLiteral("current");
         m_status = QStringLiteral("This version of Headroom is current.");
+        log(QStringLiteral("Check completed: this installation is current."));
     } else {
         m_state = QStringLiteral("unavailable");
         m_status = QStringLiteral("No compatible Headroom package is published yet.");
+        log(QStringLiteral("Check completed: no compatible package is published."));
     }
     emit changed();
     if (m_cliReply) {
@@ -732,10 +802,16 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
 }
 
 void UpdateService::fail(const QString &message) {
+    log(message);
     m_autoStage = false;
     finishCLIRequest(QStringLiteral("failed"), false);
     m_verifiedStage = {};
 	m_state = QStringLiteral("failed"); m_status = message; emit changed(); applyDeferredTrafficState();
+}
+
+void UpdateService::log(const QString &message) const {
+    if (m_options.diagnostic)
+        m_options.diagnostic(m_diagnosticCommand.isEmpty() ? message : m_diagnosticCommand + QStringLiteral(": ") + message);
 }
 
 void UpdateService::applyDeferredTrafficState() {

@@ -11,6 +11,7 @@ struct SshOptions {
 namespace SshTransport {
 bool parseAddress(const QString &address, QUrl *normalized = nullptr, QString *error = nullptr);
 QStringList arguments(const QUrl &address);
+QStringList updateArguments(const QUrl &address);
 }
 
 class SshNetworkAccessManager : public QNetworkAccessManager {
