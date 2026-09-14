@@ -14,7 +14,7 @@ import (
 func showLaunchError(string) {}
 
 func startApplication(executable string, arguments, environment []string, gui bool) error {
-	if !gui {
+	if !macOSLaunchUsesAppKit(gui, environment) {
 		return syscall.Exec(executable, append([]string{executable}, arguments...), environment)
 	}
 	payload, err := macOSLaunchPayload(executable, arguments, environment)

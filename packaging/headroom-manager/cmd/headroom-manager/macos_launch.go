@@ -60,3 +60,22 @@ func macOSLaunchPayload(executable string, arguments, environment []string) ([]b
 	}
 	return json.Marshal(request)
 }
+
+// Offscreen/minimal Qt processes do not participate in AppKit's application
+// launch lifecycle. Keep their synchronous command-line execution semantics;
+// Cocoa launches still require the actual bundle's Launch Services identity.
+func macOSLaunchUsesAppKit(gui bool, environment []string) bool {
+	if !gui {
+		return false
+	}
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key != "QT_QPA_PLATFORM" {
+			continue
+		}
+		platform, _, _ := strings.Cut(value, ";")
+		platform, _, _ = strings.Cut(platform, ":")
+		return platform != "offscreen" && platform != "minimal"
+	}
+	return true
+}

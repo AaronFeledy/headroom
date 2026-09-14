@@ -142,3 +142,11 @@ waits up to 30 seconds for a complete PNG and its readiness file. Nonce, version
 and executable checks are retained. Regression tests cover delayed output,
 partial images, missing readiness, and bounded failure; native CI validates the
 updated harness against the exact PR packages.
+
+Both native architectures then completed the Cocoa capture and exposed a second
+issue: the explicitly offscreen Qt capture cannot use the AppKit launch lifecycle.
+The launcher now executes explicit offscreen/minimal backends directly, preserving
+their synchronous command-line behavior. Normal Cocoa GUI launches continue through
+Launch Services. Routing regressions cover backend options and fallback lists;
+launcher race tests, vet, both Mac cross-builds, and all ten macOS packaging tests
+passed locally. Native CI remains the gate for the complete corrected packages.

@@ -97,3 +97,32 @@ func TestMacOSBackgroundLaunchPreventsQtFocusStealing(t *testing.T) {
 		}
 	}
 }
+
+func TestMacOSLaunchRoutesCocoaAndHeadlessBackends(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		gui      bool
+		platform string
+		appKit   bool
+	}{
+		{"CLI", false, "cocoa", false},
+		{"default GUI", true, "", true},
+		{"Cocoa", true, "cocoa", true},
+		{"Cocoa options", true, "cocoa:fontengine=freetype", true},
+		{"Cocoa with fallback", true, "cocoa;offscreen", true},
+		{"offscreen", true, "offscreen", false},
+		{"offscreen options", true, "offscreen:fontengine=freetype", false},
+		{"offscreen with fallback", true, "offscreen;minimal", false},
+		{"minimal", true, "minimal", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := []string{"HEADROOM_INSTALL_ROOT=/test root"}
+			if test.platform != "" {
+				environment = append(environment, "QT_QPA_PLATFORM="+test.platform)
+			}
+			if got := macOSLaunchUsesAppKit(test.gui, environment); got != test.appKit {
+				t.Fatalf("AppKit route = %v, want %v", got, test.appKit)
+			}
+		})
+	}
+}
