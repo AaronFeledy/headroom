@@ -1,6 +1,7 @@
 #include "popup.h"
 #include <QGuiApplication>
 #include <QCursor>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QQuickWindow>
 #include <QScreen>
@@ -211,6 +212,11 @@ void TrayPopup::position() {
 bool TrayPopup::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched != m_window) return QObject::eventFilter(watched, event);
+    if (event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        QMetaObject::invokeMethod(m_window, "dismissOverlayOrHide");
+        return true;
+    }
     if (event->type() != QEvent::MouseMove && event->type() != QEvent::MouseButtonPress
         && event->type() != QEvent::MouseButtonRelease && event->type() != QEvent::Leave)
         return QObject::eventFilter(watched, event);

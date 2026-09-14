@@ -438,9 +438,12 @@ private slots:
         engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        TrayPopup popup(window, true);
+        popup.show();
         window->requestActivate();
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QTRY_VERIFY(window->isVisible());
+        QVERIFY(!window->findChild<QObject *>("escapeShortcut"));
         QTRY_COMPARE(controller.providers().size(), 4);
 
         auto filterButton = findItem(window->contentItem(), "providerFilter"); QVERIFY(filterButton);
@@ -486,8 +489,8 @@ private slots:
         QVERIFY(log->property("readOnly").toBool());
         QVERIFY(log->property("selectByMouse").toBool());
         QCOMPARE(log->property("placeholderText").toString(), QString("No events recorded."));
-        QVERIFY(QMetaObject::invokeMethod(diagnostics, "forceActiveFocus"));
-        QTest::keyClick(window, Qt::Key_Escape);
+        QCOMPARE(log->objectName(), QString("diagnosticLog"));
+        escapeFocusedItem(log);
         QTRY_VERIFY(!diagnostics->property("opened").toBool());
         QVERIFY(window->isVisible());
 

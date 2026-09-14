@@ -38,6 +38,12 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
+    onVisibleChanged: if (visible && !settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+        restoreEscapeFocus()
+    function restoreEscapeFocus() {
+        window.requestActivate()
+        escapeFocus.forceActiveFocus()
+    }
     function dismissOverlayOrHide() {
         if (resetConfirmation.opened) resetConfirmation.close()
         else if (settings.opened) settings.close()
@@ -48,14 +54,9 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
     Shortcut { sequence: "Ctrl+,"; onActivated: settings.open() }
     Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
-    Shortcut {
-        objectName: "escapeShortcut"
-        sequence: "Escape"
-        context: Qt.ApplicationShortcut
-        onActivated: window.dismissOverlayOrHide()
-    }
-    SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open() }
-    DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel" }
+    Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
+    SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
+    DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
 
     // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
     // code that might trigger a reset: doing so can burn a very valuable reset.
@@ -69,7 +70,7 @@ ApplicationWindow {
         modal: true; focus: true; padding: 24
         closePolicy: Popup.NoAutoClose
         onOpened: resetCancel.forceActiveFocus()
-        onClosed: backend.cancelChatGptResetConfirmation()
+        onClosed: { backend.cancelChatGptResetConfirmation(); restoreEscapeFocus() }
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
         Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
@@ -198,6 +199,7 @@ ApplicationWindow {
                             id: filterMenu; objectName: "providerFilterMenu"
                             y: -height - 8
                             closePolicy: Popup.CloseOnPressOutside
+                            onClosed: restoreEscapeFocus()
                             Instantiator {
                                 model: ["All providers"].concat(window.providers.map(p => p.provider_name))
                                 delegate: MenuItem {
