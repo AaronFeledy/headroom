@@ -9,10 +9,27 @@ import secrets
 import subprocess
 import sys
 import tarfile
+import time
 
 
 def run(*arguments, **kwargs):
     return subprocess.run([str(argument) for argument in arguments], check=True, timeout=90, **kwargs)
+
+
+def wait_for_capture(image, ready, timeout=30):
+    # Launch Services returns after starting the app, before its capture is
+    # rendered. The PNG end marker avoids accepting a partially written file.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            data = image.read_bytes()
+            if (ready.is_file() and data.startswith(b"\x89PNG\r\n\x1a\n")
+                    and data.endswith(b"\x00\x00\x00\x00IEND\xaeB\x60\x82")):
+                return
+        except FileNotFoundError:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError(f"Mac launcher did not complete capture and readiness: {image}")
 
 
 def main():
@@ -48,12 +65,15 @@ def main():
     for platform in ("cocoa", "offscreen"):
         image = args.work / f"headroom-macos-{platform}.png"
         ready = image.with_suffix(".ready.json")
+        image.unlink(missing_ok=True)
+        ready.unlink(missing_ok=True)
         nonce = secrets.token_hex(24)
         env = environment | {"QT_QPA_PLATFORM": platform, "HEADROOM_READY_NONCE": nonce}
         if platform == "offscreen":
             env["QT_QUICK_BACKEND"] = "software"
         run(stable, "--config", image.with_suffix(".settings.json"), "--headroom-ready-file", ready,
             "--screenshot", image, env=env)
+        wait_for_capture(image, ready)
         assert image.stat().st_size > 0
         value = json.loads(ready.read_text())
         assert value["nonce"] == nonce and value["version"] == args.version and value["pid"] > 0

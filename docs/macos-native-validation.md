@@ -133,3 +133,12 @@ actions remained excluded. Unit regressions cover argument preservation,
 private environment transport, removal of inherited wrapper identity, empty
 argument lists, background activation policy, and rejection of non-bundle GUI
 targets.
+
+
+The first PR CI run exposed an asynchronous-completion assumption in
+`macos_package_smoke.py` on both Mac architectures: it inspected the image as
+soon as the stable launcher returned. The harness now removes stale outputs and
+waits up to 30 seconds for a complete PNG and its readiness file. Nonce, version,
+and executable checks are retained. Regression tests cover delayed output,
+partial images, missing readiness, and bounded failure; native CI validates the
+updated harness against the exact PR packages.
