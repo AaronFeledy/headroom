@@ -25,6 +25,12 @@ func captureProcessToken(pid int, expected string) (string, error) {
 	if !samePath(actual, expected) {
 		return "", errProcessExecutableMismatch
 	}
+	return linuxStartToken(pid)
+}
+
+// linuxStartToken remains available while an exiting process drops its
+// executable link, before /proc reports the zombie state.
+func linuxStartToken(pid int) (string, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return "", err
@@ -56,10 +62,21 @@ func (w *unixWatch) Wait(timeout time.Duration) error {
 		}
 		got, err := captureProcessToken(w.pid, w.executable)
 		if err != nil {
-			// The process may exit between the liveness check and reading its
-			// executable/start identity. A live replacement still fails closed.
+			// /proc can remove the executable link before reporting the zombie
+			// state. Wait out that transition only while the immutable creation
+			// identity still matches; a different executable remains an error.
 			if processGone(w.pid) {
 				return nil
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				start, startErr := linuxStartToken(w.pid)
+				if startErr == nil && start == w.token {
+					time.Sleep(25 * time.Millisecond)
+					continue
+				}
+				if processGone(w.pid) {
+					return nil
+				}
 			}
 			return fmt.Errorf("cannot verify watched process: %w", err)
 		}

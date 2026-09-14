@@ -150,3 +150,15 @@ their synchronous command-line behavior. Normal Cocoa GUI launches continue thro
 Launch Services. Routing regressions cover backend options and fallback lists;
 launcher race tests, vet, both Mac cross-builds, and all ten macOS packaging tests
 passed locally. Native CI remains the gate for the complete corrected packages.
+
+The corrected PR packages subsequently passed the native Intel and ARM64 Mac
+gates, including Cocoa and offscreen captures. The Linux manager race gate then
+failed twice in managed-service stop recovery, in code unchanged by the Mac fix.
+Linux could lose an exiting process's executable link before observing its zombie
+state. The watcher now handles that transition like the existing Darwin watcher:
+it retries within the wait deadline only when the independent kernel creation
+identity still matches. Executable or creation-identity mismatches still fail
+closed, and every signal still requires full executable/creation verification.
+Focused exit, bounded-wait, and live-identity rejection tests passed 50 race-enabled
+iterations locally. The complete manager race suite (with reset tests excluded),
+vet, and build also passed after this correction. Native CI remains the final gate.
