@@ -189,7 +189,7 @@ model-specific and billable meters. Status-only on-demand buckets are labeled
 without an invented percentage.
 
 Keyboard shortcuts: **Ctrl+R** refreshes, **Ctrl+,** opens settings, **Ctrl+Q** quits,
-and **Escape** closes settings or hides the window to the tray.
+and **Escape** closes settings or another open overlay, or hides the window to the tray.
 On macOS, Qt maps those Control shortcuts to the standard Command key.
 
 ## Desktop settings and diagnostics

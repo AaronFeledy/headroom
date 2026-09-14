@@ -9,6 +9,8 @@ Popup {
     width: Math.min(840, parent.width - 32)
     height: Math.min(640, parent.height - 32)
     modal: true; focus: true; padding: 24
+    closePolicy: Popup.CloseOnPressOutside
+    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
     Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     ColumnLayout {
@@ -34,6 +36,7 @@ Popup {
                     background: null
                     placeholderText: "No events recorded."; placeholderTextColor: Theme.muted
                     Accessible.name: "Diagnostic events"
+                    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
                 }
             }
         }

@@ -23,7 +23,8 @@ Popup {
     width: Math.min(480, parent.width - 32)
     height: Math.min(650, parent.height - 32)
     modal: true; focus: true; padding: 28
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    closePolicy: Popup.CloseOnPressOutside
+    Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
     Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     onOpened: {
@@ -69,6 +70,7 @@ Popup {
         Layout.fillWidth: true; implicitHeight: 44; color: Theme.foreground; font.pixelSize: 13; selectByMouse: true
         placeholderTextColor: Theme.muted; leftPadding: 12; rightPadding: 12
         background: Rectangle { radius: 8; color: Theme.inset; border.color: parent.activeFocus ? Theme.purple : Theme.selection }
+        Keys.onEscapePressed: function(event) { panel.close(); event.accepted = true }
     }
     ColumnLayout {
         anchors.fill: parent; spacing: 12

@@ -411,6 +411,57 @@ private slots:
         QCOMPARE(controller.settings()["interval"].toInt(), 900);
         QVERIFY(QMetaObject::invokeMethod(panel, "close"));
     }
+    void escapeClosesOverlayThenHidesToTray() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        ControllerFixture controller(dir.filePath("settings.json"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_VERIFY(window->isVisible());
+
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        QVERIFY(QMetaObject::invokeMethod(panel, "open"));
+        QTRY_VERIFY(panel->property("opened").toBool());
+        auto sshMode = findItem(window->contentItem(), "sshMode"); QVERIFY(sshMode);
+        QVERIFY(sshMode->setProperty("checked", true));
+        auto sshUrl = findItem(window->contentItem(), "sshUrl"); QVERIFY(sshUrl);
+        QTRY_VERIFY(sshUrl->isVisible());
+        sshUrl->forceActiveFocus();
+        QTRY_VERIFY(sshUrl->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QVERIFY(window->isVisible());
+
+        auto diagnostics = window->findChild<QObject *>("diagnosticsPanel"); QVERIFY(diagnostics);
+        QVERIFY(QMetaObject::invokeMethod(diagnostics, "open"));
+        QTRY_VERIFY(diagnostics->property("opened").toBool());
+        auto log = findItem(window->contentItem(), "diagnosticLog"); QVERIFY(log);
+        log->forceActiveFocus();
+        QTRY_VERIFY(log->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!diagnostics->property("opened").toBool());
+        QVERIFY(window->isVisible());
+
+        window->requestActivate();
+        QTRY_VERIFY(window->isActive());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!window->isVisible());
+    }
     void rendersOneTwoFourAndTwelveMeters() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QJsonArray providers;
