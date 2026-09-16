@@ -100,7 +100,7 @@ func Test_Client_Fetch_returns_reauth_usage_when_refresh_invalid_grant(t *testin
 	if err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
-	if !got.NeedsReauth || got.ReauthCommand == nil || *got.ReauthCommand != "claude" {
+	if !got.NeedsReauth || got.ReauthCommand == nil || *got.ReauthCommand != "claude auth login" {
 		t.Fatalf("reauth signaling = needs:%v command:%v", got.NeedsReauth, got.ReauthCommand)
 	}
 	if got.Error == nil || !strings.Contains(*got.Error, "AUTH_EXPIRED") {

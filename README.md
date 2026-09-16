@@ -282,6 +282,10 @@ harness and server Go/race/vet/build/Docker workflows. See
 - A remote authorization error means the Headroom bearer token and server
   `auth_token`/`USAGE_AUTH_TOKEN` do not match. The app retains last good usage
   while retrying; saving corrected connection settings cancels old requests.
+- **Copy sign-in command** only copies the server's suggested command (for
+  Claude, `claude auth login`); it runs nothing. Run it as the user whose
+  credentials the server reads, on the server host. For a Windows desktop using
+  a WSL server, run it in WSL, not in a Windows terminal.
 - If Linux starts without a tray, Headroom stays visible as a normal frameless
   window. Missing loader libraries should be compared with the Ubuntu 22.04
   runtime list in the [package contract](packaging/README.md).
