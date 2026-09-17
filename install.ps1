@@ -206,9 +206,25 @@ try {
         try {
             $shortcut = $shell.CreateShortcut((Join-Path $programs 'Headroom.lnk'))
             $shortcut.TargetPath = $EntryPath
+            $shortcut.Arguments = ''
+            $shortcut.IconLocation = "$EntryPath,0"
             $shortcut.WorkingDirectory = $InstallRoot
             $shortcut.Description = 'Headroom usage monitor'
             $shortcut.Save()
+            # Refresh this shortcut's cached Shell icon after first install or repair.
+            if (-not ('HeadroomInstaller.ShellIcons' -as [type])) {
+                Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+namespace HeadroomInstaller {
+    public static class ShellIcons {
+        [DllImport("shell32.dll", CharSet=CharSet.Unicode)]
+        public static extern void SHChangeNotify(uint change, uint flags, string path, IntPtr unused);
+    }
+}
+"@
+            }
+            [HeadroomInstaller.ShellIcons]::SHChangeNotify(0x2000, 0x2005, (Join-Path $programs 'Headroom.lnk'), [IntPtr]::Zero)
             $legacyShortcutPath = Join-Path $programs 'Claude Usage Widget.lnk'
             if (Test-Path -LiteralPath $legacyShortcutPath) {
                 $legacy = $shell.CreateShortcut($legacyShortcutPath)
