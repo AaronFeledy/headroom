@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlComponent>
 #include <QQmlProperty>
 #include <QQuickWindow>
 #include <QQuickStyle>
@@ -541,6 +542,203 @@ private slots:
         QTRY_VERIFY(window->isActive());
         QTest::keyClick(window, Qt::Key_Escape);
         QTRY_VERIFY(!window->isVisible());
+    }
+    void updateIndicatorsNavigateWithoutApplying_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("minimum") << QSize(460, 420);
+        QTest::newRow("compact") << QSize(699, 600);
+        QTest::newRow("wide-boundary") << QSize(700, 600);
+        QTest::newRow("wide") << QSize(960, 900);
+    }
+    void updateIndicatorsNavigateWithoutApplying() {
+        QFETCH(QSize, size);
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        ControllerFixture controller(dir.filePath("settings.json"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        QScopedPointer<QObject> services;
+        QQmlApplicationEngine engine;
+        // UI-only states: no real updater, remote command, or account action can run.
+        QQmlComponent fixtures(&engine);
+        fixtures.setData(R"(
+            import QtQml
+            QtObject {
+                property QtObject updates: QtObject {
+                    property string state: "current"
+                    property string statusText: state === "staged"
+                        ? "Headroom 8.4.2+test.1 is staged. Restart to apply it."
+                        : "Synthetic update status"
+                    property string latestVersion: "8.4.2+test.1"
+                    property string updateMethod: "automatic"
+                    property bool busy: state === "downloading" || state === "applying"
+                    property bool canCancel: state === "downloading"
+                    property bool canCheck: !busy
+                    property bool canStage: state === "available"
+                    property bool canRepair: false
+                    property bool restartAvailable: state === "staged"
+                    property int actions: 0
+                    function checkForUpdates() { actions++ }
+                    function stageUpdate() { actions++ }
+                    function restartToApply() { actions++ }
+                    function repairInstallation() { actions++ }
+                    function cancel() { actions++ }
+                    function openUpdateMethod() { actions++ }
+                }
+                property QtObject info: QtObject {
+                    property string applicationVersion: "8.4.1"
+                    property string serverVersion: "8.4.0"
+                    property string serverStatus: "Connected"
+                    property bool checkingServer: false
+                    property string serverUpdateNotice: ""
+                    function refreshServer() {}
+                }
+                property QtObject remote: QtObject {
+                    property bool available: true
+                    property bool busy: false
+                    property bool canStart: true
+                    property string state: "idle"
+                    property string statusText: ""
+                    property int actions: 0
+                    function start() { actions++ }
+                }
+            }
+        )", QUrl());
+        services.reset(fixtures.create());
+        QVERIFY2(services, qPrintable(fixtures.errorString()));
+        auto updates = services->property("updates").value<QObject *>(); QVERIFY(updates);
+        auto info = services->property("info").value<QObject *>(); QVERIFY(info);
+        auto remote = services->property("remote").value<QObject *>(); QVERIFY(remote);
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", info);
+        engine.rootContext()->setContextProperty("updateService", updates);
+        engine.rootContext()->setContextProperty("remoteUpdateService", remote);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(size);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        const auto originalSettings = controller.settings();
+        auto wide = findItem(window->contentItem(), "desktopUpdateIndicator"); QVERIFY(wide);
+        auto compact = findItem(window->contentItem(), "compactUpdateIndicator"); QVERIFY(compact);
+        auto server = findItem(window->contentItem(), "serverUpdateIndicator"); QVERIFY(server);
+        auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
+        auto indicator = size.width() < 700 ? compact : wide;
+        auto other = size.width() < 700 ? wide : compact;
+        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible()); QVERIFY(!server->isVisible());
+        for (const QString state : {"checking", "unavailable", "current"}) {
+            updates->setProperty("state", state);
+            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+        }
+        updates->setProperty("state", "available");
+        for (const QString method : {"source", "system"}) {
+            updates->setProperty("updateMethod", method);
+            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+        }
+        updates->setProperty("updateMethod", "automatic");
+
+        const QList<QPair<QString, QString>> states{
+            {"available", "↑ Update available"}, {"downloading", "Downloading…"},
+            {"staged", "↑ Restart to update"}, {"applying", "Applying update…"},
+            {"failed", "Update needs attention"}};
+        for (const auto &[state, label] : states) {
+            updates->setProperty("state", state);
+            QTRY_VERIFY(indicator->isVisible());
+            QVERIFY(!other->isVisible());
+            QCOMPARE(indicator->property("text").toString(), label);
+            QCOMPARE(indicator->property("needsAttention").toBool(), state == "failed");
+            const auto contained = [&] {
+                const auto at = indicator->mapToItem(footer, QPointF());
+                return at.x() >= 0 && at.y() >= 0
+                    && at.x() + indicator->width() <= footer->width()
+                    && at.y() + indicator->height() <= footer->height()
+                    && footer->y() >= 0 && footer->y() + footer->height() <= window->height() + 1;
+            };
+            QTRY_VERIFY(contained());
+            if (size.width() >= 700) {
+                auto filter = findItem(window->contentItem(), "providerFilter"); QVERIFY(filter);
+                QTRY_VERIFY(indicator->mapToScene(QPointF(indicator->width(), 0)).x()
+                            <= filter->mapToScene(QPointF()).x());
+            }
+        }
+        updates->setProperty("state", "staged");
+        updates->setProperty("latestVersion", "8.4.1");
+        QCOMPARE(indicator->property("text").toString(), QString("↑ Restart to apply"));
+        updates->setProperty("latestVersion", "8.4.2+test.1");
+        info->setProperty("serverUpdateNotice", "Your desktop is newer than the remote server (8.4.0). Use Update server in About & Updates.");
+        QTRY_VERIFY(server->isVisible());
+        QCOMPARE(server->property("text").toString(), QString("↑ Server update available"));
+        const auto separated = [&] {
+            const QRectF desktopRect(indicator->mapToScene(QPointF()), indicator->size());
+            const QRectF serverRect(server->mapToScene(QPointF()), server->size());
+            return !desktopRect.intersects(serverRect) && serverRect.right() <= window->width();
+        };
+        QTRY_VERIFY(separated());
+
+        const QString captureDir = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!captureDir.isEmpty()) {
+            QDir().mkpath(captureDir);
+            QTest::qWait(100);
+            QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
+                QString("update-footer-%1.png").arg(size.width()))));
+        }
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        // Keyboard activation opens the details; it must not install or restart.
+        indicator->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Space);
+        QTRY_VERIFY(panel->property("opened").toBool());
+        auto heading = findItem(window->contentItem(), "updatesHeading"); QVERIFY(heading);
+        auto scroll = findItem(window->contentItem(), "settingsScroll"); QVERIFY(scroll);
+        QTRY_VERIFY(heading->hasActiveFocus());
+        const auto headingInView = [&] {
+            const auto at = heading->mapToItem(scroll, QPointF());
+            return at.y() >= -1 && at.y() + heading->height() <= scroll->height() + 1;
+        };
+        QTRY_VERIFY(headingInView());
+        auto restart = findItem(window->contentItem(), "restartToApply"); QVERIFY(restart);
+        QTRY_VERIFY(restart->mapToItem(scroll, QPointF()).y() >= 0);
+        QTRY_VERIFY(restart->mapToItem(scroll, QPointF(0, restart->height())).y() <= scroll->height());
+        auto version = findItem(window->contentItem(), "availableUpdateVersion"); QVERIFY(version);
+        QVERIFY(version->isVisible());
+        QCOMPARE(version->property("text").toString(), QString("Available: Headroom 8.4.2+test.1"));
+        if (!captureDir.isEmpty()) {
+            QTest::qWait(100);
+            QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
+                QString("update-details-%1.png").arg(size.width()))));
+        }
+        UrlCapture capture;
+        QDesktopServices::setUrlHandler("https", &capture, "capture");
+        auto notes = findItem(window->contentItem(), "updateReleaseNotes"); QVERIFY(notes);
+        const bool openedNotes = QMetaObject::invokeMethod(notes, "clicked");
+        QDesktopServices::unsetUrlHandler("https");
+        QVERIFY(openedNotes);
+        QCOMPARE(capture.urls, QList<QUrl>{QUrl("https://github.com/AaronFeledy/headroom/releases/tag/v8.4.2%2Btest.1")});
+        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        // The server notice uses the same destination and never invokes SSH itself.
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            server->mapToScene(QPointF(server->width() / 2, server->height() / 2)).toPoint());
+        QTRY_VERIFY(panel->property("opened").toBool());
+        QTRY_VERIFY(heading->hasActiveFocus());
+        QTRY_VERIFY(headingInView());
+        QCOMPARE(updates->property("actions").toInt(), 0);
+        QCOMPARE(remote->property("actions").toInt(), 0);
+        QCOMPARE(controller.settings(), originalSettings);
+        updates->setProperty("state", "current");
+        QVERIFY(!version->isVisible()); QVERIFY(!notes->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+        info->setProperty("serverUpdateNotice", "");
+        QVERIFY(!server->isVisible());
+        // Ordinary settings entry should still start at the connection section.
+        QVERIFY(QMetaObject::invokeMethod(panel, "open"));
+        QTRY_VERIFY(panel->property("opened").toBool());
+        const auto flickable = scroll->property("contentItem").value<QObject *>(); QVERIFY(flickable);
+        QTRY_COMPARE(flickable->property("contentY").toReal(), 0.0);
     }
     void rendersOneTwoFourAndTwelveMeters() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
