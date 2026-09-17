@@ -147,12 +147,22 @@ always spans the full width, with remaining meters below it; the final meter
 fills any remaining columns. All providers use the same meter colors, with
 warning colors reserved for high usage and over-pace indicators. Hovering a
 provider highlights its border while preserving contrast with the meter tracks.
-Drag a row's six-dot handle onto another row. Drop in the upper half to insert
+Drag a provider panel onto another panel. Drop in the upper half to insert
 before it, or the lower half to insert after it. A line marks the insertion point.
 Rows read top to bottom. The first provider always supplies the tray meter; the full order
-is saved across restarts and polls. Right-click a handle to move a provider
+is saved across restarts and polls. Right-click a provider icon or title to move a provider
 directly to the top. Orders are local to each client. A provider without usable
 data produces an unknown tray meter instead of silently switching providers.
+
+On managed Windows installations, the stable launcher owns the tray icon with a
+persistent GUID, so versioned desktop updates keep the same Windows tray identity.
+The desktop sends rendered icons and notifications over inherited private pipes;
+the helper forwards clicks and physical icon geometry. It exits with its parent
+or when its pipe closes, and the desktop stops it before update shutdown. Qt's
+tray remains the fallback if the validated helper cannot start. Source and
+isolated sessions continue using Qt directly. Users may need to show the new
+stable icon once when upgrading from an older build; the app never rewrites
+Windows tray preferences.
 
 The tray shows the first provider's first usage bucket as a ring around a
 centered provider logo, without a numeric label. A white tick marks expected pace;

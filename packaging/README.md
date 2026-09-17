@@ -214,7 +214,22 @@ the release tag must equal the top-level strict SemVer.
 Per-user installations use immutable version directories. Windows stores the
 stable launcher, package tool, atomic state and versions under
 `%LOCALAPPDATA%\Headroom`; shortcuts and startup target the stable
-`headroom.exe`. Linux stores state and versions under
+`headroom.exe`. Its embedded icon and version resources are compiled from the same icon asset and package version as the Qt desktop using
+the pinned build-only `go-winres` compiler, then linked before package assembly,
+manifest hashing, and signing. The Windows
+installer explicitly uses that launcher as the Start menu shortcut's icon source
+and refreshes the shortcut on install/reinstall. In-app updates replace the stable
+launcher transactionally; the shortcut's target stays valid and its timestamp does
+not need to change. Windows icon sizes are rendered directly from the shared SVG
+with alpha preserved; regenerate the committed ICO with
+`python3 packaging/generate-windows-icon.py` (CairoSVG and Pillow required).
+Linux's per-user installer copies the packaged SVG to the stable
+`$XDG_DATA_HOME/icons/hicolor/scalable/apps/headroom.svg` location (defaulting to
+`~/.local/share`) and uses `Icon=headroom` in its desktop entry. Linux and Mac
+installer tests verify that launcher identities and copied icons survive changes
+to the active generation.
+
+Linux stores state and versions under
 `${XDG_DATA_HOME:-$HOME/.local/share}/headroom`; the desktop launcher remains
 inside that root and `$HOME/.local/bin/headroom` becomes the CLI entry. macOS
 keeps the Finder wrapper and adds the same CLI path. Windows uses
