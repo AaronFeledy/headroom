@@ -3,6 +3,8 @@
 
 import argparse
 import os
+import json
+import plistlib
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +18,15 @@ def main():
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("requires macOS Launch Services")
+    contents = args.app / "Contents"
+    info = plistlib.loads((contents / "Info.plist").read_bytes())
+    if info.get("CFBundleIdentifier") != "io.headroom.launcher" or info.get("CFBundleIconFile") != "headroom.icns":
+        raise AssertionError("Finder launcher lost its stable identity/icon")
+    root = Path((contents / "MacOS/headroom.root").read_text().strip())
+    state = json.loads((root / "install-state.json").read_text())
+    payload = root / state["version_path"] / "Headroom.app/Contents"
+    if (contents / "Resources/headroom.icns").read_bytes() != (payload / "Resources/headroom.icns").read_bytes():
+        raise AssertionError("Finder launcher icon differs from the installed desktop")
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("QT_", "QML", "HEADROOM_", "DYLD_"))}
     # Capture mode cannot poll providers or acquire public updates. Opening the
