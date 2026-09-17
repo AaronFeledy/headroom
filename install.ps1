@@ -205,10 +205,11 @@ try {
         $shell = New-Object -ComObject WScript.Shell
         try {
             $shortcut = $shell.CreateShortcut((Join-Path $programs 'Headroom.lnk'))
-            $shortcut.TargetPath = $EntryPath
+            $resolvedEntry = [IO.Path]::GetFullPath($EntryPath)
+            $shortcut.TargetPath = $resolvedEntry
             $shortcut.Arguments = ''
-            $shortcut.IconLocation = "$EntryPath,0"
-            $shortcut.WorkingDirectory = $InstallRoot
+            $shortcut.IconLocation = "$resolvedEntry,0"
+            $shortcut.WorkingDirectory = [IO.Path]::GetFullPath($InstallRoot)
             $shortcut.Description = 'Headroom usage monitor'
             $shortcut.Save()
             # Refresh this shortcut's cached Shell icon after first install or repair.
