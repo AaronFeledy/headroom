@@ -75,7 +75,7 @@ func Test_Client_Fetch_returns_typed_missing_credentials_error(t *testing.T) {
 	if !errors.Is(err, ErrCredentialsMissing) {
 		t.Fatalf("error = %v, want ErrCredentialsMissing", err)
 	}
-	if !got.NeedsReauth || got.ReauthCommand == nil || *got.ReauthCommand != "claude" {
+	if !got.NeedsReauth || got.ReauthCommand == nil || *got.ReauthCommand != "claude auth login" {
 		t.Fatalf("usage = %#v", got)
 	}
 }
