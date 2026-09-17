@@ -218,4 +218,16 @@ ApplicationWindow {
             }
         }
     }
+    // Draw above the footer so the outline follows the entire rounded window.
+    Rectangle {
+        anchors.fill: parent
+        z: 1
+        color: "transparent"
+        radius: Theme.windowRadius
+        border.width: 1
+        border.color: Qt.alpha(Theme.muted, 0.18)
+        antialiasing: true
+        enabled: false
+    }
+
 }

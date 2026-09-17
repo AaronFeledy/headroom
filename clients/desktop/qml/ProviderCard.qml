@@ -14,6 +14,8 @@ Rectangle {
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
+    // Tighten both narrow and medium cards while the provider header is above the meters.
+    readonly property bool compact: stacked
     property var resetCredits: provider.rate_limit_reset_credits
     property string resetAccountFingerprint: resetCredits && resetCredits.account_fingerprint
         ? resetCredits.account_fingerprint : ""
@@ -74,11 +76,24 @@ Rectangle {
             }
         }
     }
-    implicitHeight: body.implicitHeight + 36
+    implicitHeight: body.implicitHeight + (card.compact ? 28 : 36)
     radius: 12
     color: Theme.surface
     border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
     HoverHandler { id: hover; objectName: "providerHover_" + card.name }
+    // Behind the content so links and buttons keep their own click behavior.
+    MouseArea {
+        id: dragMouse; objectName: "panelDrag_" + card.name
+        anchors.fill: parent
+        hoverEnabled: true
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        drag.target: dragGhost
+        onPressed: function(mouse) { let p = mapToItem(Overlay.overlay, mouse.x, mouse.y); dragGhost.x = p.x - 16; dragGhost.y = p.y - 16 }
+        onReleased: dragGhost.Drag.drop()
+        onCanceled: dragGhost.Drag.cancel()
+    }
     Rectangle {
         id: dragGhost; parent: Overlay.overlay; z: 1000
         property string providerName: card.name
@@ -86,7 +101,7 @@ Rectangle {
         visible: dragMouse.drag.active
         Drag.active: dragMouse.drag.active; Drag.source: dragGhost; Drag.keys: ["headroom-provider"]
         Drag.hotSpot.x: 16; Drag.hotSpot.y: 16
-        Text { anchors.centerIn: parent; text: "⠿  " + card.displayName; color: Theme.foreground; font.pixelSize: 14 }
+        Text { anchors.centerIn: parent; text: card.displayName; color: Theme.foreground; font.pixelSize: 14 }
     }
     Rectangle {
         visible: drop.containsDrag
@@ -106,49 +121,39 @@ Rectangle {
     }
     GridLayout {
         id: body
-        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 18 }
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 18; topMargin: card.compact ? 14 : 18 }
         columns: card.stacked ? 1 : 2
-        columnSpacing: 20; rowSpacing: 20
-        ColumnLayout {
+        columnSpacing: 20; rowSpacing: card.compact ? 14 : 20
+        RowLayout {
+            id: providerHeader
+            objectName: "providerHeader_" + card.name
             Layout.fillWidth: card.stacked
-            Layout.fillHeight: true
             Layout.preferredWidth: card.stacked ? -1 : 138
             Layout.maximumWidth: card.stacked ? Infinity : 138
             Layout.alignment: Qt.AlignTop
-            spacing: 6
-            RowLayout {
-                Layout.fillWidth: true; spacing: 10
-                Rectangle {
-                    width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
-                    Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 4
-                    Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
+            spacing: 10
+            Rectangle {
+                width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
+                Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 4
+                Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: card.compact ? 2 : 1
+                    columnSpacing: 8; rowSpacing: 4
                     Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                     Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
                 }
             }
-            Item {
-                Layout.preferredWidth: 35; Layout.minimumHeight: 28
-                Layout.fillHeight: true
-                Layout.alignment: Qt.AlignLeft
-                Text { anchors.centerIn: parent; text: "⠿"; font.pixelSize: 22; color: Theme.muted }
-                MouseArea {
-                    id: dragMouse; objectName: "dragHandle_" + card.name
-                    width: 35; height: 28; anchors.centerIn: parent
-                    hoverEnabled: true
-                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-                    drag.target: dragGhost
-                    onPressed: function(mouse) { let p = mapToItem(Overlay.overlay, mouse.x, mouse.y); dragGhost.x = p.x - 16; dragGhost.y = p.y - 16 }
-                    onReleased: dragGhost.Drag.drop()
-                    onCanceled: dragGhost.Drag.cancel()
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: function(mouse) { if (mouse.button === Qt.RightButton) orderMenu.popup() }
-                }
-                ToolTip.visible: dragMouse.containsMouse && !dragMouse.pressed
-                ToolTip.text: "Drag to reorder · right-click for more options"
-                Menu { id: orderMenu; MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) } }
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: orderMenu.popup()
+            }
+            Menu {
+                id: orderMenu; objectName: "providerMenu_" + card.name
+                MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
             }
         }
         GridLayout {
@@ -159,13 +164,14 @@ Rectangle {
             // its old column count can otherwise prevent it from shrinking.
             readonly property real availableWidth: body.width - (card.stacked ? 0 : 138 + body.columnSpacing)
             columns: Math.max(1, Math.min(card.provider.buckets.length - (card.stacked ? 1 : 0), Math.floor((availableWidth + columnSpacing) / (190 + columnSpacing))))
-            columnSpacing: 24; rowSpacing: 22; uniformCellWidths: true
+            columnSpacing: 24; rowSpacing: card.compact ? 16 : 22; uniformCellWidths: true
             Repeater {
                 model: card.provider.buckets
                 Meter {
                     required property var modelData
                     required property int index
                     bucket: modelData; providerName: card.name; accent: card.accent
+                    compact: card.compact
                     footerAccessory: card.name === "Codex" && modelData.id === "weekly" ? bankedResetsFooter : null
                     footerAccessoryVisible: card.hasBankedResets && modelData.id === "weekly"
                     Layout.fillWidth: true; Layout.alignment: Qt.AlignTop

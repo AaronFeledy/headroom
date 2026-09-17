@@ -288,20 +288,20 @@ write_atomic(resources/'headroom.icns', (payload/'Resources'/'headroom.icns').re
 write_atomic(info_path, plistlib.dumps(info))
 PY
 }
-if [ "$platform" = macos ] && [ "$package_kind" != cli ]; then macos_entry check; fi
-"$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
-  --cli-entry-path "$cli_entry_path" --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
-
-if [ "$package_kind" = cli ]; then
-  printf 'Installed Headroom %s at %s\nRun %s for usage, %s serve for the server, or %s update to update.\n' "$version" "$install_root" "$cli_entry_path" "$cli_entry_path" "$cli_entry_path"
-  exit 0
-fi
-
-if [ "$platform" = macos ]; then
-  macos_entry write
-else
+linux_entry() {
 applications=${XDG_DATA_HOME:-"$HOME/.local/share"}/applications
-mkdir -p -- "$applications"
+icon_theme=${XDG_DATA_HOME:-"$HOME/.local/share"}/icons/hicolor
+icons=$icon_theme/scalable/apps
+mkdir -p -- "$applications" "$icons"
+# Copy from the verified generation into the user's stable icon theme location.
+python3 - "$install_root" "$private_root/headroom.svg" <<'PY'
+import json, pathlib, sys
+root=pathlib.Path(sys.argv[1])
+state=json.loads((root/'install-state.json').read_text())
+source=root/state['version_path']/'share/icons/hicolor/scalable/apps/headroom.svg'
+pathlib.Path(sys.argv[2]).write_bytes(source.read_bytes())
+PY
+install -m 0644 "$private_root/headroom.svg" "$icons/headroom.svg"
 desktop_tmp=$private_root/headroom.desktop
 desktop_exec=$(python3 - "$entry_path" <<'PY'
 import re, sys
@@ -314,10 +314,29 @@ Type=Application
 Name=Headroom
 Comment=Usage monitor
 Exec=$desktop_exec
+Icon=headroom
+StartupWMClass=Headroom
 Terminal=false
 Categories=Utility;
 EOF
 install -m 0644 "$desktop_tmp" "$applications/headroom.desktop"
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t "$icon_theme" >/dev/null 2>&1 || :
+fi
+}
+if [ "$platform" = macos ] && [ "$package_kind" != cli ]; then macos_entry check; fi
+"$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
+  --cli-entry-path "$cli_entry_path" --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
+
+if [ "$package_kind" = cli ]; then
+  printf 'Installed Headroom %s at %s\nRun %s for usage, %s serve for the server, or %s update to update.\n' "$version" "$install_root" "$cli_entry_path" "$cli_entry_path" "$cli_entry_path"
+  exit 0
+fi
+
+if [ "$platform" = macos ]; then
+  macos_entry write
+else
+  linux_entry
 fi
 printf 'Installed Headroom %s at %s\n' "$version" "$install_root"
 if [ "$no_launch" -eq 1 ]; then

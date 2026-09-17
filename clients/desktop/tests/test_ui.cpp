@@ -135,6 +135,12 @@ private slots:
             QVERIFY(meter->setProperty("concern", Usage::concern("Claude", bucket)));
             const QColor expected(used >= 80 ? "#ff5555" : used >= 68 ? "#ffb86c" : used >= 60 ? "#f1fa8c" : "#bd93f9");
             QTRY_COMPARE(fill->property("color").value<QColor>(), expected);
+            auto title = findItem(window->contentItem(), "meterLabel_Claude_session"); QVERIFY(title);
+            auto severity = findItem(window->contentItem(), "meterSeverity_Claude_session"); QVERIFY(severity);
+            if (severity->isVisible()) {
+                QTRY_VERIFY(!title->property("truncated").toBool());
+                QTRY_VERIFY(std::abs(severity->x() - title->x() - title->width() - 8) < 1);
+            }
         }
         QTRY_COMPARE(fill->width(), track->width());
         QVERIFY(window->grabWindow().save(capture("headroom-critical.png")));
@@ -150,10 +156,10 @@ private slots:
         }
         auto chatgpt = findItem(window->contentItem(), "providerLabel_Codex");
         QVERIFY(chatgpt); QCOMPARE(chatgpt->property("text").toString(), QString("ChatGPT"));
-        auto source = findItem(window->contentItem(), "dragHandle_Codex");
-        auto target = findItem(window->contentItem(), "dragHandle_Claude");
-        QVERIFY(source); QVERIFY(target);
-        const QPoint from = source->mapToScene(QPointF(14, 18)).toPoint();
+        // Drag from a meter, rather than a dedicated handle or header.
+        auto source = findItem(window->contentItem(), "meterTrack_Codex_weekly");
+        QVERIFY(source);
+        const QPoint from = source->mapToScene(QPointF(source->width() / 2, 3)).toPoint();
         const QPoint to = claudeCard->mapToScene(QPointF(claudeCard->width() / 2, 20)).toPoint();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
         for (int i = 1; i <= 20; ++i) QTest::mouseMove(window, from + (to - from) * i / 20, 15);
@@ -161,6 +167,22 @@ private slots:
         QTRY_COMPARE(controller.primary(), QString("Codex"));
         QCOMPARE(controller.providers()[0].toMap()["provider_name"].toString(), QString("Codex"));
         QVERIFY(window->grabWindow().save(capture("headroom-reordered.png")));
+        // The icon and title both offer the ordering menu; meter right-clicks do not.
+        auto header = findItem(window->contentItem(), "providerHeader_Codex"); QVERIFY(header);
+        auto orderMenu = header->findChild<QObject *>("providerMenu_Codex"); QVERIFY(orderMenu);
+        for (const auto &part : {"providerIcon_Codex", "providerLabel_Codex"}) {
+            auto headerPart = findItem(window->contentItem(), part); QVERIFY(headerPart);
+            QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier,
+                              headerPart->mapToScene(QPointF(headerPart->width() / 2, headerPart->height() / 2)).toPoint());
+            QTRY_VERIFY(orderMenu->property("opened").toBool());
+            QVERIFY(QMetaObject::invokeMethod(orderMenu, "close"));
+            QTRY_VERIFY(!orderMenu->property("opened").toBool());
+        }
+        // Reordering recreates the provider delegates.
+        source = findItem(window->contentItem(), "meterTrack_Codex_weekly"); QVERIFY(source);
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier,
+                          source->mapToScene(QPointF(source->width() / 2, 3)).toPoint());
+        QVERIFY(!orderMenu->property("opened").toBool());
         auto filterButton = findItem(window->contentItem(), "providerFilter"); QVERIFY(filterButton);
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
                           filterButton->mapToScene(QPointF(filterButton->width() / 2, filterButton->height() / 2)).toPoint());
@@ -243,6 +265,13 @@ private slots:
                     auto meter = findItem(window->contentItem(), "meter_" + name + "_" + bucketId);
                     QVERIFY(meter);
                     QCOMPARE(meter->property("accent").value<QColor>(), QColor("#bd93f9"));
+                    auto title = findItem(window->contentItem(), "meterLabel_" + name + "_" + bucketId); QVERIFY(title);
+                    auto severity = findItem(window->contentItem(), "meterSeverity_" + name + "_" + bucketId); QVERIFY(severity);
+                    const qreal titleSpace = std::ceil(title->implicitWidth()) + 8
+                        + (severity->isVisible() ? std::ceil(severity->implicitWidth()) + 8 : 0);
+                    // Long labels may elide, but spare space must not be lost to rounding.
+                    if (titleSpace <= title->parentItem()->width())
+                        QTRY_VERIFY2(!title->property("truncated").toBool(), qPrintable(title->objectName()));
                     if (firstMeter) QCOMPARE(meter->width(), meter->parentItem()->width());
                     firstMeter = false;
                     // Native resize/layout delivery can take more than a frame.
@@ -262,6 +291,20 @@ private slots:
             }
             QVERIFY(window->grabWindow().save(capture(width == 460 ? "headroom-compact.png" : "headroom-medium.png")));
         }
+        // At minimum width, dragging the panel must win over the scroll view.
+        // An ordinary click on the same surface must not change the order.
+        auto narrowSource = findItem(window->contentItem(), "providerCard_Claude"); QVERIFY(narrowSource);
+        auto narrowTarget = findItem(window->contentItem(), "providerCard_Codex"); QVERIFY(narrowTarget);
+        const QPoint narrowFrom = narrowSource->mapToScene(QPointF(narrowSource->width() - 8, 12)).toPoint();
+        const QPoint narrowTo = narrowTarget->mapToScene(QPointF(narrowTarget->width() / 2, 20)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, narrowFrom);
+        QCOMPARE(controller.primary(), QString("Codex"));
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, narrowFrom);
+        for (int i = 1; i <= 20; ++i) QTest::mouseMove(window, narrowFrom + (narrowTo - narrowFrom) * i / 20, 15);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, narrowTo);
+        QTRY_COMPARE(controller.primary(), QString("Claude"));
+        controller.setPrimary("Codex");
+        QTRY_COMPARE(controller.primary(), QString("Codex"));
         const auto connectedState = controller.state();
         const auto retainedProviders = controller.providers();
         auto disconnectedState = connectedState;

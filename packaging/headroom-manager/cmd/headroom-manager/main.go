@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
+	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/internal/trayhost"
 )
 
 var buildVersion = "dev"
@@ -33,6 +34,24 @@ type output struct {
 
 func main() { os.Exit(run(os.Args)) }
 func run(args []string) int {
+	if len(args) == 2 && args[1] == "--headroom-tray-host" {
+		if runtime.GOOS != "windows" || invocationRole == contract.RoleCLI {
+			return 1
+		}
+		root, err := associatedInstallRoot()
+		if err != nil {
+			return 1
+		}
+		inspection := contract.InspectInstall(root)
+		executable, err := os.Executable()
+		if err != nil || !inspection.TrustedIdentity || !inspection.Complete || !strings.EqualFold(filepath.Clean(executable), filepath.Clean(inspection.LauncherPath)) {
+			return 1
+		}
+		if err := trayhost.Run(os.Stdin, os.Stdout, executable, inspection.ActiveExecutable); err != nil {
+			return 1
+		}
+		return 0
+	}
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(args[0])), ".exe")
 	if invocationRole == contract.RoleCLI {
 		arguments := args[1:]
@@ -214,6 +233,7 @@ func assetName(args []string) (any, error) {
 	root, err := contract.ArchiveRoot(*version, *platform, *arch)
 	return map[string]string{"asset_name": asset, "archive_root": root}, err
 }
+
 // reportCLILaunchFailure keeps the public command's stdout reserved for usage
 // output. A CLI that ran already reported its own diagnostics, so only its exit
 // status is mirrored; a launcher failure is described on stderr.

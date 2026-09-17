@@ -664,6 +664,8 @@ void UpdateService::handleInspection(const QJsonObject &result) {
         log(m_status);
         emit changed(); return;
     }
+    if (result.value(QStringLiteral("complete")).toBool())
+        m_trustedLauncherPath = cleanAbsolute(result.value(QStringLiteral("launcher_path")).toString());
     m_official = true; m_method = QStringLiteral("automatic");
     m_cliAvailable = result.value(QStringLiteral("complete")).toBool() && !result.value(QStringLiteral("cli_entry_path")).toString().isEmpty();
     m_cliEntryPath = cleanAbsolute(result.value(QStringLiteral("cli_entry_path")).toString());
