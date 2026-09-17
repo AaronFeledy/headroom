@@ -2,6 +2,7 @@
 #include "usage.h"
 #include "trayvisual.h"
 #include "trayattention.h"
+#include "stabletray.h"
 #include "startup.h"
 #include "appinfo.h"
 #include "updateservice.h"
@@ -197,6 +198,7 @@ int main(int argc, char **argv) {
             controller.saveWindowSize(size);
         }}, &app);
     QSystemTrayIcon tray(TrayVisual::icon({}));
+    StableTray stableTray;
     QMenu fallbackMenu;
     QMenu *trayMenu = &fallbackMenu;
     bool nativeTrayUsed = false;
@@ -206,6 +208,7 @@ int main(int argc, char **argv) {
         // SNI/Wayland hosts do not expose icon hover or global pointer position.
         // Never guess from stale Wayland coordinates. Windows and X11 can use
         // the actual tray rectangle; Qt also sends tooltip events on X11.
+        if (stableTray.available()) return stableTray.hovered();
         const QString platform = QGuiApplication::platformName();
         if (nativeTrayUsed || (platform != "windows" && platform != "xcb" && platform != "cocoa")) return false;
         const QRect bounds = tray.geometry();
@@ -267,6 +270,27 @@ int main(int argc, char **argv) {
             popup.toggle(tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos());
     });
     QObject::connect(&tray, &QSystemTrayIcon::messageClicked, &attention, &TrayAttention::acknowledge);
+    QObject::connect(&stableTray, &StableTray::availabilityChanged, &app, [&](bool available) {
+        if (available) tray.hide(); else if (hasTray) tray.show();
+    });
+    QObject::connect(&stableTray, &StableTray::activated, &app, [&](int reason) {
+        attention.acknowledge();
+        const auto bounds = stableTray.geometry();
+        const QPoint anchor = bounds.isValid() ? bounds.center() : QCursor::pos();
+        if (reason == QSystemTrayIcon::Context) fallbackMenu.popup(anchor);
+        else if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) popup.toggle(anchor);
+    });
+    QObject::connect(&stableTray, &StableTray::messageClicked, &attention, &TrayAttention::acknowledge);
+    QObject::connect(&fallbackMenu, &QMenu::aboutToHide, &stableTray, [&] {
+        // Let the selected action open the dashboard before returning keyboard
+        // focus to the Shell; otherwise an Open/Settings action can lose focus.
+        QTimer::singleShot(0, &stableTray, [&] {
+            if (!window->isVisible()) stableTray.restoreFocus();
+        });
+    });
+    // Finish the helper before the desktop exits so update/rollback can replace
+    // the stable launcher without a running image holding it open.
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &stableTray, &StableTray::stop);
     const auto notify = [&](const QString &title, const QString &message, int severity) {
         if (!hasTray) return;
 #ifdef HEADROOM_KDE_TRAY
@@ -275,6 +299,7 @@ int main(int argc, char **argv) {
             return;
         }
 #endif
+        if (stableTray.available()) { stableTray.showMessage(title, message, severity); return; }
         tray.showMessage(title, message, severity >= 3 ? QSystemTrayIcon::Critical : severity >= 2 ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information, 7000);
     };
     QObject::connect(&controller, &Controller::notify, &app, [&](const QString &title, const QString &message) { notify(title, message, 0); });
@@ -288,6 +313,7 @@ int main(int argc, char **argv) {
             return;
         }
 #endif
+        stableTray.setIcon(icon);
         tray.setIcon(icon);
     };
     QObject::connect(&attention, &TrayAttention::frameChanged, &app, renderTray);
@@ -308,6 +334,7 @@ int main(int argc, char **argv) {
             return;
         }
 #endif
+        stableTray.setToolTip(trayModel.tooltip);
         tray.setToolTip(trayModel.tooltip);
     };
     QObject::connect(&controller, &Controller::changed, &app, updateTray);
@@ -321,6 +348,13 @@ int main(int argc, char **argv) {
         tray.show();
 #endif
     }
+#ifdef Q_OS_WIN
+    const auto startStableTray = [&] {
+        if (hasTray && !capture && !isolated) stableTray.start(updateService.trustedLauncherPath());
+    };
+    QObject::connect(&updateService, &UpdateService::changed, &stableTray, startStableTray);
+    startStableTray();
+#endif
     if (!parser.isSet("background") || !hasTray || parser.isSet("headroom-update-restart")
         || parser.isSet("headroom-installed-restart")) show();
     if (!capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
