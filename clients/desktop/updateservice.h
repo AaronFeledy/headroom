@@ -48,6 +48,7 @@ public:
     bool restartAvailable() const { return m_allowed && m_state == QStringLiteral("staged"); }
     QString updateMethod() const { return m_method; }
     bool publicUpdatesAllowed() const { return m_allowed && m_official; }
+    QString trustedLauncherPath() const { return m_trustedLauncherPath; }
     QJsonObject verifiedStage() const { return m_verifiedStage; }
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void stageUpdate();
@@ -85,6 +86,7 @@ private:
     QPointer<QProcess> m_pairProcess;
     bool m_cliAvailable = false;
     QString m_cliEntryPath;
+    QString m_trustedLauncherPath;
     QTimer m_timeout;
     QByteArray m_output;
     QByteArray m_errorOutput;
