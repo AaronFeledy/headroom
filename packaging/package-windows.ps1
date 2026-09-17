@@ -53,6 +53,10 @@ Copy-Item -LiteralPath $crtFiles.FullName -Destination (Join-Path $packageRoot '
 Copy-Item $Server (Join-Path $packageRoot 'bundle/bin/usage-server.exe')
 Copy-Item $CredentialHelper (Join-Path $packageRoot 'bundle/bin/headroom-credential-helper.exe')
 Copy-Item $Launcher (Join-Path $packageRoot 'bootstrap/headroom.exe')
+$launcherBranding = (Get-Item -LiteralPath $Launcher).VersionInfo
+if ($launcherBranding.ProductName -cne 'Headroom' -or $launcherBranding.ProductVersion -cne $Version) {
+    throw 'Stable launcher branding/version resources are missing or do not match the package.'
+}
 Copy-Item $Manager (Join-Path $packageRoot 'bootstrap/headroom-package.exe')
 Copy-Item $Manager (Join-Path $packageRoot 'bundle/bin/headroom-package.exe')
 Copy-Item $CLI (Join-Path $packageRoot 'bundle/bin/headroom-cli.exe')
