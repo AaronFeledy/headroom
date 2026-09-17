@@ -39,6 +39,14 @@ private:
     QIcon icon() { QPixmap pixmap(32,32); pixmap.fill(Qt::magenta); return QIcon(pixmap); }
 private slots:
     void cleanup() { qunsetenv("HEADROOM_TRAY_FIXTURE"); }
+    void shellIdentityMatchesLauncher() {
+        QCOMPARE(StableTray::shellIdentity(R"(C:\Users\Test\Headroom\headroom.exe)").toHex(),
+                 QByteArray("7974f8089c125c1c98618b11a2f2235f"));
+        QCOMPARE(StableTray::shellIdentity("c:/users/test/headroom/headroom.exe"),
+                 StableTray::shellIdentity(R"(C:\Users\Test\Headroom\headroom.exe)"));
+        QVERIFY(StableTray::shellIdentity(R"(C:\Users\Other\Headroom\headroom.exe)")
+                != StableTray::shellIdentity(R"(C:\Users\Test\Headroom\headroom.exe)"));
+    }
     void pipeLifecycle() {
         qputenv("HEADROOM_TRAY_FIXTURE", "normal");
         StableTray tray;

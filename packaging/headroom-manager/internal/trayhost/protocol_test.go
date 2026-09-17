@@ -2,6 +2,7 @@ package trayhost
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,6 +15,9 @@ func TestStableIdentity(t *testing.T) {
 	}
 	if a == identity(`C:\Users\Other\Headroom\headroom.exe`) {
 		t.Fatal("separate installations share an identity")
+	}
+	if got := hex.EncodeToString(a[:]); got != "7974f8089c125c1c98618b11a2f2235f" {
+		t.Fatalf("desktop NIM_DELETE identity drifted: %s", got)
 	}
 }
 

@@ -6,6 +6,7 @@
 #include <QIcon>
 #include <QRect>
 #include <QJsonObject>
+#include <QByteArray>
 
 // The installed Windows launcher owns the Shell icon at a stable executable
 // path. The desktop retains rendering, menus, notifications and popup behavior.
@@ -23,6 +24,8 @@ public:
     bool available() const { return m_available; }
     bool hovered() const { return m_hovered; }
     QRect geometry() const;
+    // UUID v5-style identity shared with the launcher tray host.
+    static QByteArray shellIdentity(const QString &launcher);
 signals:
     void availabilityChanged(bool available);
     void activated(int reason);
@@ -32,10 +35,12 @@ private:
     void sendIcon();
     void readEvents();
     void failed();
+    void removeShellIcon();
     QProcess m_process;
     QTimer m_timeout;
     QIcon m_icon;
     QString m_tooltip;
+    QString m_launcher;
     QByteArray m_output;
     QRect m_geometry;
     int m_size = 32;

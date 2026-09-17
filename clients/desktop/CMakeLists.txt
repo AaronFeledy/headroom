@@ -89,7 +89,7 @@ endif()
 
 set(headroom_platform_sources)
 if(WIN32)
-    target_link_libraries(headroom-core PUBLIC user32)
+    target_link_libraries(headroom-core PUBLIC user32 shell32)
     set(HEADROOM_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/windows/headroom.ico")
     set(HEADROOM_WINDOWS_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/headroom.manifest")
     configure_file(windows/headroom.manifest "${HEADROOM_WINDOWS_MANIFEST}" @ONLY)

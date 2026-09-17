@@ -4,8 +4,12 @@
 #include <QScreen>
 #include <QJsonDocument>
 #include <QImage>
+#include <QCryptographicHash>
 #ifdef Q_OS_WIN
+#include <QtEndian>
+#include <cstring>
 #include <qt_windows.h>
+#include <shellapi.h>
 #endif
 
 StableTray::StableTray(QObject *parent) : QObject(parent) {
@@ -25,9 +29,40 @@ StableTray::StableTray(QObject *parent) : QObject(parent) {
 
 StableTray::~StableTray() { stop(); }
 
+QByteArray StableTray::shellIdentity(const QString &launcher) {
+    QString path = launcher;
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    path = path.toLower();
+    QByteArray key = QByteArrayLiteral("Headroom.WindowsTray.v1");
+    key.append('\0');
+    key.append(path.toUtf8());
+    QByteArray id = QCryptographicHash::hash(key, QCryptographicHash::Sha256).left(16);
+    id[6] = char((static_cast<unsigned char>(id[6]) & 0x0f) | 0x50);
+    id[8] = char((static_cast<unsigned char>(id[8]) & 0x3f) | 0x80);
+    return id;
+}
+
+void StableTray::removeShellIcon() {
+#ifdef Q_OS_WIN
+    if (m_launcher.isEmpty()) return;
+    const QByteArray id = shellIdentity(m_launcher);
+    GUID guid{};
+    guid.Data1 = qFromBigEndian<quint32>(reinterpret_cast<const uchar *>(id.constData()));
+    guid.Data2 = qFromBigEndian<quint16>(reinterpret_cast<const uchar *>(id.constData() + 4));
+    guid.Data3 = qFromBigEndian<quint16>(reinterpret_cast<const uchar *>(id.constData() + 6));
+    memcpy(guid.Data4, id.constData() + 8, 8);
+    NOTIFYICONDATAW data{};
+    data.cbSize = sizeof(data);
+    data.uFlags = NIF_GUID;
+    data.guidItem = guid;
+    Shell_NotifyIconW(NIM_DELETE, &data);
+#endif
+}
+
 void StableTray::start(const QString &launcher) {
     if (m_attempted || launcher.isEmpty()) return;
     m_attempted = true;
+    m_launcher = launcher;
     m_timeout.start();
     m_process.start(launcher, {QStringLiteral("--headroom-tray-host")});
 }
@@ -45,6 +80,8 @@ void StableTray::stop() {
             m_process.waitForFinished(1500);
         }
     }
+    // GUID icons survive an abnormal helper exit until NIM_DELETE.
+    removeShellIcon();
     m_available = false;
     m_hovered = false;
     m_stopping = false;
