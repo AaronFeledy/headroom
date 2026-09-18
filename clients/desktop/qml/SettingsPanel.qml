@@ -4,6 +4,19 @@ import QtQuick.Layouts
 
 Popup {
     id: panel
+    property bool updatesRequested: false
+    function focusUpdates() {
+        const maxY = Math.max(0, settingsScroll.contentHeight - settingsScroll.availableHeight)
+        settingsScroll.contentItem.contentY = Math.min(aboutUpdates.y, maxY)
+        aboutUpdates.focusHeading()
+    }
+    function openUpdates() {
+        if (opened) Qt.callLater(focusUpdates)
+        else {
+            updatesRequested = true
+            open()
+        }
+    }
     property int selectedInterval: 60
     property var intervalValues: [15, 30, 60, 120, 300]
     function intervalLabel(seconds) {
@@ -38,8 +51,14 @@ Popup {
         if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
         interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
-        if (remoteMode.checked) url.forceActiveFocus()
-        else if (sshMode.checked) sshUrl.forceActiveFocus()
+        if (updatesRequested) {
+            updatesRequested = false
+            Qt.callLater(focusUpdates)
+        } else {
+            settingsScroll.contentItem.contentY = 0
+            if (remoteMode.checked) url.forceActiveFocus()
+            else if (sshMode.checked) sshUrl.forceActiveFocus()
+        }
     }
     component Caption: Text { color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium }
     component ConnectionMode: RadioButton {
@@ -155,7 +174,7 @@ Popup {
                 color: Theme.muted; font.pixelSize: 12; lineHeight: 1.4; visible: trayAvailable
             }
             StartupSettings { Layout.fillWidth: true }
-            AppInfoSettings { Layout.fillWidth: true }
+            AppInfoSettings { id: aboutUpdates; Layout.fillWidth: true }
             ActionButton { text: "Open diagnostics"; quiet: true; onClicked: { panel.close(); panel.diagnosticsRequested() } }
         }
     }

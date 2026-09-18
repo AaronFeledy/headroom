@@ -14,6 +14,18 @@ ApplicationWindow {
     property bool compact: width < 700
     property string filter: "All providers"
     property var state: backend.state
+    readonly property string desktopUpdateLabel: {
+        if (updateService.updateMethod !== "automatic") return ""
+        switch (updateService.state) {
+        case "available": return "↑ Update available"
+        case "downloading": return "Downloading…"
+        case "staged": return updateService.latestVersion === appInfo.applicationVersion
+            ? "↑ Restart to apply" : "↑ Restart to update"
+        case "applying": return "Applying update…"
+        case "failed": return "Update needs attention"
+        default: return ""
+        }
+    }
     property bool serverOffline: state.status === "offline"
     property var providers: backend.providers
     property var shownProviders: providers.filter(p => filter === "All providers" || p.provider_name === filter)
@@ -157,12 +169,30 @@ ApplicationWindow {
                 id: footerBody
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: window.compact ? 16 : 24; topMargin: 12 }
                 spacing: 10
-                Text {
-                    objectName: "serverUpdateNotice"
-                    visible: appInfo.serverUpdateNotice.length > 0
-                    Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    text: appInfo.serverUpdateNotice
-                    textFormat: Text.PlainText; color: Theme.orange; font.pixelSize: 11
+                Flow {
+                    Layout.fillWidth: true; spacing: 8
+                    visible: (window.compact && window.desktopUpdateLabel.length > 0)
+                        || appInfo.serverUpdateNotice.length > 0
+                    UpdateIndicator {
+                        id: compactUpdateIndicator; objectName: "compactUpdateIndicator"
+                        visible: window.compact && window.desktopUpdateLabel.length > 0
+                        text: window.desktopUpdateLabel
+                        needsAttention: updateService.state === "failed"
+                        detail: updateService.statusText
+                        Accessible.name: "Headroom: " + text
+                        onClicked: settings.openUpdates()
+                    }
+                    UpdateIndicator {
+                        id: serverUpdateIndicator; objectName: "serverUpdateIndicator"
+                        visible: appInfo.serverUpdateNotice.length > 0
+                        text: remoteUpdateService.busy ? "Updating server…"
+                            : remoteUpdateService.state === "failed" ? "Server update needs attention"
+                            : "↑ Server update available"
+                        needsAttention: remoteUpdateService.state === "failed"
+                        detail: appInfo.serverUpdateNotice
+                        Accessible.name: text
+                        onClicked: settings.openUpdates()
+                    }
                 }
                 Text {
                     visible: window.state.status === "offline"
@@ -175,7 +205,19 @@ ApplicationWindow {
                     Image { source: "../headroom.svg"; sourceSize.width: 26; sourceSize.height: 26; Layout.preferredWidth: 26; Layout.preferredHeight: 26 }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 3
-                        Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
+                        RowLayout {
+                            spacing: 10
+                            Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
+                            UpdateIndicator {
+                                objectName: "desktopUpdateIndicator"
+                                visible: !window.compact && window.desktopUpdateLabel.length > 0
+                                text: window.desktopUpdateLabel
+                                needsAttention: updateService.state === "failed"
+                                detail: updateService.statusText
+                                Accessible.name: "Headroom: " + text
+                                onClicked: settings.openUpdates()
+                            }
+                        }
                         Text {
                             Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
                             text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"

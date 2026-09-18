@@ -242,6 +242,17 @@ guide, while system-managed builds defer to their package manager and never
 write into a per-user package installation. Capture and explicit-config sessions
 cannot check or download public releases.
 
+The sticky footer shows a purple update indicator when a package is available,
+downloading, staged for restart, or applying; failures show an amber attention
+indicator. Compact windows place it above the footer controls. Clicking the
+indicator opens and focuses **About & Updates**, where the installed and available
+versions, release notes, and existing update actions are shown. A separate
+**Server update available** indicator retains the remote server version guidance;
+it never starts a server update merely by opening settings. Routine checks and
+current, paused, source, or system-managed installations do not show a desktop
+update pill. The indicators do not change startup checks, downloads, or restart
+consent.
+
 The legacy WinForms updater cannot install a Headroom package. Existing users
 run the Headroom installer once, then the settings import and startup migration
 take place on the first normal launch. See the
