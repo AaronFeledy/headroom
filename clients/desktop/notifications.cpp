@@ -13,9 +13,12 @@ void replaceTarget(QVariantList &items, const QVariantMap &event) {
 }
 }
 
-void Notifications::post(const QString &target, const QString &title, const QString &message, int severity) {
+void Notifications::post(const QString &target, const QString &title, const QString &message, int severity, const QVariantMap &details) {
     if (target.isEmpty()) return;
-    replaceTarget(m_pending, {{"target", target}, {"title", title}, {"message", message}, {"severity", severity}});
+    auto event = details;
+    event.insert("target", target); event.insert("title", title);
+    event.insert("message", message); event.insert("severity", severity);
+    replaceTarget(m_pending, event);
     emit pendingChanged();
     emit desktopNotification(title, message, severity);
 }
@@ -52,4 +55,35 @@ void Notifications::observeUpdate(const QString &state, const QString &version, 
     const QString title = state == "available" ? "Headroom update available"
         : state == "staged" ? "Headroom is ready to restart" : "Headroom update needs attention";
     post("desktopUpdate", title, message, state == "failed" ? 2 : 0);
+}
+
+void Notifications::resetBankedResetBaseline() {
+    m_bankedResetCount = -1; m_resetAccountFingerprint.clear();
+    const auto removeCounter = [](QVariantList &items) {
+        const auto before = items.size();
+        items.erase(std::remove_if(items.begin(), items.end(), [](const QVariant &item) {
+            return item.toMap().value("target").toString() == "bankedResets_Codex";
+        }), items.end());
+        return items.size() != before;
+    };
+    const bool pendingChangedValue = removeCounter(m_pending);
+    const bool presentationChangedValue = removeCounter(m_presented);
+    m_highlights.remove("bankedResets_Codex");
+    if (pendingChangedValue) emit pendingChanged();
+    if (presentationChangedValue) emit presentationChanged();
+}
+
+void Notifications::observeBankedResetCount(qint64 count, const QString &accountFingerprint, bool enabled) {
+    if (count < 0) return; // Unavailable data is not a zero balance.
+    if (accountFingerprint != m_resetAccountFingerprint) resetBankedResetBaseline();
+    const auto before = m_bankedResetCount;
+    m_bankedResetCount = count; m_resetAccountFingerprint = accountFingerprint;
+    if (before < 0 || count == before || !enabled) return;
+    const auto delta = count - before;
+    // Report what the snapshot establishes; decreases need not mean expiry.
+    const QString title = delta > 0 ? "ChatGPT banked resets increased" : "ChatGPT banked resets decreased";
+    const QString message = QString("Banked resets changed from %1 to %2 (%3%4).")
+        .arg(before).arg(count).arg(delta > 0 ? "+" : "").arg(delta);
+    post("bankedResets_Codex", title, message, delta < 0 ? 2 : 0,
+        {{"delta", delta}, {"previousCount", before}, {"count", count}});
 }

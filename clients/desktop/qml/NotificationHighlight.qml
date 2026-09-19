@@ -5,6 +5,7 @@ Rectangle {
     required property string targetKey
     property var viewport: null
     property bool presenting: false
+    signal activated()
     readonly property bool flashing: fade.running
     // The clip is checked before claiming attention, so offscreen meters keep
     // their one-time highlight until scrolled into view during this opening.
@@ -16,7 +17,7 @@ Rectangle {
         }
         if (backend.notifications.claimHighlight(targetKey)) flash()
     }
-    function flash() { fade.restart() }
+    function flash() { fade.restart(); activated() }
     anchors.fill: parent; anchors.margins: -4
     radius: 6; color: Qt.alpha(Theme.cyan, 0.14)
     border.width: 2; border.color: Theme.cyan

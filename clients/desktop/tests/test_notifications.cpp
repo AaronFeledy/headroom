@@ -4,6 +4,46 @@
 class NotificationsTest : public QObject {
     Q_OBJECT
 private slots:
+    void bankedResetChangesUseObservedCountsAndAccountBaselines() {
+        Notifications notifications;
+        QSignalSpy native(&notifications, &Notifications::desktopNotification);
+        notifications.observeBankedResetCount(3, "account-a", true);
+        notifications.observeBankedResetCount(3, "account-a", true);
+        notifications.observeBankedResetCount(-1, "account-a", true);
+        QCOMPARE(native.size(), 0);
+        notifications.observeBankedResetCount(4, "account-a", true);
+        QCOMPARE(native.size(), 1);
+        QCOMPARE(notifications.unreadCount(), 1);
+        notifications.present();
+        auto event = notifications.presented().first().toMap();
+        QCOMPARE(event["target"].toString(), "bankedResets_Codex");
+        QCOMPARE(event["delta"].toLongLong(), 1);
+        QVERIFY(event["message"].toString().contains("3 to 4"));
+        QVERIFY(!event.values().contains("account-a"));
+        notifications.endPresentation();
+        notifications.observeBankedResetCount(1, "account-a", true);
+        notifications.observeBankedResetCount(0, "account-a", true);
+        QCOMPARE(native.size(), 3);
+        QCOMPARE(notifications.unreadCount(), 1); // Latest change for this counter wins.
+        notifications.present();
+        event = notifications.presented().first().toMap();
+        QCOMPARE(event["delta"].toLongLong(), -1);
+        QCOMPARE(event["count"].toLongLong(), 0);
+        notifications.observeBankedResetCount(8, "account-b", true);
+        QCOMPARE(native.size(), 3);
+        QVERIFY(notifications.presented().isEmpty()); // Old-account attention cannot leak.
+        notifications.observeBankedResetCount(9, "account-b", false);
+        notifications.observeBankedResetCount(9, "account-b", true);
+        QCOMPARE(native.size(), 3);
+        notifications.observeBankedResetCount(11, "account-b", true);
+        notifications.present();
+        QCOMPARE(notifications.presented().first().toMap()["delta"].toLongLong(), 2);
+        notifications.resetBankedResetBaseline();
+        notifications.observeBankedResetCount(1, "account-b", true);
+        QCOMPARE(native.size(), 4);
+        QCOMPARE(notifications.unreadCount(), 0);
+        QVERIFY(notifications.presented().isEmpty());
+    }
     void coalescesTargetsAndConsumesOnce() {
         Notifications notifications;
         QSignalSpy native(&notifications, &Notifications::desktopNotification);

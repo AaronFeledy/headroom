@@ -30,6 +30,19 @@ the dashboard removes that opening's summary and highlights, so they do not repl
 on the next opening. Native notification clicks open the dashboard on the Qt and
 Windows stable-tray paths.
 
+Changes in ChatGPT's reported banked-reset count use this same notification path.
+The first valid count establishes a baseline. Missing/failed readings do not imply
+zero; account or connection changes establish a new baseline. Disabled notifications
+still update the baseline, so enabling them does not replay past changes. A decrease
+is reported as a count change, without assuming whether a reset expired or was used.
+
+On opening the dashboard, the counter shows a quick signed delta rising and fading
+above it: green for additions and orange for decreases, using the actual difference
+(including changes greater than one). The counter remains visible at zero and falls
+back to the provider header if there is no weekly meter. Like other notifications,
+several unseen changes to the same counter retain the latest reported change, and
+acknowledged animations do not replay on subsequent openings.
+
 Notification state is session-only and is never written to disk. Unseen events
 coalesce by target, with at most 128 targets retained; a fresh warning transition
 can notify about the same meter again after acknowledgement.

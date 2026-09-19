@@ -216,6 +216,14 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
     m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
     observeResetUsage();
+    for (const auto &value : m_providers) {
+        const auto provider = value.toMap();
+        if (provider["provider_name"].toString() != "Codex" || !provider["is_success"].toBool()) continue;
+        const auto credits = provider["rate_limit_reset_credits"].toMap();
+        if (credits.contains("available_count"))
+            m_notificationCenter.observeBankedResetCount(credits["available_count"].toLongLong(),
+                credits["account_fingerprint"].toString(), m_notifications);
+    }
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
 }
@@ -243,7 +251,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (!error.isEmpty()) return error;
     cancel();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();

@@ -84,7 +84,9 @@ ApplicationWindow {
         const item = findNotificationItem(providerRows, event.target)
         if (!item || !item.visible) return // The summary retains events whose meter disappeared.
         const point = item.mapToItem(scroll.contentItem, 0, 0)
-        scroll.contentItem.contentY = Math.max(0, Math.min(point.y + scroll.contentItem.contentY - 18,
+        // Leave room above the reset counter for its rising delta animation.
+        const topSpace = event.target.startsWith("bankedResets_") ? 88 : 18
+        scroll.contentItem.contentY = Math.max(0, Math.min(point.y + scroll.contentItem.contentY - topSpace,
             scroll.contentHeight - scroll.availableHeight))
     }
     function presentNotifications() {

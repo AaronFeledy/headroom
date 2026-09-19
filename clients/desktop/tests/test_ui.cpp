@@ -440,6 +440,79 @@ private slots:
         QVERIFY(window->setProperty("state", connectedState));
         QTRY_COMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#44475a"));
     }
+    void bankedResetDeltaFloatsOnce_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("compact") << QSize(460, 600);
+        QTest::newRow("wide") << QSize(1180, 940);
+    }
+    void bankedResetDeltaFloatsOnce() {
+        QFETCH(QSize, size);
+        QTemporaryDir dir;
+        const QString reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithCodex(0, 41, 3, reset));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo info; UpdateService updates(false); RemoteUpdateService remote;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &info);
+        engine.rootContext()->setContextProperty("updateService", &updates);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remote);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(size);
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        window->show(); window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto delta = [&]() { return findItem(window->contentItem(), "bankedResetDelta_Codex"); };
+        auto counter = [&]() { return findItem(window->contentItem(), "bankedResets_Codex"); };
+        QTRY_VERIFY(delta() && delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), "+1");
+        QCOMPARE(counter()->property("text").toString(), "4 banked resets");
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        QTRY_VERIFY(delta()->property("rise").toDouble() > 5);
+        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
+        QTRY_VERIFY(delta()->mapToItem(scroll, QPointF()).y() >= 0);
+        const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture); QTest::qWait(150);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("banked-plus-%1.png").arg(size.width()))));
+        }
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        QCOMPARE(delta()->opacity(), 0.0);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
+        QTest::qWait(100); QVERIFY(!delta()->property("running").toBool());
+        window->hide(); window->show(); window->requestActivate();
+        QTest::qWait(100); QVERIFY(!delta()->property("running").toBool());
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 3, reset));
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−1"));
+        if (!capture.isEmpty()) {
+            QTest::qWait(250);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("banked-minus-%1.png").arg(size.width()))));
+        }
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, reset));
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−3"));
+        QVERIFY(counter()->isVisible());
+        QCOMPARE(counter()->property("text").toString(), "0 banked resets");
+        // A provider without a weekly bucket still has a real counter and target.
+        auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 1, reset)).array();
+        auto codex = providers[1].toObject();
+        codex["buckets"] = QJsonArray{codex["buckets"].toArray().first()}; providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(counter() && counter()->isVisible());
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), "+1");
+        window->hide();
+    }
     void bankedResetsFollowWeeklyCriticalState() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         const auto capture = [&](const QString &name) {
@@ -478,7 +551,8 @@ private slots:
 
         const QString halfWeekReset = QDateTime::currentDateTimeUtc().addSecs(7 * 86400 / 2).toString(Qt::ISODate);
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, halfWeekReset));
-        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
+        QCOMPARE(label->property("text").toString(), QString("0 banked resets"));
 
         auto missing = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
         auto missingCodex = missing[1].toObject(); missingCodex.remove("rate_limit_reset_credits"); missing[1] = missingCodex;
