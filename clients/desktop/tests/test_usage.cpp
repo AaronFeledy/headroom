@@ -56,6 +56,43 @@ private slots:
         QCOMPARE(buckets.first().toMap()["id"].toString(), QString("weekly"));
         QCOMPARE(buckets.first().toMap()["utilization"].toDouble(), 0.0);
     }
+    void bankedResetNotificationsObserveSnapshotsOnly() {
+        QTemporaryDir dir;
+        const auto reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
+        auto payload = [&](int count, const QString &fingerprint = QString(64, 'a'),
+                           bool failed = false, bool missing = false) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, count, reset)).array();
+            auto codex = providers[1].toObject();
+            if (missing) codex.remove("rate_limit_reset_credits");
+            else codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
+            if (failed) { codex["is_success"] = false; codex["error"] = "Unavailable"; }
+            providers[1] = codex;
+            return QJsonDocument(providers).toJson();
+        };
+        ControllerFixture controller(dir.filePath("settings.json"), payload(3));
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(alerts.size(), 0);
+        controller.replaceSnapshot(payload(4)); QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(4)); QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(0, QString(64, 'a'), true));
+        controller.replaceSnapshot(payload(0, QString(64, 'a'), false, true));
+        controller.replaceSnapshot(payload(-1)); // Invalid metadata is normalized to unknown.
+        QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(2)); QCOMPARE(alerts.size(), 2);
+        controller.notifications()->present();
+        QCOMPARE(controller.notifications()->presented().last().toMap()["delta"].toLongLong(), -2);
+        controller.replaceSnapshot(payload(9, QString(64, 'b')));
+        QCOMPARE(alerts.size(), 2);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        QVERIFY(controller.notifications()->presented().isEmpty());
+        controller.replaceSnapshot(payload(0, QString(64, 'b')));
+        QCOMPARE(alerts.size(), 3);
+        QVERIFY(controller.saveSettings("remote", "https://different.example.test", "", 60, true,
+            "Claude", false).isEmpty()); // Fixture refresh is synthetic; no network request.
+        QCOMPARE(alerts.size(), 3);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+    }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
         const QString fingerprint(64, QLatin1Char('a'));
@@ -360,7 +397,7 @@ private slots:
             });
         });
         Controller controller(dir.filePath("settings.json"), nullptr, true, {}, disabledCredentials());
-        QSignalSpy alerts(&controller, &Controller::usageAlert);
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
         const QString url = QString("http://127.0.0.1:%1").arg(server.serverPort());
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
@@ -373,13 +410,21 @@ private slots:
             QTRY_VERIFY(!controller.state()["loading"].toBool());
             QCOMPARE(concern()["severity"].toInt(), step.severity);
             QCOMPARE(alerts.size(), step.alerts);
+            QCOMPARE(controller.notifications()->unreadCount(), step.alerts ? 1 : 0);
+
             QCOMPARE(concern()["color"].toString(), controller.warningColor(step.severity));
             QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
         }
+        controller.notifications()->present();
+        const auto event = controller.notifications()->presented().first().toMap();
+        QCOMPARE(event["target"].toString(), "meter_Claude_session");
+        QVERIFY(event["title"].toString().contains("Critical"));
+        controller.notifications()->endPresentation();
         QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool());
         used = 80; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(alerts.size(), 3);
         httpStatus = 503; controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "offline");

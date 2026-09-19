@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QHash>
 #include "warning.h"
+#include "notifications.h"
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
@@ -16,6 +17,7 @@
 
 class Controller : public QObject {
     Q_OBJECT
+    Q_PROPERTY(Notifications *notifications READ notifications CONSTANT)
     Q_PROPERTY(QVariantList providers READ providers NOTIFY providersChanged)
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
@@ -26,6 +28,7 @@ public:
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
                         CredentialServiceOptions credentialOptions = {}, SshOptions sshOptions = {}, bool startPolling = true);
     ~Controller() override;
+    Notifications *notifications() { return &m_notificationCenter; }
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -72,8 +75,6 @@ signals:
     void diagnosticsChanged();
     void providersChanged();
     void settingsChanged();
-    void notify(const QString &title, const QString &message);
-    void usageAlert(const QString &title, const QString &message, int severity);
 protected:
     void acceptSnapshot(const QVariantList &providers);
 private:
@@ -93,6 +94,7 @@ private:
     void observeResetUsage();
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);
+    Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
     QString m_mode = "remote", m_url, m_token, m_sshUrl, m_primary = "Claude", m_message, m_status = "setup";

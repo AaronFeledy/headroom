@@ -8,6 +8,8 @@ ColumnLayout {
     required property var bucket
     required property string providerName
     property bool compact: false
+    property var notificationViewport: null
+    property bool presentingNotifications: false
     property color accent: Theme.purple
     property Component footerAccessory: null
     property bool footerAccessoryVisible: false
@@ -102,6 +104,12 @@ ColumnLayout {
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
             color: Theme.foreground; border.width: 1; border.color: Theme.background
+        }
+        NotificationHighlight {
+            objectName: "notificationHighlight_" + meter.objectName
+            targetKey: meter.objectName
+            viewport: meter.notificationViewport
+            presenting: meter.presentingNotifications
         }
         HoverHandler { id: graphHover }
         ToolTip.visible: graphHover.hovered

@@ -6,6 +6,51 @@ countdowns, pacing warnings, notifications, local-server lifecycle management,
 diagnostics, and verified package updates. Windows packages can read supported
 Cursor and Grok browser cookies through a separate current-user helper.
 
+## Notification attention
+
+Usage meters entering Warning or Critical still send native desktop notifications.
+Desktop updates now use the same notification path when a version is available,
+staged for restart, or fails. The notification setting controls both. Repeated
+update checks for the same version/state do not notify again; warning transitions
+continue to use the existing hysteresis rules.
+
+A cyan dot in the tray icon's upper-right corner means there are unseen
+notifications, including alerts from providers other than the tray's primary
+provider. It remains through usage refreshes, offline states, and the temporary
+critical animation. Hovering or opening the tray menu does not clear it.
+
+Opening and activating the dashboard clears unseen notifications automatically
+and briefly highlights visible targets in place. Notifications do not insert rows,
+resize the footer, change the provider filter, or move the scroll position.
+Offscreen targets retain their highlight until scrolled into view during that
+opening. Alerts arriving while the dashboard is active follow the same rule;
+an open overlay postpones acknowledgement until it closes.
+
+A small dot on the existing footer logo offers recent activity without taking up
+more space. Clicking that logo opens a dismissible popover with event details,
+including events whose meters disappeared. Only choosing an event changes the
+filter or scroll position to reveal its target. Closing or minimizing the dashboard
+clears that opening's activity and highlights, preventing replay on the next
+opening. Native notification clicks open the dashboard on the Qt and Windows
+stable-tray paths.
+
+Changes in ChatGPT's reported banked-reset count use this same notification path.
+The first valid count establishes a baseline. Missing/failed readings do not imply
+zero; account or connection changes establish a new baseline. Disabled notifications
+still update the baseline, so enabling them does not replay past changes. A decrease
+is reported as a count change, without assuming whether a reset expired or was used.
+
+When the counter comes into view, it shows a quick signed delta rising and fading
+above it: green for additions and orange for decreases, using the actual difference
+(including changes greater than one). The counter remains visible at zero and falls
+back to the provider header if there is no weekly meter. Like other notifications,
+several unseen changes to the same counter retain the latest reported change, and
+acknowledged animations do not replay on subsequent openings.
+
+Notification state is session-only and is never written to disk. Unseen events
+coalesce by target, with at most 128 targets retained; a fresh warning transition
+can notify about the same meter again after acknowledgement.
+
 ## Build and run
 
 Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,

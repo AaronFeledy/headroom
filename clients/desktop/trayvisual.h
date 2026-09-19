@@ -12,6 +12,7 @@ struct Model {
     Kind kind = Kind::Setup;
     QString provider;
     QString tooltip;
+    bool unread = false;
     double used = -1;
     double expected = -1;
     Usage::WarningLevel level = Usage::WarningLevel::Normal;

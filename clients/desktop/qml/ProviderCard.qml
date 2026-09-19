@@ -10,6 +10,8 @@ Rectangle {
     property string name: provider.provider_name
     property string displayName: backend.displayName(name)
     property color accent: Theme.purple
+    property var notificationViewport: null
+    property bool presentingNotifications: false
     property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
@@ -21,8 +23,9 @@ Rectangle {
         ? resetCredits.account_fingerprint : ""
     property bool hasResetAccountBinding: resetAccountFingerprint.length === 64
         && /^[0-9a-f]{64}$/.test(resetAccountFingerprint)
-    property bool hasBankedResets: name === "Codex" && !failed && resetCredits !== null
-        && resetCredits !== undefined && resetCredits.available_count > 0
+    property bool hasResetCount: name === "Codex" && !failed && resetCredits !== null
+        && resetCredits !== undefined && resetCredits.available_count >= 0
+    property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
     property var clock: backend.state
     property var weeklyBucket: {
         for (let bucket of provider.buckets || []) if (bucket.id === "weekly") return bucket
@@ -39,9 +42,9 @@ Rectangle {
             Text {
                 function openUsage() { Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
                 objectName: "bankedResets_" + card.name
-                visible: card.hasBankedResets
+                visible: card.hasResetCount
                 textFormat: Text.PlainText
-                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
+                text: !card.hasResetCount ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
                     : card.resetCredits.available_count + " banked resets"
                 color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
                 font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
@@ -59,6 +62,51 @@ Rectangle {
                 HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
                 ToolTip.visible: bankedResetHover.hovered
                 ToolTip.text: "Open ChatGPT usage and reset controls"
+                NotificationHighlight {
+                    targetKey: "bankedResets_" + card.name
+                    viewport: card.notificationViewport
+                    presenting: card.presentingNotifications
+                    onActivated: resetDelta.play()
+                }
+                Text {
+                    id: resetDelta
+                    objectName: "bankedResetDelta_" + card.name
+                    property real delta: 0
+                    property real rise: 0
+                    readonly property bool running: floatAway.running
+                    function play() {
+                        const event = backend.notifications.presented.find(event => event.target === "bankedResets_" + card.name)
+                        if (!event || !event.delta) return
+                        delta = event.delta
+                        floatAway.restart()
+                    }
+                    anchors.right: parent.right; anchors.bottom: parent.top; anchors.bottomMargin: 2
+                    text: delta > 0 ? "+" + delta : "−" + Math.abs(delta)
+                    textFormat: Text.PlainText; color: delta > 0 ? Theme.green : Theme.orange
+                    font.pixelSize: 24; font.weight: Font.Bold
+                    style: Text.Outline; styleColor: Theme.surface
+                    opacity: 0; z: 10; enabled: false
+                    transform: Translate { y: -resetDelta.rise }
+                    Connections {
+                        target: card
+                        function onPresentingNotificationsChanged() {
+                            if (!card.presentingNotifications) { floatAway.stop(); resetDelta.opacity = 0 }
+                        }
+                    }
+                    ParallelAnimation {
+                        id: floatAway
+                        NumberAnimation { target: resetDelta; property: "rise"; from: 0; to: 32; duration: 1100; easing.type: Easing.OutCubic }
+                        SequentialAnimation {
+                            NumberAnimation { target: resetDelta; property: "opacity"; from: 0; to: 1; duration: 80 }
+                            PauseAnimation { duration: 250 }
+                            NumberAnimation { target: resetDelta; property: "opacity"; to: 0; duration: 770 }
+                        }
+                        SequentialAnimation {
+                            NumberAnimation { target: resetDelta; property: "scale"; from: 0.7; to: 1.2; duration: 140; easing.type: Easing.OutBack }
+                            NumberAnimation { target: resetDelta; property: "scale"; to: 1; duration: 160 }
+                        }
+                    }
+                }
             }
             // IMPORTANT: DO NOT test this button, the endpoint, or any code
             // that might trigger a reset. It can burn a very valuable reset.
@@ -80,6 +128,11 @@ Rectangle {
     radius: 12
     color: Theme.surface
     border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
+    NotificationHighlight {
+        targetKey: card.objectName
+        viewport: card.notificationViewport
+        presenting: card.presentingNotifications
+    }
     HoverHandler { id: hover; objectName: "providerHover_" + card.name }
     // Behind the content so links and buttons keep their own click behavior.
     MouseArea {
@@ -146,6 +199,11 @@ Rectangle {
                     Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                     Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
                 }
+                Loader {
+                    sourceComponent: !card.weeklyBucket ? bankedResetsFooter : null
+                    visible: card.hasResetCount && !card.weeklyBucket
+                    Layout.fillWidth: true
+                }
             }
             TapHandler {
                 acceptedButtons: Qt.RightButton
@@ -172,8 +230,10 @@ Rectangle {
                     required property int index
                     bucket: modelData; providerName: card.name; accent: card.accent
                     compact: card.compact
+                    notificationViewport: card.notificationViewport
+                    presentingNotifications: card.presentingNotifications
                     footerAccessory: card.name === "Codex" && modelData.id === "weekly" ? bankedResetsFooter : null
-                    footerAccessoryVisible: card.hasBankedResets && modelData.id === "weekly"
+                    footerAccessoryVisible: card.hasResetCount && modelData.id === "weekly"
                     Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
                     Layout.columnSpan: {
                         if (card.stacked && index === 0) return meters.columns
