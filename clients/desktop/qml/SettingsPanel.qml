@@ -166,7 +166,7 @@ Popup {
                     onActivated: panel.selectedInterval = panel.intervalValues[currentIndex]
                 }
             }
-            Check { id: notifications; text: "Notify when meters enter Warning or Critical"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
+            Check { id: notifications; text: "Notify about usage warnings and desktop updates"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
             Text {
                 text: Qt.platform.os === "osx"
                       ? "Closing the window keeps Headroom in your menu bar.\nRight-click its icon to quit."

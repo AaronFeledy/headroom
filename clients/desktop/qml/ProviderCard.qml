@@ -10,6 +10,8 @@ Rectangle {
     property string name: provider.provider_name
     property string displayName: backend.displayName(name)
     property color accent: Theme.purple
+    property var notificationViewport: null
+    property bool presentingNotifications: false
     property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
@@ -80,6 +82,11 @@ Rectangle {
     radius: 12
     color: Theme.surface
     border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
+    NotificationHighlight {
+        targetKey: card.objectName
+        viewport: card.notificationViewport
+        presenting: card.presentingNotifications
+    }
     HoverHandler { id: hover; objectName: "providerHover_" + card.name }
     // Behind the content so links and buttons keep their own click behavior.
     MouseArea {
@@ -172,6 +179,8 @@ Rectangle {
                     required property int index
                     bucket: modelData; providerName: card.name; accent: card.accent
                     compact: card.compact
+                    notificationViewport: card.notificationViewport
+                    presentingNotifications: card.presentingNotifications
                     footerAccessory: card.name === "Codex" && modelData.id === "weekly" ? bankedResetsFooter : null
                     footerAccessoryVisible: card.hasBankedResets && modelData.id === "weekly"
                     Layout.fillWidth: true; Layout.alignment: Qt.AlignTop

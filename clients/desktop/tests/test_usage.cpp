@@ -373,13 +373,21 @@ private slots:
             QTRY_VERIFY(!controller.state()["loading"].toBool());
             QCOMPARE(concern()["severity"].toInt(), step.severity);
             QCOMPARE(alerts.size(), step.alerts);
+            QCOMPARE(controller.notifications()->unreadCount(), step.alerts ? 1 : 0);
+
             QCOMPARE(concern()["color"].toString(), controller.warningColor(step.severity));
             QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
         }
+        controller.notifications()->present();
+        const auto event = controller.notifications()->presented().first().toMap();
+        QCOMPARE(event["target"].toString(), "meter_Claude_session");
+        QVERIFY(event["title"].toString().contains("Critical"));
+        controller.notifications()->endPresentation();
         QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool());
         used = 80; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(alerts.size(), 3);
         httpStatus = 503; controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "offline");

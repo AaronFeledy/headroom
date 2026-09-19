@@ -6,6 +6,34 @@ countdowns, pacing warnings, notifications, local-server lifecycle management,
 diagnostics, and verified package updates. Windows packages can read supported
 Cursor and Grok browser cookies through a separate current-user helper.
 
+## Notification attention
+
+Usage meters entering Warning or Critical still send native desktop notifications.
+Desktop updates now use the same notification path when a version is available,
+staged for restart, or fails. The notification setting controls both. Repeated
+update checks for the same version/state do not notify again; warning transitions
+continue to use the existing hysteresis rules.
+
+A cyan dot in the tray icon's upper-right corner means there are unseen
+notifications, including alerts from providers other than the tray's primary
+provider. It remains through usage refreshes, offline states, and the temporary
+critical animation. Hovering or opening the tray menu does not clear it.
+
+Opening and activating the dashboard clears unseen notifications automatically,
+reveals an affected meter even if a provider filter hid it, and briefly highlights
+the meter or update pill. Offscreen meters retain their highlight until scrolled
+into view during that opening. Alerts arriving while the dashboard is active are
+shown immediately; an open overlay postpones acknowledgement until it closes.
+The View notifications link opens a summary with links to each affected item and
+retains an event's description if its meter has disappeared. Closing or minimizing
+the dashboard removes that opening's summary and highlights, so they do not replay
+on the next opening. Native notification clicks open the dashboard on the Qt and
+Windows stable-tray paths.
+
+Notification state is session-only and is never written to disk. Unseen events
+coalesce by target, with at most 128 targets retained; a fresh warning transition
+can notify about the same meter again after acknowledgement.
+
 ## Build and run
 
 Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,

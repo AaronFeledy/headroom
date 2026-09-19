@@ -50,8 +50,70 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
-    onVisibleChanged: if (visible && !settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
-        restoreEscapeFocus()
+    readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
+        && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetConfirmation.visible
+    onPresentingNotificationsChanged: if (presentingNotifications) Qt.callLater(presentNotifications)
+    onVisibleChanged: {
+        if (!visible) {
+            notificationReveal.stop(); notificationReveal.requestedEvent = null
+            backend.notifications.endPresentation()
+        }
+        else if (!settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+            restoreEscapeFocus()
+    }
+    onVisibilityChanged: if (window.visibility === Window.Minimized) backend.notifications.endPresentation()
+    function findNotificationItem(root, name) {
+        if (root.objectName === name) return root
+        for (let child of root.children) {
+            const found = findNotificationItem(child, name)
+            if (found) return found
+        }
+        return null
+    }
+    function revealNotification(event, explicit) {
+        if (event.target === "desktopUpdate") {
+            if (explicit) settings.openUpdates()
+            return
+        }
+        if (filter !== "All providers") {
+            filter = "All providers"
+            notificationReveal.requestedEvent = event
+            notificationReveal.restart()
+            return
+        }
+        const item = findNotificationItem(providerRows, event.target)
+        if (!item || !item.visible) return // The summary retains events whose meter disappeared.
+        const point = item.mapToItem(scroll.contentItem, 0, 0)
+        scroll.contentItem.contentY = Math.max(0, Math.min(point.y + scroll.contentItem.contentY - 18,
+            scroll.contentHeight - scroll.availableHeight))
+    }
+    function presentNotifications() {
+        if (!presentingNotifications || backend.notifications.unreadCount === 0) return
+        backend.notifications.present()
+        // A saved filter must never hide a meter alert. Update-only events
+        // leave the user's provider selection alone.
+        if (backend.notifications.presented.some(event => event.target !== "desktopUpdate"))
+            filter = "All providers"
+        notificationReveal.restart()
+    }
+    Timer {
+        id: notificationReveal
+        property var requestedEvent: null
+        // Provider filter and summary changes both schedule layout polish.
+        // Reveal after their geometry settles, especially in compact windows.
+        interval: 50
+        onTriggered: {
+            const events = backend.notifications.presented
+            const event = requestedEvent || (events.length ? events[events.length - 1] : null)
+            requestedEvent = null
+            if (window.presentingNotifications && event)
+                window.revealNotification(event, false)
+        }
+    }
+    Connections {
+        target: backend.notifications
+        function onPendingChanged() { Qt.callLater(window.presentNotifications) }
+    }
     function restoreEscapeFocus() {
         window.requestActivate()
         escapeFocus.forceActiveFocus()
@@ -131,6 +193,40 @@ ApplicationWindow {
                 ColumnLayout {
                     Layout.fillWidth: true; Layout.margins: window.compact ? 16 : 24
                     Layout.topMargin: (window.compact ? 16 : 24) - Theme.windowRadius; spacing: 12
+                    Rectangle {
+                        objectName: "notificationSummary"
+                        Layout.fillWidth: true
+                        visible: backend.notifications.presented.length > 0
+                        implicitHeight: notificationBody.implicitHeight + 24
+                        color: Qt.alpha(Theme.cyan, 0.06); radius: 10
+                        border.color: Qt.alpha(Theme.cyan, 0.4)
+                        ColumnLayout {
+                            id: notificationBody
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                            spacing: 4
+                            Text {
+                                text: "Since you last looked"
+                                font.pixelSize: 12; font.weight: Font.DemiBold; color: Theme.cyan
+                            }
+                            Repeater {
+                                model: backend.notifications.presented
+                                ActionButton {
+                                    required property var modelData
+                                    Layout.fillWidth: true; quiet: true
+                                    implicitHeight: contentItem.implicitHeight + 12
+                                    Accessible.name: modelData.title
+                                    Accessible.description: modelData.message
+                                    contentItem: Text {
+                                        text: modelData.title + " →"; textFormat: Text.PlainText
+                                        color: Theme.foreground; font.pixelSize: 12; wrapMode: Text.WordWrap
+                                    }
+                                    ToolTip.visible: hovered || activeFocus
+                                    ToolTip.text: modelData.message
+                                    onClicked: window.revealNotification(modelData, true)
+                                }
+                            }
+                        }
+                    }
                     ColumnLayout {
                         id: providerRows; objectName: "providerRows"
                         visible: window.providers.length > 0
@@ -140,6 +236,8 @@ ApplicationWindow {
                             ProviderCard {
                                 required property var modelData
                                 provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
+                                notificationViewport: scroll
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
                                 onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
                             }
                         }
@@ -169,12 +267,21 @@ ApplicationWindow {
                 id: footerBody
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: window.compact ? 16 : 24; topMargin: 12 }
                 spacing: 10
+                ActionButton {
+                    objectName: "notificationSummaryLink"
+                    visible: backend.notifications.presented.length > 0
+                    text: "View " + backend.notifications.presented.length + (backend.notifications.presented.length === 1 ? " new notification" : " new notifications")
+                    quiet: true; font.pixelSize: 11; implicitHeight: 24
+                    onClicked: scroll.contentItem.contentY = 0
+                }
                 Flow {
                     Layout.fillWidth: true; spacing: 8
                     visible: (window.compact && window.desktopUpdateLabel.length > 0)
                         || appInfo.serverUpdateNotice.length > 0
                     UpdateIndicator {
                         id: compactUpdateIndicator; objectName: "compactUpdateIndicator"
+                        notificationTarget: "desktopUpdate"
+                        presentingNotifications: window.presentingNotifications && !notificationReveal.running
                         visible: window.compact && window.desktopUpdateLabel.length > 0
                         text: window.desktopUpdateLabel
                         needsAttention: updateService.state === "failed"
@@ -210,6 +317,8 @@ ApplicationWindow {
                             Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
                             UpdateIndicator {
                                 objectName: "desktopUpdateIndicator"
+                                notificationTarget: "desktopUpdate"
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
                                 visible: !window.compact && window.desktopUpdateLabel.length > 0
                                 text: window.desktopUpdateLabel
                                 needsAttention: updateService.state === "failed"

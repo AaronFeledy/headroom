@@ -30,6 +30,24 @@ class TrayTest : public QObject {
         return count;
     }
 private slots:
+    void unreadBadgeSurvivesEveryTrayState() {
+        for (const auto kind : {TrayVisual::Kind::Usage, TrayVisual::Kind::Exhausted,
+                TrayVisual::Kind::Offline, TrayVisual::Kind::AuthError, TrayVisual::Kind::Setup}) {
+            TrayVisual::Model model; model.kind = kind; model.provider = "Claude";
+            model.used = 95; model.level = Usage::WarningLevel::Critical;
+            model.secondary = Usage::WarningLevel::Warning;
+            const auto plain = TrayVisual::icon(model).pixmap(64, 64).toImage();
+            model.unread = true;
+            for (const auto frame : {TrayVisual::AttentionFrame{}, TrayVisual::AttentionFrame{1, 0.2, false},
+                    TrayVisual::AttentionFrame{0, 0, true}}) {
+                const auto image = TrayVisual::icon(model, frame).pixmap(64, 64).toImage();
+                QCOMPARE(image.pixelColor(53, 11), QColor("#8be9fd"));
+                QVERIFY(image != plain);
+            }
+            model.unread = false;
+            QCOMPARE(TrayVisual::icon(model).pixmap(64, 64).toImage(), plain);
+        }
+    }
     void usesSharedLevelsForBothIndicators() {
         const auto model = TrayVisual::build(ready(), {provider("Codex", {meter("session", 12), meter("weekly", 8, 86400)})}, "Codex", assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Usage);
