@@ -39,7 +39,7 @@ Rectangle {
     SequentialAnimation {
         id: fade
         NumberAnimation { target: highlight; property: "opacity"; from: 0; to: 1; duration: 220 }
-        PauseAnimation { duration: 4500 }
-        NumberAnimation { target: highlight; property: "opacity"; to: 0; duration: 800 }
+        PauseAnimation { duration: 1600 }
+        NumberAnimation { target: highlight; property: "opacity"; to: 0; duration: 600 }
     }
 }

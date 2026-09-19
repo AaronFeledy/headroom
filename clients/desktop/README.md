@@ -19,16 +19,20 @@ notifications, including alerts from providers other than the tray's primary
 provider. It remains through usage refreshes, offline states, and the temporary
 critical animation. Hovering or opening the tray menu does not clear it.
 
-Opening and activating the dashboard clears unseen notifications automatically,
-reveals an affected meter even if a provider filter hid it, and briefly highlights
-the meter or update pill. Offscreen meters retain their highlight until scrolled
-into view during that opening. Alerts arriving while the dashboard is active are
-shown immediately; an open overlay postpones acknowledgement until it closes.
-The View notifications link opens a summary with links to each affected item and
-retains an event's description if its meter has disappeared. Closing or minimizing
-the dashboard removes that opening's summary and highlights, so they do not replay
-on the next opening. Native notification clicks open the dashboard on the Qt and
-Windows stable-tray paths.
+Opening and activating the dashboard clears unseen notifications automatically
+and briefly highlights visible targets in place. Notifications do not insert rows,
+resize the footer, change the provider filter, or move the scroll position.
+Offscreen targets retain their highlight until scrolled into view during that
+opening. Alerts arriving while the dashboard is active follow the same rule;
+an open overlay postpones acknowledgement until it closes.
+
+A small dot on the existing footer logo offers recent activity without taking up
+more space. Clicking that logo opens a dismissible popover with event details,
+including events whose meters disappeared. Only choosing an event changes the
+filter or scroll position to reveal its target. Closing or minimizing the dashboard
+clears that opening's activity and highlights, preventing replay on the next
+opening. Native notification clicks open the dashboard on the Qt and Windows
+stable-tray paths.
 
 Changes in ChatGPT's reported banked-reset count use this same notification path.
 The first valid count establishes a baseline. Missing/failed readings do not imply
@@ -36,7 +40,7 @@ zero; account or connection changes establish a new baseline. Disabled notificat
 still update the baseline, so enabling them does not replay past changes. A decrease
 is reported as a count change, without assuming whether a reset expired or was used.
 
-On opening the dashboard, the counter shows a quick signed delta rising and fading
+When the counter comes into view, it shows a quick signed delta rising and fading
 above it: green for additions and orange for decreases, using the actual difference
 (including changes greater than one). The counter remains visible at zero and falls
 back to the provider header if there is no weekly meter. Like other notifications,

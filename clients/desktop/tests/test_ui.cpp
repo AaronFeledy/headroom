@@ -49,6 +49,7 @@ class UiTest : public QObject {
 private slots:
     void notificationAttentionIsConsumedOnOpen_data() {
         QTest::addColumn<QSize>("size");
+        QTest::newRow("minimum") << QSize(460, 420);
         QTest::newRow("compact") << QSize(460, 600);
         QTest::newRow("wide") << QSize(1180, 940);
     }
@@ -77,75 +78,98 @@ private slots:
         QTRY_COMPARE(controller.providers().size(), 4);
         controller.notifications()->present(); controller.notifications()->endPresentation();
         window->setProperty("filter", "Claude");
+        window->show(); window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
+        auto flick = scroll->property("contentItem").value<QQuickItem *>(); QVERIFY(flick);
+        auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
+        auto card = findItem(window->contentItem(), "providerCard_Claude"); QVERIFY(card);
+        QTest::qWait(100);
+        const auto footerRect = QRectF(footer->position(), footer->size());
+        const auto cardRect = QRectF(card->mapToScene(QPointF()), card->size());
+        const auto viewportSize = scroll->size();
+        window->hide();
         controller.notifications()->post("meter_Claude_session", "Claude · Session · Warning", "Another synthetic warning", 2);
         controller.notifications()->post("meter_Cursor_api", "Cursor · Other Models · Warning", "Synthetic usage warning", 2);
         QCOMPARE(controller.notifications()->unreadCount(), 2);
         QTest::qWait(80);
-        QCOMPARE(controller.notifications()->unreadCount(), 2); // Hidden windows cannot consume.
+        QCOMPARE(controller.notifications()->unreadCount(), 2);
         window->show(); window->requestActivate();
-        QVERIFY(QTest::qWaitForWindowExposed(window));
         QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
-        QCOMPARE(window->property("filter").toString(), "All providers");
-        auto highlight = findItem(window->contentItem(), "notificationHighlight_meter_Cursor_api");
-        QVERIFY(highlight);
-        QTRY_VERIFY(highlight->property("flashing").toBool());
-        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
-        QTRY_VERIFY(([&] {
-            const auto point = highlight->mapToItem(scroll, QPointF(highlight->width()/2, highlight->height()/2));
-            return point.y() >= 0 && point.y() <= scroll->height();
-        })());
-        auto summary = findItem(window->contentItem(), "notificationSummaryLink");
-        QVERIFY(summary); QVERIFY(summary->isVisible());
+        QCOMPARE(window->property("filter").toString(), "Claude");
+        auto highlight = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session");
+        QVERIFY(highlight); QTRY_VERIFY(highlight->property("flashing").toBool());
+        QCOMPARE(flick->property("contentY").toDouble(), 0.0);
+        QCOMPARE(QRectF(footer->position(), footer->size()), footerRect);
+        QCOMPARE(QRectF(card->mapToScene(QPointF()), card->size()), cardRect);
+        QCOMPARE(scroll->size(), viewportSize);
+        QVERIFY(!findItem(window->contentItem(), "notificationSummary"));
+        QVERIFY(!findItem(window->contentItem(), "notificationSummaryLink"));
+        auto activity = findItem(window->contentItem(), "notificationButton"); QVERIFY(activity);
+        QVERIFY(activity->property("hasActivity").toBool());
+        QCOMPARE(activity->width(), 26.0);
+        auto popup = window->findChild<QObject *>("notificationPopup"); QVERIFY(popup);
+        QVERIFY(!popup->property("visible").toBool());
         const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!capture.isEmpty()) {
-            QDir().mkpath(capture); QTest::qWait(300);
-            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("notification-%1.png").arg(size.width()))));
-            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
-                summary->mapToScene(QPointF(summary->width()/2, summary->height()/2)).toPoint());
-            QTest::qWait(100);
-            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("notification-summary-%1.png").arg(size.width()))));
+            QDir().mkpath(capture); QTest::qWait(250);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("quiet-notification-%1.png").arg(size.width()))));
         }
-        if (size.width() < 700) {
-            auto earlier = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session");
-            QVERIFY(earlier);
-            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
-                summary->mapToScene(QPointF(summary->width()/2, summary->height()/2)).toPoint());
-            QTRY_VERIFY(earlier->property("flashing").toBool());
+        activity->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QCOMPARE(QRectF(footer->position(), footer->size()), footerRect);
+        QCOMPARE(QRectF(card->mapToScene(QPointF()), card->size()), cardRect);
+        QCOMPARE(scroll->size(), viewportSize);
+        QVERIFY(popup->property("x").toDouble() >= 0);
+        QVERIFY(popup->property("y").toDouble() >= 0);
+        QVERIFY(popup->property("y").toDouble() + popup->property("height").toDouble() <= footer->y());
+        if (!capture.isEmpty()) {
+            QTest::qWait(150);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("quiet-activity-%1.png").arg(size.width()))));
         }
+        auto event = findItem(window->contentItem(), "notificationEvent_meter_Cursor_api"); QVERIFY(event);
+        QSignalSpy popupFrame(window, &QQuickWindow::frameSwapped);
+        window->update(); QTRY_VERIFY(!popupFrame.isEmpty());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, event->mapToScene(QPointF(event->width()/2, event->height()/2)).toPoint());
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QTRY_COMPARE(window->property("filter").toString(), "All providers");
+        auto cursor = findItem(window->contentItem(), "notificationHighlight_meter_Cursor_api"); QVERIFY(cursor);
+        QTRY_VERIFY(cursor->property("flashing").toBool());
+        if (size.width() < 700) QTRY_VERIFY(flick->property("contentY").toDouble() > 0);
+        const double savedScroll = flick->property("contentY").toDouble();
         window->hide();
         QVERIFY(controller.notifications()->presented().isEmpty());
         window->show(); window->requestActivate();
         QTest::qWait(100);
-        QVERIFY(!highlight->property("flashing").toBool());
-        QVERIFY(!summary->isVisible());
-        // Summary navigation restores a filter changed after the notification arrived.
-        window->setProperty("filter", "Claude");
-        const QVariant event = QVariantMap{{"target", "meter_Cursor_api"}};
-        QVERIFY(QMetaObject::invokeMethod(window, "revealNotification", Q_ARG(QVariant, event), Q_ARG(QVariant, true)));
-        QTRY_COMPARE(window->property("filter").toString(), "All providers");
-        QTest::qWait(80);
-        // A new event while looking gets attention immediately, without a stale dot.
+        QVERIFY(!cursor->property("flashing").toBool());
+        QVERIFY(!activity->property("hasActivity").toBool());
+        QCOMPARE(flick->property("contentY").toDouble(), savedScroll);
+        // A live alert does not interrupt reading by scrolling to its target.
         controller.notifications()->post("meter_Claude_session", "Claude · Session · Critical", "Synthetic escalation", 3);
         QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
-        auto live = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session");
-        QVERIFY(live); QTRY_VERIFY(live->property("flashing").toBool());
-        // An overlay postpones acknowledgement until the dashboard is actually shown.
+        QTest::qWait(100);
+        QCOMPARE(flick->property("contentY").toDouble(), savedScroll);
+        auto live = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session"); QVERIFY(live);
+        flick->setProperty("contentY", 0);
+        QTRY_VERIFY(live->property("flashing").toBool());
         auto settings = window->findChild<QObject *>("settingsPanel"); QVERIFY(settings);
         QVERIFY(QMetaObject::invokeMethod(settings, "open"));
         QTRY_VERIFY(settings->property("opened").toBool());
         controller.notifications()->post("meter_Codex_weekly", "ChatGPT · Weekly · Warning", "Synthetic warning", 2);
-        QTest::qWait(80);
-        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        QTest::qWait(80); QCOMPARE(controller.notifications()->unreadCount(), 1);
         QVERIFY(QMetaObject::invokeMethod(settings, "close"));
         QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
-        // Historical event survives a disappeared target without blocking acknowledgement.
         window->hide();
         controller.notifications()->post("meter_Gone_missing", "Removed meter", "Previous usage event", 2);
         window->show(); window->requestActivate();
         QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
         QCOMPARE(controller.notifications()->presented().size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(popup, "open"));
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QVERIFY(findItem(window->contentItem(), "notificationEvent_meter_Gone_missing"));
         window->hide();
     }
+
     void dragReordersAndDrivesTray() {
         QTemporaryDir dir;
         const auto capture = [&](const QString &name) {
@@ -465,12 +489,25 @@ private slots:
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
         window->resize(size);
+        window->setProperty("filter", "Claude");
         QTRY_COMPARE(controller.providers().size(), 4);
         QCOMPARE(controller.notifications()->unreadCount(), 0);
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
         QCOMPARE(controller.notifications()->unreadCount(), 1);
         window->show(); window->requestActivate();
         QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        auto activity = findItem(window->contentItem(), "notificationButton"); QVERIFY(activity);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, activity->mapToScene(QPointF(13, 13)).toPoint());
+        auto popup = window->findChild<QObject *>("notificationPopup"); QVERIFY(popup);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        auto event = findItem(window->contentItem(), "notificationEvent_bankedResets_Codex"); QVERIFY(event);
+        QTRY_VERIFY(event->isVisible() && event->width() > 0 && event->height() > 0);
+        QSignalSpy popupFrame(window, &QQuickWindow::frameSwapped);
+        window->update(); QTRY_VERIFY(!popupFrame.isEmpty());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, event->mapToScene(QPointF(event->width()/2, event->height()/2)).toPoint());
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QTRY_COMPARE(window->property("filter").toString(), "All providers");
         auto delta = [&]() { return findItem(window->contentItem(), "bankedResetDelta_Codex"); };
         auto counter = [&]() { return findItem(window->contentItem(), "bankedResets_Codex"); };
         QTRY_VERIFY(delta() && delta()->property("running").toBool());
@@ -509,6 +546,8 @@ private slots:
         codex["buckets"] = QJsonArray{codex["buckets"].toArray().first()}; providers[1] = codex;
         controller.replaceSnapshot(QJsonDocument(providers).toJson());
         QTRY_VERIFY(counter() && counter()->isVisible());
+        auto flick = scroll->property("contentItem").value<QQuickItem *>(); QVERIFY(flick);
+        flick->setProperty("contentY", 0);
         QTRY_VERIFY(delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), "+1");
         window->hide();
