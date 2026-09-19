@@ -74,7 +74,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp
+    controller.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -133,7 +133,7 @@ endif()
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
-    qml/Theme.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
+    qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
     RESOURCES headroom.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
     ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
@@ -182,7 +182,7 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
     set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
-    foreach(feature stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance)
+    foreach(feature notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)

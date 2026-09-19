@@ -216,6 +216,14 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
     m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
     observeResetUsage();
+    for (const auto &value : m_providers) {
+        const auto provider = value.toMap();
+        if (provider["provider_name"].toString() != "Codex" || !provider["is_success"].toBool()) continue;
+        const auto credits = provider["rate_limit_reset_credits"].toMap();
+        if (credits.contains("available_count"))
+            m_notificationCenter.observeBankedResetCount(credits["available_count"].toLongLong(),
+                credits["account_fingerprint"].toString(), m_notifications);
+    }
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
 }
@@ -243,7 +251,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (!error.isEmpty()) return error;
     cancel();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();
@@ -280,7 +288,11 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
     for (const auto &name : m_order) if (!order.contains(name)) order.append(name);
     const auto previous = m_order; m_order = order;
     const QString error = m_settingsService.saveOrder(order, order.first());
-    if (!error.isEmpty()) { m_order = previous; emit notify("Order could not be saved", error); return; }
+    if (!error.isEmpty()) {
+        m_order = previous;
+        m_notificationCenter.post("providerCard_" + source, "Order could not be saved", error, 2);
+        emit notify("Order could not be saved", error); return;
+    }
     log("Settings", "Provider order changed.");
     m_primary = order.first(); emit settingsChanged(); emit providersChanged(); emit changed();
 }
@@ -328,12 +340,16 @@ void Controller::updateMeterStates() {
             m_concerns.insert(key, assessment);
             if (transition.changed)
                 log("Warning", "Meter transitioned from " + Usage::warningName(transition.from) + " to " + Usage::warningName(transition.to) + ".");
-            if (transition.notify && m_notifications)
-                emit usageAlert(Usage::displayName(name) + " · " + Usage::warningName(transition.to),
-                    QString("%1: %2% used, %3% remaining. %4")
-                        .arg(bucket["label"].toString()).arg(bucket["utilization"].toDouble(), 0, 'f', 1)
-                        .arg(assessment["remaining"].toDouble(), 0, 'f', 1)
-                        .arg(assessment["available"].toBool() ? QString("%1% of the remaining allowance was spent ahead of pace.").arg(assessment["pressure"].toDouble() * 100, 0, 'f', 0) : QString("Pacing unavailable.")), int(transition.to));
+            if (transition.notify && m_notifications) {
+                const QString title = Usage::displayName(name) + " · " + bucket["label"].toString()
+                    + " · " + Usage::warningName(transition.to);
+                const QString message = QString("%1: %2% used, %3% remaining. %4")
+                    .arg(bucket["label"].toString()).arg(bucket["utilization"].toDouble(), 0, 'f', 1)
+                    .arg(assessment["remaining"].toDouble(), 0, 'f', 1)
+                    .arg(assessment["available"].toBool() ? QString("%1% of the remaining allowance was spent ahead of pace.").arg(assessment["pressure"].toDouble() * 100, 0, 'f', 0) : QString("Pacing unavailable."));
+                m_notificationCenter.post("meter_" + name + "_" + bucket["id"].toString(), title, message, int(transition.to));
+                emit usageAlert(title, message, int(transition.to));
+            }
         }
     }
     for (const auto &key : m_warningStates.keys()) {

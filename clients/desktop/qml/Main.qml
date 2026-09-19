@@ -50,14 +50,79 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
-    onVisibleChanged: if (visible && !settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
-        restoreEscapeFocus()
+    readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
+        && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetConfirmation.visible
+        && !notificationPopup.visible
+    onPresentingNotificationsChanged: if (presentingNotifications) Qt.callLater(presentNotifications)
+    onVisibleChanged: {
+        if (!visible) {
+            notificationReveal.stop(); notificationReveal.requestedEvent = null
+            notificationPopup.close()
+            backend.notifications.endPresentation()
+        }
+        else if (!settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+            restoreEscapeFocus()
+    }
+    onVisibilityChanged: if (window.visibility === Window.Minimized) {
+        notificationPopup.close()
+        backend.notifications.endPresentation()
+    }
+    function findNotificationItem(root, name) {
+        if (root.objectName === name) return root
+        for (let child of root.children) {
+            const found = findNotificationItem(child, name)
+            if (found) return found
+        }
+        return null
+    }
+    function revealNotification(event, explicit) {
+        if (event.target === "desktopUpdate") {
+            if (explicit) settings.openUpdates()
+            return
+        }
+        if (filter !== "All providers") {
+            filter = "All providers"
+            notificationReveal.requestedEvent = event
+            notificationReveal.restart()
+            return
+        }
+        const item = findNotificationItem(providerRows, event.target)
+        if (!item || !item.visible) return // Activity details remain available when a meter disappears.
+        const point = item.mapToItem(scroll.contentItem, 0, 0)
+        // Leave room above the reset counter for its rising delta animation.
+        const topSpace = event.target.startsWith("bankedResets_") ? 88 : 18
+        scroll.contentItem.contentY = Math.max(0, Math.min(point.y + scroll.contentItem.contentY - topSpace,
+            scroll.contentHeight - scroll.availableHeight))
+    }
+    function presentNotifications() {
+        if (!presentingNotifications || backend.notifications.unreadCount === 0) return
+        backend.notifications.present()
+    }
+    Timer {
+        id: notificationReveal
+        property var requestedEvent: null
+        // Explicit activity navigation may change the provider filter.
+        // Reveal after card geometry settles, especially in compact windows.
+        interval: 50
+        onTriggered: {
+            const events = backend.notifications.presented
+            const event = requestedEvent || (events.length ? events[events.length - 1] : null)
+            requestedEvent = null
+            if (window.presentingNotifications && event)
+                window.revealNotification(event, false)
+        }
+    }
+    Connections {
+        target: backend.notifications
+        function onPendingChanged() { Qt.callLater(window.presentNotifications) }
+    }
     function restoreEscapeFocus() {
         window.requestActivate()
         escapeFocus.forceActiveFocus()
     }
     function dismissOverlayOrHide() {
-        if (resetConfirmation.opened) resetConfirmation.close()
+        if (notificationPopup.opened) notificationPopup.close()
+        else if (resetConfirmation.opened) resetConfirmation.close()
         else if (settings.opened) settings.close()
         else if (diagnostics.opened) diagnostics.close()
         else if (filterMenu.opened) filterMenu.close()
@@ -69,6 +134,58 @@ ApplicationWindow {
     Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
+
+    Popup {
+        id: notificationPopup; objectName: "notificationPopup"
+        parent: Overlay.overlay
+        x: window.compact ? 16 : 24
+        y: Math.max(12, window.height - stickyFooter.height - height - 8)
+        width: Math.min(380, parent.width - 32)
+        height: Math.min(activityBody.implicitHeight + padding * 2, Math.max(80, window.height - stickyFooter.height - 24))
+        padding: 16; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: restoreEscapeFocus()
+        background: Rectangle { color: Theme.surface; radius: 12; border.color: Theme.comment }
+        contentItem: ScrollView {
+            id: activityScroll
+            clip: true; contentWidth: availableWidth
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ColumnLayout {
+                id: activityBody
+                width: activityScroll.availableWidth; spacing: 8
+                Text { text: "Recent activity"; color: Theme.foreground; font.pixelSize: 14; font.weight: Font.DemiBold }
+                Repeater {
+                    model: backend.notifications.presented
+                    ActionButton {
+                        required property var modelData
+                        objectName: "notificationEvent_" + modelData.target
+                        Layout.fillWidth: true; quiet: true
+                        implicitHeight: contentItem.implicitHeight + 16
+                        Accessible.name: modelData.title
+                        Accessible.description: modelData.message
+                        contentItem: ColumnLayout {
+                            spacing: 4
+                            Text {
+                                text: modelData.title + " →"; textFormat: Text.PlainText
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                color: Theme.foreground; font.pixelSize: 12
+                            }
+                            Text {
+                                text: modelData.message; textFormat: Text.PlainText
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                color: Theme.muted; font.pixelSize: 11
+                            }
+                        }
+                        onClicked: {
+                            const event = modelData
+                            notificationPopup.close()
+                            Qt.callLater(function() { window.revealNotification(event, true) })
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
     // code that might trigger a reset: doing so can burn a very valuable reset.
@@ -140,6 +257,8 @@ ApplicationWindow {
                             ProviderCard {
                                 required property var modelData
                                 provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
+                                notificationViewport: scroll
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
                                 onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
                             }
                         }
@@ -160,7 +279,7 @@ ApplicationWindow {
             }
         }
         Rectangle {
-            objectName: "stickyFooter"
+            id: stickyFooter; objectName: "stickyFooter"
             Layout.fillWidth: true; implicitHeight: footerBody.implicitHeight + 24
             color: Theme.inset; radius: Theme.windowRadius; antialiasing: true
             Rectangle { anchors.top: parent.top; width: parent.width; height: parent.radius; color: parent.color }
@@ -175,6 +294,8 @@ ApplicationWindow {
                         || appInfo.serverUpdateNotice.length > 0
                     UpdateIndicator {
                         id: compactUpdateIndicator; objectName: "compactUpdateIndicator"
+                        notificationTarget: "desktopUpdate"
+                        presentingNotifications: window.presentingNotifications && !notificationReveal.running
                         visible: window.compact && window.desktopUpdateLabel.length > 0
                         text: window.desktopUpdateLabel
                         needsAttention: updateService.state === "failed"
@@ -202,7 +323,26 @@ ApplicationWindow {
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: window.compact ? 8 : 12
-                    Image { source: "../headroom.svg"; sourceSize.width: 26; sourceSize.height: 26; Layout.preferredWidth: 26; Layout.preferredHeight: 26 }
+                    ToolButton {
+                        id: notificationButton; objectName: "notificationButton"
+                        readonly property bool hasActivity: backend.notifications.presented.length > 0
+                        Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                        padding: 0; enabled: hasActivity; activeFocusOnTab: enabled
+                        Accessible.name: "Recent activity"
+                        Accessible.description: "Open notification details without changing the dashboard"
+                        contentItem: Image { source: "../headroom.svg"; sourceSize.width: 26; sourceSize.height: 26 }
+                        background: Rectangle { color: notificationButton.hovered ? Theme.selection : "transparent"; radius: 5 }
+                        Rectangle {
+                            objectName: "notificationActivityDot"
+                            visible: notificationButton.hasActivity
+                            anchors { right: parent.right; top: parent.top }
+                            width: 7; height: 7; radius: 3.5
+                            color: Theme.cyan; border.width: 1; border.color: Theme.inset
+                        }
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.text: "Recent activity"
+                        onClicked: notificationPopup.open()
+                    }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 3
                         RowLayout {
@@ -210,6 +350,8 @@ ApplicationWindow {
                             Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
                             UpdateIndicator {
                                 objectName: "desktopUpdateIndicator"
+                                notificationTarget: "desktopUpdate"
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
                                 visible: !window.compact && window.desktopUpdateLabel.length > 0
                                 text: window.desktopUpdateLabel
                                 needsAttention: updateService.state === "failed"

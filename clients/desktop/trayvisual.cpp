@@ -159,6 +159,14 @@ void drawFire(QPainter &p, double intensity, double phase) {
     p.restore();
 }
 
+void drawUnreadBadge(QPainter &p, bool unread) {
+    if (!unread) return;
+    p.setOpacity(1.0);
+    p.setPen(QPen(QColor("#282a36"), 3));
+    p.setBrush(QColor("#8be9fd"));
+    p.drawEllipse(QPointF(53, 11), 9, 9);
+}
+
 QPixmap renderIcon(const TrayVisual::Model &model, int size, const TrayVisual::AttentionFrame &frame) {
     using TrayVisual::Kind;
     QPixmap pixmap(size, size); pixmap.fill(Qt::transparent);
@@ -203,6 +211,7 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size, const TrayVisual::A
         p.setPen(QPen(QColor("#ff5555"), 6, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(QPointF(21, 21), QPointF(43, 43));
         p.drawLine(QPointF(43, 21), QPointF(21, 43));
+        drawUnreadBadge(p, model.unread);
         return pixmap;
     }
     const QPixmap provider = providerPixmap(model.provider);
@@ -250,6 +259,7 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size, const TrayVisual::A
         p.drawEllipse(QPointF(11, 12), 8, 8);
         p.setPen(foreground); p.drawLine(QPointF(7, 12), QPointF(15, 12));
     }
+    drawUnreadBadge(p, model.unread);
     return pixmap;
 }
 }

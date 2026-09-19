@@ -269,7 +269,7 @@ int main(int argc, char **argv) {
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
             popup.toggle(tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos());
     });
-    QObject::connect(&tray, &QSystemTrayIcon::messageClicked, &attention, &TrayAttention::acknowledge);
+    QObject::connect(&tray, &QSystemTrayIcon::messageClicked, &app, show);
     QObject::connect(&stableTray, &StableTray::availabilityChanged, &app, [&](bool available) {
         if (available) tray.hide(); else if (hasTray) tray.show();
     });
@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
         if (reason == QSystemTrayIcon::Context) fallbackMenu.popup(anchor);
         else if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) popup.toggle(anchor);
     });
-    QObject::connect(&stableTray, &StableTray::messageClicked, &attention, &TrayAttention::acknowledge);
+    QObject::connect(&stableTray, &StableTray::messageClicked, &app, show);
     QObject::connect(&fallbackMenu, &QMenu::aboutToHide, &stableTray, [&] {
         // Let the selected action open the dashboard before returning keyboard
         // focus to the Shell; otherwise an Open/Settings action can lose focus.
@@ -302,8 +302,13 @@ int main(int argc, char **argv) {
         if (stableTray.available()) { stableTray.showMessage(title, message, severity); return; }
         tray.showMessage(title, message, severity >= 3 ? QSystemTrayIcon::Critical : severity >= 2 ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information, 7000);
     };
-    QObject::connect(&controller, &Controller::notify, &app, [&](const QString &title, const QString &message) { notify(title, message, 0); });
-    QObject::connect(&controller, &Controller::usageAlert, &app, notify);
+    QObject::connect(controller.notifications(), &Notifications::desktopNotification, &app, notify);
+    const auto observeUpdate = [&] {
+        controller.notifications()->observeUpdate(updateService.state(), updateService.latestVersion(), updateService.statusText(),
+            updateService.updateMethod() == "automatic" && controller.settings().value("notifications").toBool());
+    };
+    QObject::connect(&updateService, &UpdateService::changed, &app, observeUpdate);
+    observeUpdate();
     TrayVisual::Model trayModel;
     const auto renderTray = [&] {
         const auto icon = TrayVisual::icon(trayModel, attention.frame());
@@ -320,6 +325,10 @@ int main(int argc, char **argv) {
     auto updateTray = [&] {
         trayModel = TrayVisual::build(controller.state(), controller.providers(), controller.primary(),
             [&](const QString &provider, const QVariantMap &bucket) { return controller.concern(provider, bucket); });
+        const int unread = controller.notifications()->unreadCount();
+        trayModel.unread = unread > 0;
+        if (unread) trayModel.tooltip += QChar::LineFeed + QString("%1 unseen notification%2 · Open Headroom to view")
+            .arg(unread).arg(unread == 1 ? "" : "s");
         {
             // The model and attention frame are one visual update. Timer-driven
             // frames still render independently between provider polls.
@@ -337,6 +346,7 @@ int main(int argc, char **argv) {
         stableTray.setToolTip(trayModel.tooltip);
         tray.setToolTip(trayModel.tooltip);
     };
+    QObject::connect(controller.notifications(), &Notifications::pendingChanged, &app, updateTray);
     QObject::connect(&controller, &Controller::changed, &app, updateTray);
     QObject::connect(&controller, &Controller::settingsChanged, &app, updateTray);
     updateTray();
