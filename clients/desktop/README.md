@@ -42,8 +42,9 @@ is reported as a count change, without assuming whether a reset expired or was u
 
 When the counter comes into view, it shows a quick signed delta rising and fading
 above it: green for additions and orange for decreases, using the actual difference
-(including changes greater than one). The counter remains visible at zero and falls
-back to the provider header if there is no weekly meter. Like other notifications,
+(including changes greater than one). At zero, the counter and its spacing leave the layout;
+the final decrease still animates as an overlay. The counter falls back to the
+provider header if there is no weekly meter. Like other notifications,
 several unseen changes to the same counter retain the latest reported change, and
 acknowledged animations do not replay on subsequent openings.
 
@@ -367,13 +368,23 @@ while ChatGPT's weekly meter is in the shared Critical warning state. The count 
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open ChatGPT's usage and reset controls in a browser.
 At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
-is available. It requires explicit confirmation and uses the selected backend
-transport. Each confirmed request is submitted once, without retries. The button
-stays disabled after submission, including after a connection failure or app
-restart, until fresh usage for the same account falls below 95%. Headroom schedules
-read-only usage refreshes after submission to pick up the reset's effect. The
-button can appear again when weekly usage subsequently reaches 95%. Both the
-desktop and server must support resets.
+is available. Its confirmation offers **Use now** or **Use automatically at 100%**.
+The automatic choice authorizes one reset for the current account, connection,
+and weekly window. Headroom checks the server's usage snapshot every 15 seconds
+while armed and submits once when it reports 100%; the server's provider polling
+cadence still determines when new usage becomes available. Connection failures
+back that cadence off to at most five minutes, and the arm is retired as soon as
+its weekly window ends, even while the server stays unreachable. Keep Headroom
+running: quitting cancels the choice. **Auto at 100%…** reopens the dialog to
+use it now or cancel. Account, connection, or weekly-window changes, usage below
+95%, no credits, or an existing reset request cancel the choice. Provider errors
+pause it. It never rearms itself or carries over to another week. Both choices
+use the selected backend transport. Each confirmed request is submitted once,
+without retries. The button stays disabled after submission, including after a
+connection failure or app restart, until fresh usage for the same account falls
+below 95%. Headroom schedules read-only usage refreshes after submission to pick
+up the reset's effect. The button can appear again when weekly usage
+subsequently reaches 95%. Both the desktop and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies

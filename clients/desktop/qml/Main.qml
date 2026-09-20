@@ -202,11 +202,13 @@ ApplicationWindow {
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
         Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
-            spacing: 18
-            Text { text: "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            spacing: 12
+            Text { text: resetConfirmation.action.automatic ? "Automatic reset scheduled" : "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Text {
-                visible: resetConfirmation.action.canConfirm
-                text: "Use one banked reset for the ChatGPT account connected to your usage server? This spends a reset and cannot be undone."
+                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.automatic
+                text: resetConfirmation.action.automatic
+                    ? "One reset will be used when a usage update reports 100% weekly usage. Keep Headroom running; quitting cancels this choice."
+                    : "Use one reset now, or once a usage update reports 100% weekly usage. Keep Headroom running for automatic use. Spending a reset cannot be undone."
                 color: Theme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Text {
@@ -219,17 +221,32 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
                 Item { Layout.fillWidth: true }
-                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
+                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
             }
-            // DO NOT activate for testing. This is the only UI call site that
-            // can spend a banked reset; skipped tests are intentional safeguards.
+            // DO NOT activate either choice for testing. Both can spend a
+            // banked reset; skipped tests are intentional safeguards.
             ActionButton {
                 objectName: "confirmBankedReset"
                 visible: resetConfirmation.action.canConfirm || resetConfirmation.action.busy
                 enabled: resetConfirmation.action.canConfirm
-                text: resetConfirmation.action.busy ? "Using reset…" : "Use one reset"
+                text: resetConfirmation.action.busy ? "Using reset…" : "Use now"
                 accent: true; Layout.fillWidth: true
                 onClicked: backend.consumeChatGptReset()
+            }
+            ActionButton {
+                objectName: "scheduleBankedReset"
+                visible: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic
+                enabled: resetConfirmation.action.canSchedule
+                text: "Use automatically at 100%"
+                Layout.fillWidth: true
+                onClicked: if (backend.scheduleChatGptReset()) resetConfirmation.close()
+            }
+            ActionButton {
+                objectName: "cancelScheduledBankedReset"
+                visible: resetConfirmation.action.automatic
+                text: "Cancel automatic reset"
+                Layout.fillWidth: true
+                onClicked: { backend.cancelScheduledChatGptReset(); resetConfirmation.close() }
             }
         }
     }

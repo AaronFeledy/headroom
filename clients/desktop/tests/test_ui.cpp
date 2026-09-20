@@ -538,8 +538,24 @@ private slots:
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, reset));
         QTRY_VERIFY(delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−3"));
-        QVERIFY(counter()->isVisible());
-        QCOMPARE(counter()->property("text").toString(), "0 banked resets");
+        QVERIFY(!counter()->isVisible());
+        QVERIFY(delta()->isVisible());
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        QVERIFY(!counter()->isVisible());
+        auto countdown = [&]() { return findItem(window->contentItem(), "meterReset_Codex_weekly"); };
+        auto details = [&]() { return findItem(window->contentItem(), "meterResetDetails_Codex_weekly"); };
+        QVERIFY(countdown()); QVERIFY(details());
+        // Zero must have exactly the same footer layout as no counter at all,
+        // including no accessory spacing and no change to inline/wrapped layout.
+        QTRY_COMPARE(details()->implicitWidth(), std::ceil(countdown()->implicitWidth()));
+        const auto zeroCountdown = QRectF(countdown()->mapToScene(QPointF()), countdown()->size());
+        if (!capture.isEmpty())
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("zero-counter-%1.png").arg(size.width()))));
+        auto absent = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 0, reset)).array();
+        auto absentCodex = absent[1].toObject(); absentCodex.remove("rate_limit_reset_credits"); absent[1] = absentCodex;
+        controller.replaceSnapshot(QJsonDocument(absent).toJson());
+        QTRY_VERIFY(countdown());
+        QTRY_COMPARE(QRectF(countdown()->mapToScene(QPointF()), countdown()->size()), zeroCountdown);
         // A provider without a weekly bucket still has a real counter and target.
         auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 1, reset)).array();
         auto codex = providers[1].toObject();
@@ -550,6 +566,19 @@ private slots:
         flick->setProperty("contentY", 0);
         QTRY_VERIFY(delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), "+1");
+        codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", 0}}; providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(!counter()->isVisible());
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−1"));
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        auto card = [&]() { return findItem(window->contentItem(), "providerCard_Codex"); };
+        QVERIFY(card());
+        const auto zeroHeaderSize = card()->size();
+        codex.remove("rate_limit_reset_credits"); providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(card());
+        QTRY_COMPARE(card()->size(), zeroHeaderSize);
         window->hide();
     }
     void bankedResetsFollowWeeklyCriticalState() {
@@ -590,8 +619,7 @@ private slots:
 
         const QString halfWeekReset = QDateTime::currentDateTimeUtc().addSecs(7 * 86400 / 2).toString(Qt::ISODate);
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, halfWeekReset));
-        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
-        QCOMPARE(label->property("text").toString(), QString("0 banked resets"));
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
 
         auto missing = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
         auto missingCodex = missing[1].toObject(); missingCodex.remove("rate_limit_reset_credits"); missing[1] = missingCodex;

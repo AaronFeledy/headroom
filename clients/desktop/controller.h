@@ -59,6 +59,8 @@ public:
     Q_INVOKABLE bool prepareChatGptReset();
     Q_INVOKABLE void cancelChatGptResetConfirmation();
     Q_INVOKABLE void consumeChatGptReset();
+    Q_INVOKABLE bool scheduleChatGptReset();
+    Q_INVOKABLE void cancelScheduledChatGptReset();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {});
@@ -92,6 +94,10 @@ private:
     QString resetReceiptPath() const;
     QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
+    void observeScheduledChatGptReset();
+    void expireScheduledChatGptReset();
+    void clearScheduledChatGptReset();
+    void submitChatGptReset(bool automatic);
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);
     Notifications m_notificationCenter;
@@ -118,5 +124,8 @@ private:
     QPointer<QNetworkReply> m_resetReply;
     QString m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
     bool m_resetBusy = false;
+    // One-shot authorization is session-only and bound to this account,
+    // transport, and weekly window. Never restore it on an app restart.
+    QString m_autoResetConnection, m_autoResetWindow;
     QTimer m_poll, m_clock;
 };

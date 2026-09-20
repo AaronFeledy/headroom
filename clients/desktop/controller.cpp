@@ -26,7 +26,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     m_poll.setTimerType(Qt::PreciseTimer);
     connect(&m_poll, &QTimer::timeout, this, &Controller::refresh);
     if (m_startPolling) m_poll.start(m_interval * 1000);
-    connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
+    connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledChatGptReset(); updateMeterStates(); emit changed(); });
     if (m_startPolling) m_clock.start(30000);
     m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_server.configure(m_mode, m_token);
@@ -136,12 +136,18 @@ QString Controller::diagnosticText() const {
 }
 void Controller::resetRetry() {
     m_retryAttempt = 0; m_errorKind.clear();
-    if (m_startPolling) m_poll.start(m_interval * 1000);
+    if (m_startPolling) m_poll.start((m_autoResetConnection.isEmpty() ? m_interval : 15) * 1000);
 }
 void Controller::fail(const QString &message, const QString &kind) {
     m_status = "offline"; m_message = message; m_loading = false; m_errorKind = kind;
     m_retryAttempt = qMin(m_retryAttempt + 1, 8);
-    const int seconds = qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval));
+    // An armed one-shot reset starts from the 15-second cadence used by
+    // resetRetry(), so a transient failure cannot stretch polling past its
+    // weekly window. It still backs off to at most five minutes: a long outage
+    // must not poll an unreachable endpoint four times a minute all week.
+    const int seconds = m_autoResetConnection.isEmpty()
+        ? qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval))
+        : qMin(15 * (1 << (m_retryAttempt - 1)), 300);
     if (m_startPolling) m_poll.start(seconds * 1000);
     log("Connection", message + QString(" Retry in %1 seconds.").arg(seconds));
     emit changed();
@@ -226,6 +232,7 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     }
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
+    observeScheduledChatGptReset();
 }
 Controller::~Controller() {
     // The network manager outlives every other member, so an in-flight reply must be
@@ -251,7 +258,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (!error.isEmpty()) return error;
     cancel();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); }
+    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); cancelScheduledChatGptReset(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();
