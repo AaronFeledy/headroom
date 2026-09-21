@@ -119,8 +119,8 @@ ColumnLayout {
     GridLayout {
         id: meterFooter
         Layout.fillWidth: true
-        // Keep countdowns beside pace when the complete footer fits, including accessories.
-        readonly property bool inlineReset: !meter.statusOnly && resetLabel.visible && !statusLabel.visible
+        // Keep countdowns or status beside pace when the complete footer fits, including accessories.
+        readonly property bool inlineReset: !meter.statusOnly && (resetLabel.visible || statusLabel.visible)
             && width >= Math.ceil(paceLabel.implicitWidth) + Math.ceil(resetDetails.implicitWidth) + columnSpacing
         columns: inlineReset ? 2 : 1
         columnSpacing: 12; rowSpacing: 5
@@ -162,7 +162,7 @@ ColumnLayout {
                 }
                 Text {
                     id: statusLabel
-                    visible: !!meter.bucket.status_text
+                    visible: !!meter.bucket.status_text && !!meter.bucket.status_text.trim()
                     objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
                     textFormat: Text.PlainText
                     text: meter.bucket.status_text || ""

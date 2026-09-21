@@ -47,6 +47,61 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void statusSharesPaceRowWhenItFits_data() {
+        QTest::addColumn<int>("width");
+        QTest::newRow("compact") << 460;
+        QTest::newRow("wide") << 1180;
+    }
+    void statusSharesPaceRowWhenItFits() {
+        QFETCH(int, width);
+        QTemporaryDir dir;
+        auto cursor = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        cursor["buckets"] = QJsonArray{cursor["buckets"].toArray()[1]};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{cursor}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(width, 800); window->setProperty("filter", "Cursor"); window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 1);
+        auto meter = findItem(window->contentItem(), "meter_Cursor_api"); QVERIFY(meter);
+        auto pace = findItem(meter, "paceLabel_Cursor_api"); QVERIFY(pace);
+        auto status = findItem(meter, "meterStatus_Cursor_api"); QVERIFY(status);
+        auto reset = findItem(meter, "meterReset_Cursor_api"); QVERIFY(reset);
+        QTRY_VERIFY(status->isVisible());
+        QTRY_VERIFY(std::abs(status->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        QTRY_VERIFY(status->mapToScene(QPointF()).x() >= pace->mapToScene(QPointF()).x() + pace->width());
+        const auto originalBucket = meter->property("bucket").toMap();
+        auto bucket = originalBucket;
+        bucket["status_text"] = QString("A deliberately long billing explanation that needs to wrap below the pacing label. ").repeated(3);
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QTRY_VERIFY(status->mapToScene(QPointF()).y() >= pace->mapToScene(QPointF()).y() + pace->height());
+        QTRY_VERIFY(status->height() > pace->height());
+        QTRY_VERIFY(status->mapToItem(meter, QPointF()).x() + status->width() <= meter->width() + 1);
+        bucket["status_text"] = "   ";
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QTRY_VERIFY(!status->isVisible()); QTRY_VERIFY(reset->isVisible());
+        QTRY_VERIFY(std::abs(reset->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        QVERIFY(meter->setProperty("bucket", originalBucket));
+        QTRY_VERIFY(status->isVisible());
+        QTRY_VERIFY(std::abs(status->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("cursor-pool-%1.png").arg(width))));
+        }
+    }
     void notificationAttentionIsConsumedOnOpen_data() {
         QTest::addColumn<QSize>("size");
         QTest::newRow("minimum") << QSize(460, 420);
