@@ -28,6 +28,44 @@ private slots:
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_MODE");
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_RECORD");
     }
+    void resetTimeLabelsUseLocalCalendarDays_data() {
+        QTest::addColumn<QString>("nowStamp");
+        QTest::addColumn<QString>("resetStamp");
+        QTest::addColumn<QString>("day");
+        QTest::addColumn<QTime>("time");
+        const QString monday = "2026-09-21T12:00:00-05:00";
+        QTest::newRow("today") << monday << "2026-09-21T18:30:00Z" << "Today" << QTime(13, 30);
+        QTest::newRow("tomorrow") << monday << "2026-09-22T18:30:00Z" << "Tomorrow" << QTime(13, 30);
+        QTest::newRow("tomorrow-in-minutes") << "2026-09-21T23:55:00-05:00" << "2026-09-22T05:05:00Z" << "Tomorrow" << QTime(0, 5);
+        QTest::newRow("tomorrow-nearly-48-hours") << "2026-09-21T00:01:00-05:00" << "2026-09-23T04:59:00Z" << "Tomorrow" << QTime(23, 59);
+        QTest::newRow("weekday") << monday << "2026-09-23T18:30:00Z" << "Wednesday" << QTime(13, 30);
+        QTest::newRow("six-calendar-days") << monday << "2026-09-27T18:30:00Z" << "Sunday" << QTime(13, 30);
+        QTest::newRow("next-monday-in-6d5h") << "2026-09-21T23:00:00-05:00" << "2026-09-28T09:00:00Z" << "Mon, Sep 28" << QTime(4, 0);
+        QTest::newRow("exact-week") << monday << "2026-09-28T17:00:00Z" << "Mon, Sep 28" << QTime(12, 0);
+        QTest::newRow("over-week") << monday << "2026-09-29T18:30:00Z" << "Tue, Sep 29" << QTime(13, 30);
+        QTest::newRow("next-year") << monday << "2027-01-01T18:30:00Z" << "Fri, Jan 1, 2027" << QTime(13, 30);
+        QTest::newRow("past-date") << monday << "2026-09-20T18:30:00Z" << "Sun, Sep 20" << QTime(13, 30);
+        QTest::newRow("utc-tomorrow-local-today") << monday << "2026-09-22T02:00:00Z" << "Today" << QTime(21, 0);
+    }
+    void resetTimeLabelsUseLocalCalendarDays() {
+        QFETCH(QString, nowStamp); QFETCH(QString, resetStamp); QFETCH(QString, day); QFETCH(QTime, time);
+        const QLocale locale(QLocale::English, QLocale::UnitedStates);
+        const auto now = QDateTime::fromString(nowStamp, Qt::ISODate);
+        QCOMPARE(Usage::resetTimeLabel(resetStamp, now, locale), day + " at " + locale.toString(time, QLocale::ShortFormat));
+    }
+    void resetTimeLabelsHandleInvalidAndDaylightSaving() {
+        const QLocale locale(QLocale::English, QLocale::UnitedStates);
+        const QTimeZone zone("America/Chicago");
+        QVERIFY(zone.isValid());
+        const QDateTime now(QDate(2026, 10, 31), QTime(23, 30), zone);
+        QCOMPARE(Usage::resetTimeLabel("2026-11-01T08:30:00Z", now, locale),
+            "Tomorrow at " + locale.toString(QTime(2, 30), QLocale::ShortFormat));
+        QVERIFY(Usage::resetTimeLabel({}, now, locale).isEmpty());
+        QVERIFY(Usage::resetTimeLabel("not a date", now, locale).isEmpty());
+        QVERIFY(Usage::resetTimeLabel("2026-11-01T08:30:00Z", {}, locale).isEmpty());
+        const QLocale german(QLocale::German, QLocale::Germany);
+        QCOMPARE(Usage::resetTimeLabel("2026-11-01T08:30:00Z", now, german), "Tomorrow at 02:30");
+    }
     void parseContract() {
         QVariantList providers; QVERIFY(Usage::parse(TestUsage::snapshot(), providers)); QCOMPARE(providers.size(), 4);
         QCOMPARE(providers[0].toMap()["provider_name"].toString(), "Claude");

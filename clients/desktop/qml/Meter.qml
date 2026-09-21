@@ -153,6 +153,11 @@ ColumnLayout {
                     visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
                     text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
                     color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                    readonly property string resetTooltip: { meter.clock; return backend.resetTimeLabel(meter.bucket.resets_at || "") }
+                    HoverHandler { id: resetHover }
+                    ToolTip.visible: resetHover.hovered && resetLabel.resetTooltip.length > 0
+                    ToolTip.text: resetLabel.resetTooltip
+                    ToolTip.delay: 150
                 }
                 Text {
                     id: statusLabel

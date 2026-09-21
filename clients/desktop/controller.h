@@ -68,6 +68,7 @@ public:
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantMap pacing(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QString countdown(const QString &timestamp) const;
+    Q_INVOKABLE QString resetTimeLabel(const QString &timestamp) const;
     Q_INVOKABLE void setPrimary(const QString &name);
     Q_INVOKABLE void copyText(const QString &text);
     QString primary() const;

@@ -347,6 +347,13 @@ higher than the fraction of the window elapsed; “under pace” means capacity 
 being consumed more slowly. Hover the bar or comparison for exact percentages.
 The marker advances on the client's 30-second clock, including between polls.
 
+Hover a reset countdown to see its local date and time. Tooltips use Today,
+Tomorrow, or the full weekday for two through six calendar days ahead. Seven or
+more calendar days ahead uses an abbreviated weekday and date, so next Monday
+never appears as just Monday on a Monday, even when it is less than 168 hours
+away. Dates in another year include the year; times follow the system's 12- or
+24-hour format. Missing reset timestamps have no date tooltip.
+
 The current API exposes reset times but not period starts. Following the Windows
 client's pacing conventions, Headroom estimates five hours for Claude/ChatGPT
 sessions, seven days for weekly buckets (including model-specific and Grok Bot

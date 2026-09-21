@@ -367,6 +367,7 @@ void Controller::updateMeterStates() {
 QVariantList Controller::notches(const QString &provider, const QVariantMap &bucket) const { return Usage::notches(provider, bucket); }
 QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucket) const { return Usage::pacing(provider, bucket); }
 QString Controller::countdown(const QString &timestamp) const { return Usage::countdown(timestamp); }
+QString Controller::resetTimeLabel(const QString &timestamp) const { return Usage::resetTimeLabel(timestamp); }
 void Controller::setPrimary(const QString &name) {
     moveProvider(name, primary(), false);
 }

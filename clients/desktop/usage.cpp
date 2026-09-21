@@ -1,6 +1,7 @@
 #include "usage.h"
 #include "sshnetwork.h"
 #include <QDateTime>
+#include <QTimeZone>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -127,6 +128,23 @@ QString Usage::countdown(const QString &timestamp) {
     if (minutes >= 1440) return QString("Resets in %1d %2h").arg(minutes / 1440).arg((minutes % 1440) / 60);
     if (minutes >= 60) return QString("Resets in %1h %2m").arg(minutes / 60).arg(minutes % 60);
     return QString("Resets in %1m").arg(minutes);
+}
+
+QString Usage::resetTimeLabel(const QString &timestamp, const QDateTime &now, const QLocale &locale) {
+    const auto when = QDateTime::fromString(timestamp, Qt::ISODateWithMs);
+    if (!when.isValid() || !now.isValid()) return {};
+    const auto local = when.toTimeZone(now.timeZone());
+    const auto date = local.date();
+    const auto days = now.date().daysTo(date);
+    QString day;
+    if (days == 0) day = QStringLiteral("Today");
+    else if (days == 1) day = QStringLiteral("Tomorrow");
+    // Count local calendar dates, not elapsed 24-hour periods. Next Monday
+    // must show a date on Monday even when it is only 6 days and 5 hours away.
+    else if (days > 1 && days < 7) day = locale.dayName(date.dayOfWeek(), QLocale::LongFormat);
+    else day = locale.toString(date, date.year() == now.date().year()
+        ? QStringLiteral("ddd, MMM d") : QStringLiteral("ddd, MMM d, yyyy"));
+    return QStringLiteral("%1 at %2").arg(day, locale.toString(local.time(), QLocale::ShortFormat));
 }
 
 QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
