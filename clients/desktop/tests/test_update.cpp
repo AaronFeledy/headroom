@@ -365,6 +365,15 @@ private slots:
         QVERIFY(service.restartAvailable()); QVERIFY(service.statusText().contains(QStringLiteral("Restart")));
         const auto calls = record(); QVERIFY(calls.contains("inspect token=absent")); QVERIFY(calls.contains("check-update token=absent")); QVERIFY(calls.contains("stage-update token=absent"));
     }
+    void automaticCheckReusesVerifiedStage() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "staged");
+        UpdateService service(true, options());
+        service.startAutomaticCheck();
+        QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+        QVERIFY(service.restartAvailable());
+        QCOMPARE(record().count("check-update"), 1);
+        QVERIFY(!record().contains("stage-update"));
+    }
     void automaticCheckStagesOnce() {
         UpdateService service(true, options());
         service.startAutomaticCheck();

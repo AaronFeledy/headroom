@@ -32,6 +32,10 @@ type InstallState struct {
 }
 
 type StageResult struct {
+	// Set only after public acquisition verifies the release archive. Older and
+	// manually staged packages remain valid for apply, but cannot be reused by update checks.
+	ArchiveSHA256  string `json:"archive_sha256,omitempty"`
+	ArchiveSize    int64  `json:"archive_size,omitempty"`
 	PackageKind    string `json:"package_kind,omitempty"`
 	Schema         int    `json:"schema"`
 	Product        string `json:"product"`

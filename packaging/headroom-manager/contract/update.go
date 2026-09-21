@@ -86,6 +86,13 @@ func (c UpdateClient) Check(ctx context.Context, installRoot string) (UpdateResu
 	}
 	if comparison > 0 {
 		result.Status = "available"
+		stage, err := reusableUpdateStage(ctx, root, release, pkg)
+		if err != nil {
+			return UpdateResult{}, err
+		}
+		if stage != nil {
+			result.Status, result.Stage = "staged", stage
+		}
 	}
 	return result, nil
 }
@@ -252,7 +259,73 @@ func namedAsset(assets []githubAsset, name string) (githubAsset, bool) {
 	return result, found
 }
 
+// reusableUpdateStage treats a prior download as a cache entry, never as proof
+// that its files are still intact. Bind it to freshly fetched release metadata,
+// then use the apply-time verifier to rehash the complete extracted package.
+func reusableUpdateStage(ctx context.Context, root string, release ReleaseManifest, pkg ReleasePackage) (*StageResult, error) {
+	staging := filepath.Join(root, "staging")
+	// A replaced staging directory fails the operation instead of degrading to
+	// a fresh download, because every caller would then write a package through
+	// it. The per-entry anomalies below are ordinary cache misses.
+	if err := validateInstallTargets(staging, ""); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(staging)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, err
+	}
+	matches := func(stage StageResult) bool {
+		return stage.PackageKind == release.PackageKind && stage.Version == release.Version &&
+			stage.Platform == pkg.Platform && stage.Architecture == pkg.Architecture &&
+			stage.PackageAsset == pkg.AssetName && stage.ArchiveSHA256 == pkg.SHA256 && stage.ArchiveSize == pkg.Size
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "package-") {
+			continue
+		}
+		record := filepath.Join(staging, entry.Name(), "verified-stage.json")
+		if validateInstallTargets(record, "") != nil {
+			continue
+		}
+		info, err := os.Lstat(record)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := readBoundedFile(record, maxManifestBytes)
+		if err != nil {
+			continue
+		}
+		var candidate StageResult
+		if json.Unmarshal(data, &candidate) != nil || !matches(candidate) {
+			continue
+		}
+		stage, _, err := LoadVerifiedStage(root, record)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err == nil && matches(stage) {
+			return &stage, nil
+		}
+	}
+	return nil, ctx.Err()
+}
+
 func (c UpdateClient) downloadAndStage(ctx context.Context, root string, inspection Inspection, release ReleaseManifest, pkg ReleasePackage, asset githubAsset) (UpdateResult, error) {
+	cached, err := reusableUpdateStage(ctx, root, release, pkg)
+	if err != nil {
+		return UpdateResult{}, err
+	}
+	if cached != nil {
+		result := updateResult(inspection, "staged", "")
+		result.Version, result.AssetName, result.Stage = release.Version, pkg.AssetName, cached
+		return result, nil
+	}
 	downloads, err := os.MkdirTemp(root, ".headroom-download-")
 	if err != nil {
 		return UpdateResult{}, err
@@ -290,6 +363,13 @@ func (c UpdateClient) downloadAndStage(ctx context.Context, root string, inspect
 	stage, err := StageArchive(archive, root, Expectations{Version: release.Version, Platform: inspection.Platform,
 		Architecture: inspection.Architecture, AssetName: pkg.AssetName})
 	if err != nil {
+		return UpdateResult{}, err
+	}
+	// Persist the archive identity only after both outer and inner verification.
+	// The archive itself can be discarded; reuse revalidates every staged file.
+	stage.ArchiveSHA256, stage.ArchiveSize = digest, size
+	if err = WriteJSON(filepath.Join(filepath.Dir(filepath.Dir(stage.PackageRoot)), "verified-stage.json"), stage); err != nil {
+		os.RemoveAll(filepath.Dir(filepath.Dir(stage.PackageRoot)))
 		return UpdateResult{}, err
 	}
 	if err = ctx.Err(); err != nil {
