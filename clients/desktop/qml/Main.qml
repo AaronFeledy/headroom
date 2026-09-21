@@ -306,19 +306,7 @@ ApplicationWindow {
                 spacing: 10
                 Flow {
                     Layout.fillWidth: true; spacing: 8
-                    visible: (window.compact && window.desktopUpdateLabel.length > 0)
-                        || appInfo.serverUpdateNotice.length > 0
-                    UpdateIndicator {
-                        id: compactUpdateIndicator; objectName: "compactUpdateIndicator"
-                        notificationTarget: "desktopUpdate"
-                        presentingNotifications: window.presentingNotifications && !notificationReveal.running
-                        visible: window.compact && window.desktopUpdateLabel.length > 0
-                        text: window.desktopUpdateLabel
-                        needsAttention: updateService.state === "failed"
-                        detail: updateService.statusText
-                        Accessible.name: "Headroom: " + text
-                        onClicked: settings.openUpdates()
-                    }
+                    visible: appInfo.serverUpdateNotice.length > 0
                     UpdateIndicator {
                         id: serverUpdateIndicator; objectName: "serverUpdateIndicator"
                         visible: appInfo.serverUpdateNotice.length > 0
@@ -359,30 +347,49 @@ ApplicationWindow {
                         ToolTip.text: "Recent activity"
                         onClicked: notificationPopup.open()
                     }
-                    ColumnLayout {
-                        Layout.fillWidth: true; spacing: 3
-                        RowLayout {
-                            spacing: 10
-                            Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
-                            UpdateIndicator {
-                                objectName: "desktopUpdateIndicator"
-                                notificationTarget: "desktopUpdate"
-                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
-                                visible: !window.compact && window.desktopUpdateLabel.length > 0
-                                text: window.desktopUpdateLabel
-                                needsAttention: updateService.state === "failed"
-                                detail: updateService.statusText
-                                Accessible.name: "Headroom: " + text
-                                onClicked: settings.openUpdates()
+                    Item {
+                        id: brandingArea
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? 38 : 0)
+                        implicitWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitWidth + 10 : 0)
+                        // Keep even-sized controls on the same pixel-aligned center.
+                        implicitHeight: Math.ceil(Math.max(brandLabels.implicitHeight, desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitHeight : 0) / 2) * 2
+                        ColumnLayout {
+                            id: brandLabels
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.alignWhenCentered: false
+                            width: desktopUpdateIndicator.visible ? brandTitle.implicitWidth : parent.width
+                            spacing: 3
+                            Text {
+                                id: brandTitle; objectName: "footerBrandTitle"
+                                text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground
+                            }
+                            Text {
+                                id: footerStatus
+                                Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
+                                text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
+                                color: window.state.status === "offline" ? Theme.red : Theme.muted
+                                HoverHandler { id: statusHover }
+                                ToolTip.visible: statusHover.hovered
+                                ToolTip.text: footerStatus.text + "\n" + window.healthy + " / " + window.providers.length + " providers online · Next reset in " + window.nextReset
                             }
                         }
-                        Text {
-                            Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
-                            text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
-                            color: window.state.status === "offline" ? Theme.red : Theme.muted
-                            HoverHandler { id: statusHover }
-                            ToolTip.visible: statusHover.hovered
-                            ToolTip.text: window.healthy + " / " + window.providers.length + " providers online · Next reset in " + window.nextReset
+                        UpdateIndicator {
+                            id: desktopUpdateIndicator; objectName: "desktopUpdateIndicator"
+                            anchors.left: brandLabels.right
+                            anchors.leftMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.alignWhenCentered: false
+                            width: Math.min(implicitWidth, Math.max(28, brandingArea.width - brandLabels.width - 10))
+                            notificationTarget: "desktopUpdate"
+                            presentingNotifications: window.presentingNotifications && !notificationReveal.running
+                            visible: window.desktopUpdateLabel.length > 0
+                            text: window.desktopUpdateLabel
+                            needsAttention: updateService.state === "failed"
+                            detail: updateService.statusText
+                            Accessible.name: "Headroom: " + text
+                            onClicked: settings.openUpdates()
                         }
                     }
                     Text {

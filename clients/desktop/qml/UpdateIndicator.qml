@@ -23,6 +23,8 @@ ActionButton {
     ToolTip.delay: 500
     contentItem: Text {
         text: control.text
+        elide: Text.ElideRight
+        clip: true
         font: control.font
         color: control.indicatorColor
         horizontalAlignment: Text.AlignHCenter

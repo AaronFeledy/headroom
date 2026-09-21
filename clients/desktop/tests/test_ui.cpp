@@ -917,21 +917,22 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QTRY_COMPARE(controller.providers().size(), 4);
         const auto originalSettings = controller.settings();
-        auto wide = findItem(window->contentItem(), "desktopUpdateIndicator"); QVERIFY(wide);
-        auto compact = findItem(window->contentItem(), "compactUpdateIndicator"); QVERIFY(compact);
+        auto indicator = findItem(window->contentItem(), "desktopUpdateIndicator"); QVERIFY(indicator);
+        auto title = findItem(window->contentItem(), "footerBrandTitle"); QVERIFY(title);
+        auto logo = findItem(window->contentItem(), "notificationButton"); QVERIFY(logo);
+        auto filter = findItem(window->contentItem(), "providerFilter"); QVERIFY(filter);
         auto server = findItem(window->contentItem(), "serverUpdateIndicator"); QVERIFY(server);
         auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
-        auto indicator = size.width() < 700 ? compact : wide;
-        auto other = size.width() < 700 ? wide : compact;
-        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible()); QVERIFY(!server->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "compactUpdateIndicator"));
+        QVERIFY(!indicator->isVisible()); QVERIFY(!server->isVisible());
         for (const QString state : {"checking", "unavailable", "current"}) {
             updates->setProperty("state", state);
-            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+            QVERIFY(!indicator->isVisible());
         }
         updates->setProperty("state", "available");
         for (const QString method : {"source", "system"}) {
             updates->setProperty("updateMethod", method);
-            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+            QVERIFY(!indicator->isVisible());
         }
         updates->setProperty("updateMethod", "automatic");
 
@@ -942,7 +943,6 @@ private slots:
         for (const auto &[state, label] : states) {
             updates->setProperty("state", state);
             QTRY_VERIFY(indicator->isVisible());
-            QVERIFY(!other->isVisible());
             QCOMPARE(indicator->property("text").toString(), label);
             QCOMPARE(indicator->property("needsAttention").toBool(), state == "failed");
             const auto contained = [&] {
@@ -953,11 +953,12 @@ private slots:
                     && footer->y() >= 0 && footer->y() + footer->height() <= window->height() + 1;
             };
             QTRY_VERIFY(contained());
-            if (size.width() >= 700) {
-                auto filter = findItem(window->contentItem(), "providerFilter"); QVERIFY(filter);
-                QTRY_VERIFY(indicator->mapToScene(QPointF(indicator->width(), 0)).x()
-                            <= filter->mapToScene(QPointF()).x());
-            }
+            QTRY_VERIFY(std::abs(indicator->mapToScene(QPointF(0, indicator->height() / 2)).y()
+                                - logo->mapToScene(QPointF(0, logo->height() / 2)).y()) < 1);
+            QTRY_VERIFY(indicator->mapToScene(QPointF()).x() >= title->mapToScene(QPointF(title->width(), 0)).x());
+            QTRY_VERIFY(indicator->mapToScene(QPointF(indicator->width(), 0)).x() <= filter->mapToScene(QPointF()).x());
+            QTRY_VERIFY(indicator->mapToScene(QPointF(0, indicator->height())).y() >= logo->mapToScene(QPointF()).y());
+            QTRY_VERIFY(!title->property("truncated").toBool());
         }
         updates->setProperty("state", "staged");
         updates->setProperty("latestVersion", "8.4.1");
@@ -978,8 +979,6 @@ private slots:
         QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
         auto updateHighlight = findItem(window->contentItem(), "notificationHighlight_" + indicator->objectName());
         QVERIFY(updateHighlight); QTRY_VERIFY(updateHighlight->property("flashing").toBool());
-        auto hiddenHighlight = findItem(window->contentItem(), "notificationHighlight_" + other->objectName());
-        QVERIFY(hiddenHighlight); QVERIFY(!hiddenHighlight->property("flashing").toBool());
 
         const QString captureDir = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!captureDir.isEmpty()) {
@@ -1034,7 +1033,7 @@ private slots:
         QVERIFY(!version->isVisible()); QVERIFY(!notes->isVisible());
         QVERIFY(QMetaObject::invokeMethod(panel, "close"));
         QTRY_VERIFY(!panel->property("opened").toBool());
-        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+        QVERIFY(!indicator->isVisible());
         info->setProperty("serverUpdateNotice", "");
         QVERIFY(!server->isVisible());
         // Ordinary settings entry should still start at the connection section.
