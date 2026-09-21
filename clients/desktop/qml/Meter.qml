@@ -130,7 +130,8 @@ ColumnLayout {
             visible: !meter.statusOnly
             text: meter.pace.label
             Layout.fillWidth: true; elide: Text.ElideRight
-            color: meter.warning ? meter.usageColor : !meter.pace.available || meter.pace.over ? Theme.muted : Theme.cyan
+            color: !meter.pace.available ? Theme.muted : meter.warning ? meter.usageColor
+                : meter.pace.onPace ? Theme.muted : meter.pace.over ? Theme.orange : Theme.cyan
             font.pixelSize: 11
             HoverHandler { id: paceHover }
             ToolTip.visible: paceHover.hovered

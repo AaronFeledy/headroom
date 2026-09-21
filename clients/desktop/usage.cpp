@@ -203,12 +203,26 @@ QVariantMap Usage::pacing(const QString &provider, const QVariantMap &bucket, co
     const double expected = 100.0 * (duration - remaining) / duration;
     const double used = bucket["utilization"].toDouble();
     const double difference = used - expected;
-    const int points = qRound(std::abs(difference));
-    const QString label = points == 0 ? "On pace" : QString("%1 pp %2 pace").arg(points).arg(difference > 0 ? "over" : "under");
-    const QString detail = QString("%1% used · %2% expected by now. %3\nThe marker estimates steady spending across a %4.\nOver pace means using your allowance faster than time is passing. Under pace means you have room to use more.")
-        .arg(used, 0, 'f', 1).arg(expected, 0, 'f', 1).arg(label).arg(window);
+    const qint64 seconds = qRound64(difference * duration / 100.0);
+    const bool onPace = std::abs(seconds) < 60;
+    const qint64 minutes = (std::abs(seconds) + 30) / 60;
+    QString offset;
+    if (minutes >= 1440) {
+        offset = QString("%1d").arg(minutes / 1440);
+        if ((minutes % 1440) / 60) offset += QString(" %1h").arg((minutes % 1440) / 60);
+    } else if (minutes >= 60) {
+        offset = QString("%1h").arg(minutes / 60);
+        if (minutes % 60) offset += QString(" %1m").arg(minutes % 60);
+    } else offset = QString("%1m").arg(minutes);
+    const QString label = onPace ? "On pace" : QString("%1 %2 pace").arg(offset, difference > 0 ? "ahead of" : "behind");
+    const QString explanation = onPace ? "Your usage is within one minute of steady spending."
+        : difference > 0 ? QString("You've used the allowance scheduled for %1 from now.").arg(offset)
+                        : QString("You have %1 of steady-spending allowance in reserve.").arg(offset);
+    const QString detail = QString("%1% used · %2% expected by now · %3 pp %4 pace.\n%5\nThe marker estimates steady spending across a %6.\nThis compares usage with elapsed time; it does not predict when you'll run out.")
+        .arg(used, 0, 'f', 1).arg(expected, 0, 'f', 1).arg(std::abs(difference), 0, 'f', 1)
+        .arg(onPace ? "from" : difference >= 0 ? "over" : "under").arg(explanation, window);
     return {{"available", true}, {"expected", expected}, {"difference", difference},
-        {"over", points > 0 && difference > 0}, {"label", label}, {"detail", detail}};
+        {"onPace", onPace}, {"over", !onPace && difference > 0}, {"label", label}, {"detail", detail}};
 }
 
 QVariantMap Usage::concern(const QString &provider, const QVariantMap &bucket, const QDateTime &now) {

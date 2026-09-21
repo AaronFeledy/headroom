@@ -342,9 +342,14 @@ Provider assets and their sources are documented in
 
 Every measured usage bar includes a pale marker at its estimated expected usage:
 `100 × elapsed time / window length`. The text compares actual usage with that
-baseline in percentage points (pp). “10 pp over pace” means usage is ten points
-higher than the fraction of the window elapsed; “under pace” means capacity is
-being consumed more slowly. Hover the bar or comparison for exact percentages.
+baseline as time ahead of or behind steady spending: the percentage-point
+difference multiplied by the window length. For example, ten points ahead is
+30 minutes in a five-hour session or 16 hours 48 minutes in a weekly window.
+Labels use minutes, hours/minutes, or days/hours; differences under one minute
+show On pace. Ahead is orange and behind is cyan, with critical warning colors
+retained. Hover the bar or comparison for usage percentages, the percentage-point
+difference, and an explanation. This is a budget comparison, not a prediction of
+when the allowance will run out.
 The marker advances on the client's 30-second clock, including between polls.
 
 Hover a reset countdown to see its local date and time. Tooltips use Today,

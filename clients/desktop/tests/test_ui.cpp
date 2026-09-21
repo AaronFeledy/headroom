@@ -207,7 +207,7 @@ private slots:
         auto label = findItem(window->contentItem(), "paceLabel_Claude_session");
         QVERIFY(marker); QVERIFY(marker->isVisible()); QVERIFY(label);
         QCOMPARE(marker->property("color").value<QColor>(), QColor("#f8f8f2"));
-        QVERIFY(label->property("text").toString().contains("under pace"));
+        QVERIFY(label->property("text").toString().contains("behind pace"));
         const double markerFraction = (marker->x() + marker->width() / 2) / marker->parentItem()->width();
         QVERIFY(std::abs(markerFraction - (1.0 - 8400.0 / 18000)) < 0.01);
         auto verifyNotches = [&]() {

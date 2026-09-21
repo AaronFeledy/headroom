@@ -242,11 +242,11 @@ private slots:
             {"resets_at", now.addSecs(9000).toString(Qt::ISODate)}};
         auto pace = Usage::pacing("Claude", bucket, now);
         QCOMPARE(pace["expected"].toDouble(), 50.0);
-        QCOMPARE(pace["label"].toString(), QString("10 pp over pace"));
+        QCOMPARE(pace["label"].toString(), QString("30m ahead of pace"));
         QVERIFY(pace["over"].toBool());
         bucket["utilization"] = 34;
         pace = Usage::pacing("Codex", bucket, now);
-        QCOMPARE(pace["label"].toString(), QString("16 pp under pace"));
+        QCOMPARE(pace["label"].toString(), QString("48m behind pace"));
         bucket["utilization"] = 50;
         QCOMPARE(Usage::pacing("Codex", bucket, now)["label"].toString(), QString("On pace"));
         bucket["id"] = "weekly_grok_bot";
@@ -258,6 +258,50 @@ private slots:
         bucket["id"] = "session"; bucket["label"] = "Weekly";
         bucket["resets_at"] = now.addSecs(7 * 86400 / 2).toString(Qt::ISODate);
         QCOMPARE(Usage::pacing("Claude", bucket, now)["expected"].toDouble(), 50.0);
+    }
+    void pacingTimeOffsets_data() {
+        QTest::addColumn<QString>("provider");
+        QTest::addColumn<QString>("id");
+        QTest::addColumn<qint64>("duration");
+        QTest::addColumn<qint64>("offsetSeconds");
+        QTest::addColumn<QString>("label");
+        QTest::newRow("session-ahead") << "Claude" << "session" << qint64(18000) << qint64(1800) << "30m ahead of pace";
+        QTest::newRow("weekly-same-ten-points") << "Codex" << "weekly" << qint64(604800) << qint64(60480) << "16h 48m ahead of pace";
+        QTest::newRow("hour-only") << "Codex" << "session" << qint64(18000) << qint64(3600) << "1h ahead of pace";
+        QTest::newRow("behind") << "Claude" << "session" << qint64(18000) << qint64(-5400) << "1h 30m behind pace";
+        QTest::newRow("days") << "Cursor" << "plan" << qint64(2592000) << qint64(-194400) << "2d 6h behind pace";
+        QTest::newRow("day-only") << "Codex" << "weekly" << qint64(604800) << qint64(86400) << "1d ahead of pace";
+        QTest::newRow("zero") << "Claude" << "session" << qint64(18000) << qint64(0) << "On pace";
+        QTest::newRow("tolerance-ahead") << "Claude" << "session" << qint64(18000) << qint64(59) << "On pace";
+        QTest::newRow("tolerance-behind") << "Codex" << "weekly" << qint64(604800) << qint64(-59) << "On pace";
+        QTest::newRow("minute-boundary") << "Codex" << "weekly" << qint64(604800) << qint64(60) << "1m ahead of pace";
+        QTest::newRow("negative-minute-boundary") << "Codex" << "weekly" << qint64(604800) << qint64(-60) << "1m behind pace";
+        QTest::newRow("minute") << "Claude" << "session" << qint64(18000) << qint64(61) << "1m ahead of pace";
+        QTest::newRow("round-hour") << "Claude" << "session" << qint64(18000) << qint64(3590) << "1h ahead of pace";
+        QTest::newRow("round-day") << "Codex" << "weekly" << qint64(604800) << qint64(86390) << "1d ahead of pace";
+    }
+    void pacingTimeOffsets() {
+        QFETCH(QString, provider); QFETCH(QString, id); QFETCH(qint64, duration);
+        QFETCH(qint64, offsetSeconds); QFETCH(QString, label);
+        const auto now = QDateTime::fromString("2026-09-07T12:00:00Z", Qt::ISODate);
+        const QVariantMap bucket{{"id", id}, {"utilization", 50.0 + 100.0 * offsetSeconds / duration},
+            {"resets_at", now.addSecs(duration / 2).toString(Qt::ISODate)}};
+        const auto pace = Usage::pacing(provider, bucket, now);
+        QCOMPARE(pace["label"].toString(), label);
+        QCOMPARE(pace["onPace"].toBool(), std::abs(offsetSeconds) < 60);
+        QCOMPARE(pace["over"].toBool(), offsetSeconds >= 60);
+        QVERIFY(pace["detail"].toString().contains("pp"));
+        QVERIFY(pace["detail"].toString().contains("does not predict"));
+        if (offsetSeconds >= 60) QVERIFY(pace["detail"].toString().contains("scheduled for"));
+        if (offsetSeconds <= -60) QVERIFY(pace["detail"].toString().contains("in reserve"));
+        // The detail's pace phrase must agree with the label, so the neutral
+        // band never reads "over pace" beneath an "On pace" label.
+        const QString detail = pace["detail"].toString();
+        if (std::abs(offsetSeconds) < 60) {
+            QVERIFY(detail.contains("pp from pace"));
+            QVERIFY(!detail.contains("over pace") && !detail.contains("under pace"));
+        } else if (offsetSeconds > 0) QVERIFY(detail.contains("pp over pace"));
+        else QVERIFY(detail.contains("pp under pace"));
     }
     void pacingUnknownAndExpiredWindows() {
         const auto now = QDateTime::fromString("2026-09-07T12:00:00Z", Qt::ISODate);
