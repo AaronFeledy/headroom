@@ -22,12 +22,19 @@
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QtTest>
+#include <QAccessible>
 #include <cmath>
 
 QQuickItem *findItem(QQuickItem *root, const QString &name) {
     if (root->objectName() == name) return root;
     for (auto child : root->childItems()) if (auto found = findItem(child, name)) return found;
     return nullptr;
+}
+QStringList accessibleActions(QQuickItem *item) {
+    auto *iface = QAccessible::queryAccessibleInterface(item);
+    if (!iface) return {};
+    auto *actions = iface->actionInterface();
+    return actions ? actions->actionNames() : QStringList{};
 }
 void escapeFocusedItem(QQuickItem *item) {
     QVERIFY(item);
@@ -857,9 +864,71 @@ private slots:
         QTest::keyClick(window, Qt::Key_Escape);
         QTRY_VERIFY(!window->isVisible());
     }
+    void cursorLoginMessageOpensOnlyTheFixedLoginPage() {
+        QTemporaryDir dir;
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        provider["error"] = "Log in to cursor.com, or push Cursor credentials from the tray.";
+        provider["is_success"] = false;
+        provider["needs_reauth"] = false; // Older servers omit the flag for missing credentials.
+        provider["buckets"] = QJsonArray{};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{provider}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(539, 600);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 1);
+        auto card = findItem(window->contentItem(), "providerCard_Cursor"); QVERIFY(card);
+        auto message = findItem(card, "providerError_Cursor"); QVERIFY(message);
+        QTRY_VERIFY(message->isVisible());
+        // The link affordances live on an overlay; the message itself stays plain static text.
+        auto link = findItem(card, "providerErrorLink_Cursor"); QVERIFY(link);
+        QVERIFY(link->activeFocusOnTab());
+        QVERIFY(!message->activeFocusOnTab());
+        QVERIFY(accessibleActions(link).contains(QAccessibleActionInterface::pressAction()));
+        UrlCapture capture;
+        QDesktopServices::setUrlHandler("https", &capture, "capture");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            message->mapToScene(QPointF(message->width()/2, message->height()/2)).toPoint());
+        link->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Return);
+        QTest::keyClick(window, Qt::Key_Space);
+        provider["needs_reauth"] = true;
+        provider["error"] = "Cursor session expired. Log in to cursor.com again.";
+        card->setProperty("provider", provider.toVariantMap());
+        QCOMPARE(findItem(card, "providerErrorLink_Cursor"), link);
+        QTest::keyClick(window, Qt::Key_Return);
+        const auto urls = capture.urls;
+        QDesktopServices::unsetUrlHandler("https");
+        QCOMPARE(urls, QList<QUrl>(4, QUrl("https://cursor.com/login")));
+        provider["needs_reauth"] = false;
+        provider["error"] = "Cursor usage request failed with HTTP 500.";
+        card->setProperty("provider", provider.toVariantMap());
+        QVERIFY(!card->property("cursorLoginRequired").toBool());
+        // Ordinary errors advertise no press action and take no tab stop.
+        QVERIFY(!findItem(card, "providerErrorLink_Cursor"));
+        QVERIFY(!message->activeFocusOnTab());
+        QVERIFY(!accessibleActions(message).contains(QAccessibleActionInterface::pressAction()));
+        provider["provider_name"] = "Grok"; provider["needs_reauth"] = true;
+        card->setProperty("provider", provider.toVariantMap());
+        QVERIFY(!card->property("cursorLoginRequired").toBool());
+        QVERIFY(!findItem(card, "providerErrorLink_Grok"));
+    }
     void updateIndicatorsNavigateWithoutApplying_data() {
         QTest::addColumn<QSize>("size");
         QTest::newRow("minimum") << QSize(460, 420);
+        QTest::newRow("default-width") << QSize(539, 893);
         QTest::newRow("compact") << QSize(699, 600);
         QTest::newRow("wide-boundary") << QSize(700, 600);
         QTest::newRow("wide") << QSize(960, 900);
@@ -944,6 +1013,7 @@ private slots:
         auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
         QVERIFY(!findItem(window->contentItem(), "compactUpdateIndicator"));
         QVERIFY(!indicator->isVisible()); QVERIFY(!server->isVisible());
+        const qreal footerHeightWithoutUpdates = footer->height();
         for (const QString state : {"checking", "unavailable", "current"}) {
             updates->setProperty("state", state);
             QVERIFY(!indicator->isVisible());
@@ -992,6 +1062,31 @@ private slots:
             return !desktopRect.intersects(serverRect) && serverRect.right() <= window->width();
         };
         QTRY_VERIFY(separated());
+        const auto serverInline = [&] {
+            const auto center = server->mapToScene(QPointF(0, server->height() / 2)).y();
+            const auto logoCenter = logo->mapToScene(QPointF(0, logo->height() / 2)).y();
+            const auto left = server->mapToScene(QPointF()).x();
+            const auto right = server->mapToScene(QPointF(server->width(), 0)).x();
+            return std::abs(center - logoCenter) < 1
+                && left >= title->mapToScene(QPointF(title->width(), 0)).x()
+                && right <= filter->mapToScene(QPointF()).x()
+                && std::abs(footer->height() - footerHeightWithoutUpdates) < 1;
+        };
+        for (const QString desktopState : {"current", "staged"}) {
+            updates->setProperty("state", desktopState);
+            for (const QString serverState : {"idle", "updating", "failed"}) {
+                remote->setProperty("state", serverState);
+                remote->setProperty("busy", serverState == "updating");
+                QTRY_VERIFY(serverInline());
+                if (indicator->isVisible()) {
+                    QTRY_VERIFY(separated());
+                    QTRY_VERIFY(std::abs(indicator->mapToScene(QPointF(0, indicator->height()/2)).y()
+                        - logo->mapToScene(QPointF(0, logo->height()/2)).y()) < 1);
+                }
+            }
+        }
+        remote->setProperty("state", "idle");
+        remote->setProperty("busy", false);
 
         window->requestActivate();
         controller.notifications()->post("desktopUpdate", "Headroom is ready to restart", "Synthetic staged update");

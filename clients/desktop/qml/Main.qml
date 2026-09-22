@@ -304,21 +304,6 @@ ApplicationWindow {
                 id: footerBody
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: window.compact ? 16 : 24; topMargin: 12 }
                 spacing: 10
-                Flow {
-                    Layout.fillWidth: true; spacing: 8
-                    visible: appInfo.serverUpdateNotice.length > 0
-                    UpdateIndicator {
-                        id: serverUpdateIndicator; objectName: "serverUpdateIndicator"
-                        visible: appInfo.serverUpdateNotice.length > 0
-                        text: remoteUpdateService.busy ? "Updating server…"
-                            : remoteUpdateService.state === "failed" ? "Server update needs attention"
-                            : "↑ Server update available"
-                        needsAttention: remoteUpdateService.state === "failed"
-                        detail: appInfo.serverUpdateNotice
-                        Accessible.name: text
-                        onClicked: settings.openUpdates()
-                    }
-                }
                 Text {
                     visible: window.state.status === "offline"
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
@@ -350,16 +335,25 @@ ApplicationWindow {
                     Item {
                         id: brandingArea
                         Layout.fillWidth: true
-                        Layout.minimumWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? 38 : 0)
-                        implicitWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitWidth + 10 : 0)
+                        readonly property bool hasUpdates: desktopUpdateIndicator.visible || serverUpdateIndicator.visible
+                        // Size the indicators against the brand title, never against brandLabels, so the
+                        // status line can claim the leftover width without creating a binding loop.
+                        readonly property real indicatorsWidth: hasUpdates
+                            ? Math.min(updateIndicators.implicitWidth,
+                                Math.max(updateIndicators.Layout.minimumWidth, width - brandTitle.implicitWidth - 10))
+                            : 0
+                        Layout.minimumWidth: brandTitle.implicitWidth + (hasUpdates ? updateIndicators.Layout.minimumWidth + 10 : 0)
+                        implicitWidth: brandTitle.implicitWidth + (hasUpdates ? updateIndicators.implicitWidth + 10 : 0)
                         // Keep even-sized controls on the same pixel-aligned center.
-                        implicitHeight: Math.ceil(Math.max(brandLabels.implicitHeight, desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitHeight : 0) / 2) * 2
+                        implicitHeight: Math.ceil(Math.max(brandLabels.implicitHeight, hasUpdates ? updateIndicators.implicitHeight : 0) / 2) * 2
                         ColumnLayout {
                             id: brandLabels
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.alignWhenCentered: false
-                            width: desktopUpdateIndicator.visible ? brandTitle.implicitWidth : parent.width
+                            width: brandingArea.hasUpdates
+                                ? Math.max(brandTitle.implicitWidth, brandingArea.width - brandingArea.indicatorsWidth - 10)
+                                : parent.width
                             spacing: 3
                             Text {
                                 id: brandTitle; objectName: "footerBrandTitle"
@@ -375,21 +369,45 @@ ApplicationWindow {
                                 ToolTip.text: footerStatus.text + "\n" + window.healthy + " / " + window.providers.length + " providers online · Next reset in " + window.nextReset
                             }
                         }
-                        UpdateIndicator {
-                            id: desktopUpdateIndicator; objectName: "desktopUpdateIndicator"
+                        RowLayout {
+                            id: updateIndicators
                             anchors.left: brandLabels.right
                             anchors.leftMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.alignWhenCentered: false
-                            width: Math.min(implicitWidth, Math.max(28, brandingArea.width - brandLabels.width - 10))
-                            notificationTarget: "desktopUpdate"
-                            presentingNotifications: window.presentingNotifications && !notificationReveal.running
-                            visible: window.desktopUpdateLabel.length > 0
-                            text: window.desktopUpdateLabel
-                            needsAttention: updateService.state === "failed"
-                            detail: updateService.statusText
-                            Accessible.name: "Headroom: " + text
-                            onClicked: settings.openUpdates()
+                            spacing: 6
+                            Layout.minimumWidth: (desktopUpdateIndicator.visible ? 28 : 0)
+                                + (serverUpdateIndicator.visible ? 28 : 0)
+                                + (desktopUpdateIndicator.visible && serverUpdateIndicator.visible ? spacing : 0)
+                            width: brandingArea.indicatorsWidth
+                            UpdateIndicator {
+                                id: desktopUpdateIndicator; objectName: "desktopUpdateIndicator"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 28
+                                Layout.maximumWidth: implicitWidth
+                                notificationTarget: "desktopUpdate"
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
+                                visible: window.desktopUpdateLabel.length > 0
+                                text: window.desktopUpdateLabel
+                                needsAttention: updateService.state === "failed"
+                                detail: updateService.statusText
+                                Accessible.name: "Headroom: " + text
+                                onClicked: settings.openUpdates()
+                            }
+                            UpdateIndicator {
+                                id: serverUpdateIndicator; objectName: "serverUpdateIndicator"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 28
+                                Layout.maximumWidth: implicitWidth
+                                visible: appInfo.serverUpdateNotice.length > 0
+                                text: remoteUpdateService.busy ? "Updating server…"
+                                    : remoteUpdateService.state === "failed" ? "Server update needs attention"
+                                    : "↑ Server update available"
+                                needsAttention: remoteUpdateService.state === "failed"
+                                detail: appInfo.serverUpdateNotice
+                                Accessible.name: text
+                                onClicked: settings.openUpdates()
+                            }
                         }
                     }
                     Text {
