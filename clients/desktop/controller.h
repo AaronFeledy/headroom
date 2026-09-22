@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QHash>
 #include "warning.h"
+#include "notifications.h"
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QPointer>
@@ -16,6 +17,7 @@
 
 class Controller : public QObject {
     Q_OBJECT
+    Q_PROPERTY(Notifications *notifications READ notifications CONSTANT)
     Q_PROPERTY(QVariantList providers READ providers NOTIFY providersChanged)
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
@@ -26,6 +28,7 @@ public:
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
                         CredentialServiceOptions credentialOptions = {}, SshOptions sshOptions = {}, bool startPolling = true);
     ~Controller() override;
+    Notifications *notifications() { return &m_notificationCenter; }
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -56,6 +59,8 @@ public:
     Q_INVOKABLE bool prepareChatGptReset();
     Q_INVOKABLE void cancelChatGptResetConfirmation();
     Q_INVOKABLE void consumeChatGptReset();
+    Q_INVOKABLE bool scheduleChatGptReset();
+    Q_INVOKABLE void cancelScheduledChatGptReset();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {});
@@ -63,6 +68,7 @@ public:
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantMap pacing(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QString countdown(const QString &timestamp) const;
+    Q_INVOKABLE QString resetTimeLabel(const QString &timestamp) const;
     Q_INVOKABLE void setPrimary(const QString &name);
     Q_INVOKABLE void copyText(const QString &text);
     QString primary() const;
@@ -72,8 +78,6 @@ signals:
     void diagnosticsChanged();
     void providersChanged();
     void settingsChanged();
-    void notify(const QString &title, const QString &message);
-    void usageAlert(const QString &title, const QString &message, int severity);
 protected:
     void acceptSnapshot(const QVariantList &providers);
 private:
@@ -91,8 +95,13 @@ private:
     QString resetReceiptPath() const;
     QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
+    void observeScheduledChatGptReset();
+    void expireScheduledChatGptReset();
+    void clearScheduledChatGptReset();
+    void submitChatGptReset(bool automatic);
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);
+    Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
     QString m_mode = "remote", m_url, m_token, m_sshUrl, m_primary = "Claude", m_message, m_status = "setup";
@@ -116,5 +125,8 @@ private:
     QPointer<QNetworkReply> m_resetReply;
     QString m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
     bool m_resetBusy = false;
+    // One-shot authorization is session-only and bound to this account,
+    // transport, and weekly window. Never restore it on an app restart.
+    QString m_autoResetConnection, m_autoResetWindow;
     QTimer m_poll, m_clock;
 };

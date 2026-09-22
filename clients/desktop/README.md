@@ -6,6 +6,52 @@ countdowns, pacing warnings, notifications, local-server lifecycle management,
 diagnostics, and verified package updates. Windows packages can read supported
 Cursor and Grok browser cookies through a separate current-user helper.
 
+## Notification attention
+
+Usage meters entering Warning or Critical still send native desktop notifications.
+Desktop updates now use the same notification path when a version is available,
+staged for restart, or fails. The notification setting controls both. Repeated
+update checks for the same version/state do not notify again; warning transitions
+continue to use the existing hysteresis rules.
+
+A cyan dot in the tray icon's upper-right corner means there are unseen
+notifications, including alerts from providers other than the tray's primary
+provider. It remains through usage refreshes, offline states, and the temporary
+critical animation. Hovering or opening the tray menu does not clear it.
+
+Opening and activating the dashboard clears unseen notifications automatically
+and briefly highlights visible targets in place. Notifications do not insert rows,
+resize the footer, change the provider filter, or move the scroll position.
+Offscreen targets retain their highlight until scrolled into view during that
+opening. Alerts arriving while the dashboard is active follow the same rule;
+an open overlay postpones acknowledgement until it closes.
+
+A small dot on the existing footer logo offers recent activity without taking up
+more space. Clicking that logo opens a dismissible popover with event details,
+including events whose meters disappeared. Only choosing an event changes the
+filter or scroll position to reveal its target. Closing or minimizing the dashboard
+clears that opening's activity and highlights, preventing replay on the next
+opening. Native notification clicks open the dashboard on the Qt and Windows
+stable-tray paths.
+
+Changes in ChatGPT's reported banked-reset count use this same notification path.
+The first valid count establishes a baseline. Missing/failed readings do not imply
+zero; account or connection changes establish a new baseline. Disabled notifications
+still update the baseline, so enabling them does not replay past changes. A decrease
+is reported as a count change, without assuming whether a reset expired or was used.
+
+When the counter comes into view, it shows a quick signed delta rising and fading
+above it: green for additions and orange for decreases, using the actual difference
+(including changes greater than one). At zero, the counter and its spacing leave the layout;
+the final decrease still animates as an overlay. The counter falls back to the
+provider header if there is no weekly meter. Like other notifications,
+several unseen changes to the same counter retain the latest reported change, and
+acknowledged animations do not replay on subsequent openings.
+
+Notification state is session-only and is never written to disk. Unseen events
+coalesce by target, with at most 128 targets retained; a fresh warning transition
+can notify about the same meter again after acknowledgement.
+
 ## Build and run
 
 Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
@@ -296,10 +342,22 @@ Provider assets and their sources are documented in
 
 Every measured usage bar includes a pale marker at its estimated expected usage:
 `100 × elapsed time / window length`. The text compares actual usage with that
-baseline in percentage points (pp). “10 pp over pace” means usage is ten points
-higher than the fraction of the window elapsed; “under pace” means capacity is
-being consumed more slowly. Hover the bar or comparison for exact percentages.
+baseline as time ahead of or behind steady spending: the percentage-point
+difference multiplied by the window length. For example, ten points ahead is
+30 minutes in a five-hour session or 16 hours 48 minutes in a weekly window.
+Labels use minutes, hours/minutes, or days/hours; differences under one minute
+show On pace. Ahead is orange and behind is cyan, with critical warning colors
+retained. Hover the bar or comparison for usage percentages, the percentage-point
+difference, and an explanation. This is a budget comparison, not a prediction of
+when the allowance will run out.
 The marker advances on the client's 30-second clock, including between polls.
+
+Hover a reset countdown to see its local date and time. Tooltips use Today,
+Tomorrow, or the full weekday for two through six calendar days ahead. Seven or
+more calendar days ahead uses an abbreviated weekday and date, so next Monday
+never appears as just Monday on a Monday, even when it is less than 168 hours
+away. Dates in another year include the year; times follow the system's 12- or
+24-hour format. Missing reset timestamps have no date tooltip.
 
 The current API exposes reset times but not period starts. Following the Windows
 client's pacing conventions, Headroom estimates five hours for Claude/ChatGPT
@@ -322,13 +380,23 @@ while ChatGPT's weekly meter is in the shared Critical warning state. The count 
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open ChatGPT's usage and reset controls in a browser.
 At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
-is available. It requires explicit confirmation and uses the selected backend
-transport. Each confirmed request is submitted once, without retries. The button
-stays disabled after submission, including after a connection failure or app
-restart, until fresh usage for the same account falls below 95%. Headroom schedules
-read-only usage refreshes after submission to pick up the reset's effect. The
-button can appear again when weekly usage subsequently reaches 95%. Both the
-desktop and server must support resets.
+is available. Its confirmation offers **Use now** or **Use automatically at 100%**.
+The automatic choice authorizes one reset for the current account, connection,
+and weekly window. Headroom checks the server's usage snapshot every 15 seconds
+while armed and submits once when it reports 100%; the server's provider polling
+cadence still determines when new usage becomes available. Connection failures
+back that cadence off to at most five minutes, and the arm is retired as soon as
+its weekly window ends, even while the server stays unreachable. Keep Headroom
+running: quitting cancels the choice. **Auto at 100%…** reopens the dialog to
+use it now or cancel. Account, connection, or weekly-window changes, usage below
+95%, no credits, or an existing reset request cancel the choice. Provider errors
+pause it. It never rearms itself or carries over to another week. Both choices
+use the selected backend transport. Each confirmed request is submitted once,
+without retries. The button stays disabled after submission, including after a
+connection failure or app restart, until fresh usage for the same account falls
+below 95%. Headroom schedules read-only usage refreshes after submission to pick
+up the reset's effect. The button can appear again when weekly usage
+subsequently reaches 95%. Both the desktop and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies

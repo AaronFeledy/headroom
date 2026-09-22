@@ -28,6 +28,44 @@ private slots:
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_MODE");
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_RECORD");
     }
+    void resetTimeLabelsUseLocalCalendarDays_data() {
+        QTest::addColumn<QString>("nowStamp");
+        QTest::addColumn<QString>("resetStamp");
+        QTest::addColumn<QString>("day");
+        QTest::addColumn<QTime>("time");
+        const QString monday = "2026-09-21T12:00:00-05:00";
+        QTest::newRow("today") << monday << "2026-09-21T18:30:00Z" << "Today" << QTime(13, 30);
+        QTest::newRow("tomorrow") << monday << "2026-09-22T18:30:00Z" << "Tomorrow" << QTime(13, 30);
+        QTest::newRow("tomorrow-in-minutes") << "2026-09-21T23:55:00-05:00" << "2026-09-22T05:05:00Z" << "Tomorrow" << QTime(0, 5);
+        QTest::newRow("tomorrow-nearly-48-hours") << "2026-09-21T00:01:00-05:00" << "2026-09-23T04:59:00Z" << "Tomorrow" << QTime(23, 59);
+        QTest::newRow("weekday") << monday << "2026-09-23T18:30:00Z" << "Wednesday" << QTime(13, 30);
+        QTest::newRow("six-calendar-days") << monday << "2026-09-27T18:30:00Z" << "Sunday" << QTime(13, 30);
+        QTest::newRow("next-monday-in-6d5h") << "2026-09-21T23:00:00-05:00" << "2026-09-28T09:00:00Z" << "Mon, Sep 28" << QTime(4, 0);
+        QTest::newRow("exact-week") << monday << "2026-09-28T17:00:00Z" << "Mon, Sep 28" << QTime(12, 0);
+        QTest::newRow("over-week") << monday << "2026-09-29T18:30:00Z" << "Tue, Sep 29" << QTime(13, 30);
+        QTest::newRow("next-year") << monday << "2027-01-01T18:30:00Z" << "Fri, Jan 1, 2027" << QTime(13, 30);
+        QTest::newRow("past-date") << monday << "2026-09-20T18:30:00Z" << "Sun, Sep 20" << QTime(13, 30);
+        QTest::newRow("utc-tomorrow-local-today") << monday << "2026-09-22T02:00:00Z" << "Today" << QTime(21, 0);
+    }
+    void resetTimeLabelsUseLocalCalendarDays() {
+        QFETCH(QString, nowStamp); QFETCH(QString, resetStamp); QFETCH(QString, day); QFETCH(QTime, time);
+        const QLocale locale(QLocale::English, QLocale::UnitedStates);
+        const auto now = QDateTime::fromString(nowStamp, Qt::ISODate);
+        QCOMPARE(Usage::resetTimeLabel(resetStamp, now, locale), day + " at " + locale.toString(time, QLocale::ShortFormat));
+    }
+    void resetTimeLabelsHandleInvalidAndDaylightSaving() {
+        const QLocale locale(QLocale::English, QLocale::UnitedStates);
+        const QTimeZone zone("America/Chicago");
+        QVERIFY(zone.isValid());
+        const QDateTime now(QDate(2026, 10, 31), QTime(23, 30), zone);
+        QCOMPARE(Usage::resetTimeLabel("2026-11-01T08:30:00Z", now, locale),
+            "Tomorrow at " + locale.toString(QTime(2, 30), QLocale::ShortFormat));
+        QVERIFY(Usage::resetTimeLabel({}, now, locale).isEmpty());
+        QVERIFY(Usage::resetTimeLabel("not a date", now, locale).isEmpty());
+        QVERIFY(Usage::resetTimeLabel("2026-11-01T08:30:00Z", {}, locale).isEmpty());
+        const QLocale german(QLocale::German, QLocale::Germany);
+        QCOMPARE(Usage::resetTimeLabel("2026-11-01T08:30:00Z", now, german), "Tomorrow at 02:30");
+    }
     void parseContract() {
         QVariantList providers; QVERIFY(Usage::parse(TestUsage::snapshot(), providers)); QCOMPARE(providers.size(), 4);
         QCOMPARE(providers[0].toMap()["provider_name"].toString(), "Claude");
@@ -55,6 +93,43 @@ private slots:
         QCOMPARE(buckets.size(), 1);
         QCOMPARE(buckets.first().toMap()["id"].toString(), QString("weekly"));
         QCOMPARE(buckets.first().toMap()["utilization"].toDouble(), 0.0);
+    }
+    void bankedResetNotificationsObserveSnapshotsOnly() {
+        QTemporaryDir dir;
+        const auto reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
+        auto payload = [&](int count, const QString &fingerprint = QString(64, 'a'),
+                           bool failed = false, bool missing = false) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, count, reset)).array();
+            auto codex = providers[1].toObject();
+            if (missing) codex.remove("rate_limit_reset_credits");
+            else codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
+            if (failed) { codex["is_success"] = false; codex["error"] = "Unavailable"; }
+            providers[1] = codex;
+            return QJsonDocument(providers).toJson();
+        };
+        ControllerFixture controller(dir.filePath("settings.json"), payload(3));
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(alerts.size(), 0);
+        controller.replaceSnapshot(payload(4)); QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(4)); QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(0, QString(64, 'a'), true));
+        controller.replaceSnapshot(payload(0, QString(64, 'a'), false, true));
+        controller.replaceSnapshot(payload(-1)); // Invalid metadata is normalized to unknown.
+        QCOMPARE(alerts.size(), 1);
+        controller.replaceSnapshot(payload(2)); QCOMPARE(alerts.size(), 2);
+        controller.notifications()->present();
+        QCOMPARE(controller.notifications()->presented().last().toMap()["delta"].toLongLong(), -2);
+        controller.replaceSnapshot(payload(9, QString(64, 'b')));
+        QCOMPARE(alerts.size(), 2);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        QVERIFY(controller.notifications()->presented().isEmpty());
+        controller.replaceSnapshot(payload(0, QString(64, 'b')));
+        QCOMPARE(alerts.size(), 3);
+        QVERIFY(controller.saveSettings("remote", "https://different.example.test", "", 60, true,
+            "Claude", false).isEmpty()); // Fixture refresh is synthetic; no network request.
+        QCOMPARE(alerts.size(), 3);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
     }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
@@ -167,11 +242,11 @@ private slots:
             {"resets_at", now.addSecs(9000).toString(Qt::ISODate)}};
         auto pace = Usage::pacing("Claude", bucket, now);
         QCOMPARE(pace["expected"].toDouble(), 50.0);
-        QCOMPARE(pace["label"].toString(), QString("10 pp over pace"));
+        QCOMPARE(pace["label"].toString(), QString("30m ahead of pace"));
         QVERIFY(pace["over"].toBool());
         bucket["utilization"] = 34;
         pace = Usage::pacing("Codex", bucket, now);
-        QCOMPARE(pace["label"].toString(), QString("16 pp under pace"));
+        QCOMPARE(pace["label"].toString(), QString("48m behind pace"));
         bucket["utilization"] = 50;
         QCOMPARE(Usage::pacing("Codex", bucket, now)["label"].toString(), QString("On pace"));
         bucket["id"] = "weekly_grok_bot";
@@ -183,6 +258,94 @@ private slots:
         bucket["id"] = "session"; bucket["label"] = "Weekly";
         bucket["resets_at"] = now.addSecs(7 * 86400 / 2).toString(Qt::ISODate);
         QCOMPARE(Usage::pacing("Claude", bucket, now)["expected"].toDouble(), 50.0);
+    }
+    void reportedPeriodsOverrideEstimatesAndBoundNotches() {
+        const auto start = QDateTime::fromString("2026-02-01T00:00:00Z", Qt::ISODate);
+        const auto end = start.addDays(28);
+        QVariantMap bucket{{"id", "api"}, {"utilization", 50},
+            {"starts_at", start.toString(Qt::ISODate)}, {"resets_at", end.toString(Qt::ISODate)}};
+        const auto half = start.addDays(14);
+        QCOMPARE(Usage::pacing("Cursor", bucket, half)["expected"].toDouble(), 50.0);
+        QCOMPARE(Usage::pacing("Cursor", bucket, half)["label"].toString(), QString("On pace"));
+        QVERIFY(Usage::pacing("Cursor", bucket, half)["detail"].toString().contains("provider-reported"));
+        QCOMPARE(Usage::notches("Cursor", bucket).size(), 3);
+        QVERIFY(!Usage::pacing("Cursor", bucket, start.addSecs(-1))["available"].toBool());
+        for (const auto &provider : {QString("Grok"), QString("Cursor")}) {
+            bucket["id"] = "weekly";
+            bucket["resets_at"] = start.addDays(6).toString(Qt::ISODate);
+            QCOMPARE(Usage::pacing(provider, bucket, start.addDays(3))["expected"].toDouble(), 50.0);
+            QCOMPARE(Usage::notches(provider, bucket).size(), 5);
+        }
+        bucket["id"] = "api"; bucket["resets_at"] = end.toString(Qt::ISODate);
+        for (const QString invalid : {QString(), QString("invalid"), end.toString(Qt::ISODate), end.addDays(1).toString(Qt::ISODate), start.addYears(-2).toString(Qt::ISODate)}) {
+            bucket["starts_at"] = invalid;
+            QCOMPARE(Usage::period("Cursor", bucket)["seconds"].toLongLong(), 30LL * 86400);
+            QCOMPARE(Usage::notches("Cursor", bucket).size(), 4);
+        }
+    }
+    void optionalBillingMetadataNeverBreaksOlderSnapshots() {
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        auto bucket = provider["buckets"].toArray()[1].toObject();
+        bucket["resets_at"] = "2026-03-01T00:00:00Z";
+        const auto verify = [&](const QJsonValue &start, const QJsonValue &detail, bool valid) {
+            bucket["starts_at"] = start; bucket["detail_text"] = detail;
+            provider["buckets"] = QJsonArray{bucket};
+            QVariantList parsed;
+            QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+            const auto normalized = parsed[0].toMap()["buckets"].toList()[0].toMap();
+            QCOMPARE(!normalized["starts_at"].isNull(), valid);
+            QCOMPARE(!normalized["detail_text"].isNull(), valid);
+            QCOMPARE(normalized["utilization"], bucket["utilization"].toVariant());
+        };
+        verify("2026-02-01T00:00:00Z", "Plan remaining: 25", true);
+        verify(QJsonValue::Null, QJsonValue::Null, false);
+        verify(12, QJsonArray{}, false);
+        verify("invalid", QString(4097, 'x'), false);
+        verify("2026-03-01T00:00:00Z", false, false);
+    }
+    void pacingTimeOffsets_data() {
+        QTest::addColumn<QString>("provider");
+        QTest::addColumn<QString>("id");
+        QTest::addColumn<qint64>("duration");
+        QTest::addColumn<qint64>("offsetSeconds");
+        QTest::addColumn<QString>("label");
+        QTest::newRow("session-ahead") << "Claude" << "session" << qint64(18000) << qint64(1800) << "30m ahead of pace";
+        QTest::newRow("weekly-same-ten-points") << "Codex" << "weekly" << qint64(604800) << qint64(60480) << "16h 48m ahead of pace";
+        QTest::newRow("hour-only") << "Codex" << "session" << qint64(18000) << qint64(3600) << "1h ahead of pace";
+        QTest::newRow("behind") << "Claude" << "session" << qint64(18000) << qint64(-5400) << "1h 30m behind pace";
+        QTest::newRow("days") << "Cursor" << "plan" << qint64(2592000) << qint64(-194400) << "2d 6h behind pace";
+        QTest::newRow("day-only") << "Codex" << "weekly" << qint64(604800) << qint64(86400) << "1d ahead of pace";
+        QTest::newRow("zero") << "Claude" << "session" << qint64(18000) << qint64(0) << "On pace";
+        QTest::newRow("tolerance-ahead") << "Claude" << "session" << qint64(18000) << qint64(59) << "On pace";
+        QTest::newRow("tolerance-behind") << "Codex" << "weekly" << qint64(604800) << qint64(-59) << "On pace";
+        QTest::newRow("minute-boundary") << "Codex" << "weekly" << qint64(604800) << qint64(60) << "1m ahead of pace";
+        QTest::newRow("negative-minute-boundary") << "Codex" << "weekly" << qint64(604800) << qint64(-60) << "1m behind pace";
+        QTest::newRow("minute") << "Claude" << "session" << qint64(18000) << qint64(61) << "1m ahead of pace";
+        QTest::newRow("round-hour") << "Claude" << "session" << qint64(18000) << qint64(3590) << "1h ahead of pace";
+        QTest::newRow("round-day") << "Codex" << "weekly" << qint64(604800) << qint64(86390) << "1d ahead of pace";
+    }
+    void pacingTimeOffsets() {
+        QFETCH(QString, provider); QFETCH(QString, id); QFETCH(qint64, duration);
+        QFETCH(qint64, offsetSeconds); QFETCH(QString, label);
+        const auto now = QDateTime::fromString("2026-09-07T12:00:00Z", Qt::ISODate);
+        const QVariantMap bucket{{"id", id}, {"utilization", 50.0 + 100.0 * offsetSeconds / duration},
+            {"resets_at", now.addSecs(duration / 2).toString(Qt::ISODate)}};
+        const auto pace = Usage::pacing(provider, bucket, now);
+        QCOMPARE(pace["label"].toString(), label);
+        QCOMPARE(pace["onPace"].toBool(), std::abs(offsetSeconds) < 60);
+        QCOMPARE(pace["over"].toBool(), offsetSeconds >= 60);
+        QVERIFY(pace["detail"].toString().contains("pp"));
+        QVERIFY(pace["detail"].toString().contains("does not predict"));
+        if (offsetSeconds >= 60) QVERIFY(pace["detail"].toString().contains("scheduled for"));
+        if (offsetSeconds <= -60) QVERIFY(pace["detail"].toString().contains("in reserve"));
+        // The detail's pace phrase must agree with the label, so the neutral
+        // band never reads "over pace" beneath an "On pace" label.
+        const QString detail = pace["detail"].toString();
+        if (std::abs(offsetSeconds) < 60) {
+            QVERIFY(detail.contains("pp from pace"));
+            QVERIFY(!detail.contains("over pace") && !detail.contains("under pace"));
+        } else if (offsetSeconds > 0) QVERIFY(detail.contains("pp over pace"));
+        else QVERIFY(detail.contains("pp under pace"));
     }
     void pacingUnknownAndExpiredWindows() {
         const auto now = QDateTime::fromString("2026-09-07T12:00:00Z", Qt::ISODate);
@@ -360,7 +523,7 @@ private slots:
             });
         });
         Controller controller(dir.filePath("settings.json"), nullptr, true, {}, disabledCredentials());
-        QSignalSpy alerts(&controller, &Controller::usageAlert);
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
         const QString url = QString("http://127.0.0.1:%1").arg(server.serverPort());
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
@@ -373,13 +536,21 @@ private slots:
             QTRY_VERIFY(!controller.state()["loading"].toBool());
             QCOMPARE(concern()["severity"].toInt(), step.severity);
             QCOMPARE(alerts.size(), step.alerts);
+            QCOMPARE(controller.notifications()->unreadCount(), step.alerts ? 1 : 0);
+
             QCOMPARE(concern()["color"].toString(), controller.warningColor(step.severity));
             QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
         }
+        controller.notifications()->present();
+        const auto event = controller.notifications()->presented().first().toMap();
+        QCOMPARE(event["target"].toString(), "meter_Claude_session");
+        QVERIFY(event["title"].toString().contains("Critical"));
+        controller.notifications()->endPresentation();
         QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool());
         used = 80; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(alerts.size(), 3);
         httpStatus = 503; controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "offline");

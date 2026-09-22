@@ -782,7 +782,8 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
         m_stageIsRepair = operation == Operation::Repair;
         m_status = operation == Operation::Repair ? QStringLiteral("A matching repair package is staged. Restart to apply it.")
                                                   : QStringLiteral("Headroom %1 is staged. Restart to apply it.").arg(version);
-        log(QStringLiteral("Download and verification completed; the package is staged for restart."));
+        log(operation == Operation::Check ? QStringLiteral("Existing downloaded package verified; the package is staged for restart.")
+                                         : QStringLiteral("Download and verification completed; the package is staged for restart."));
     } else if (status == QStringLiteral("available")) {
         m_state = QStringLiteral("available");
         m_status = QStringLiteral("Headroom %1 is available.").arg(version);

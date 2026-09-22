@@ -47,6 +47,203 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void statusSharesPaceRowWhenItFits_data() {
+        QTest::addColumn<int>("width");
+        QTest::newRow("compact") << 460;
+        QTest::newRow("wide") << 1180;
+    }
+    void statusSharesPaceRowWhenItFits() {
+        QFETCH(int, width);
+        QTemporaryDir dir;
+        auto cursor = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        cursor["buckets"] = QJsonArray{cursor["buckets"].toArray()[1]};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{cursor}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(width, 800); window->setProperty("filter", "Cursor"); window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 1);
+        auto meter = findItem(window->contentItem(), "meter_Cursor_api"); QVERIFY(meter);
+        auto pace = findItem(meter, "paceLabel_Cursor_api"); QVERIFY(pace);
+        auto status = findItem(meter, "meterStatus_Cursor_api"); QVERIFY(status);
+        auto reset = findItem(meter, "meterReset_Cursor_api"); QVERIFY(reset);
+        QTRY_VERIFY(status->isVisible());
+        QTRY_VERIFY(std::abs(status->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        QTRY_VERIFY(status->mapToScene(QPointF()).x() >= pace->mapToScene(QPointF()).x() + pace->width());
+        const auto originalBucket = meter->property("bucket").toMap();
+        auto bucket = originalBucket;
+        const QSizeF originalSize = meter->size();
+        bucket["detail_text"] = "Plan-wide amounts reported by Cursor:\nIncluded usage: $150\nBonus usage: $25\nPlan remaining: $250";
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QCOMPARE(meter->size(), originalSize);
+        auto tooltip = status->findChild<QObject *>("meterBillingTooltip_Cursor_api"); QVERIFY(tooltip);
+        QVERIFY(tooltip->property("text").toString().contains("Included usage: $150"));
+        QVERIFY(tooltip->property("text").toString().contains("Resets:"));
+        QTest::mouseMove(window, status->mapToScene(QPointF(status->width()/2, status->height()/2)).toPoint());
+        QTRY_VERIFY(tooltip->property("visible").toBool());
+        QVERIFY(tooltip->property("width").toReal() <= window->width() - 32);
+        QCOMPARE(meter->size(), originalSize);
+        const auto tooltipCapture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!tooltipCapture.isEmpty()) {
+            QDir().mkpath(tooltipCapture);
+            QTest::qWait(200);
+            QVERIFY(window->grabWindow().save(QDir(tooltipCapture).filePath(QString("cursor-billing-tooltip-%1.png").arg(width))));
+        }
+        QTest::mouseMove(window, QPoint(1,1));
+        QTRY_VERIFY(!tooltip->property("visible").toBool());
+        bucket["status_text"] = QString("A deliberately long billing explanation that needs to wrap below the pacing label. ").repeated(3);
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QTRY_VERIFY(status->mapToScene(QPointF()).y() >= pace->mapToScene(QPointF()).y() + pace->height());
+        QTRY_VERIFY(status->height() > pace->height());
+        QTRY_VERIFY(status->mapToItem(meter, QPointF()).x() + status->width() <= meter->width() + 1);
+        bucket["status_text"] = "   ";
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QTRY_VERIFY(!status->isVisible()); QTRY_VERIFY(reset->isVisible());
+        QTRY_VERIFY(std::abs(reset->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        QVERIFY(meter->setProperty("bucket", originalBucket));
+        QTRY_VERIFY(status->isVisible());
+        QTRY_VERIFY(std::abs(status->mapToScene(QPointF()).y() - pace->mapToScene(QPointF()).y()) < 1);
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("cursor-pool-%1.png").arg(width))));
+        }
+    }
+    void notificationAttentionIsConsumedOnOpen_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("minimum") << QSize(460, 420);
+        QTest::newRow("compact") << QSize(460, 600);
+        QTest::newRow("wide") << QSize(1180, 940);
+    }
+    void notificationAttentionIsConsumedOnOpen() {
+        QFETCH(QSize, size);
+        QTemporaryDir dir;
+        ControllerFixture controller(dir.filePath("settings.json"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo;
+        UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(window);
+        window->resize(size);
+        QTRY_COMPARE(controller.providers().size(), 4);
+        controller.notifications()->present(); controller.notifications()->endPresentation();
+        window->setProperty("filter", "Claude");
+        window->show(); window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
+        auto flick = scroll->property("contentItem").value<QQuickItem *>(); QVERIFY(flick);
+        auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
+        auto card = findItem(window->contentItem(), "providerCard_Claude"); QVERIFY(card);
+        QTest::qWait(100);
+        const auto footerRect = QRectF(footer->position(), footer->size());
+        const auto cardRect = QRectF(card->mapToScene(QPointF()), card->size());
+        const auto viewportSize = scroll->size();
+        window->hide();
+        controller.notifications()->post("meter_Claude_session", "Claude · Session · Warning", "Another synthetic warning", 2);
+        controller.notifications()->post("meter_Cursor_api", "Cursor · Other Models · Warning", "Synthetic usage warning", 2);
+        QCOMPARE(controller.notifications()->unreadCount(), 2);
+        QTest::qWait(80);
+        QCOMPARE(controller.notifications()->unreadCount(), 2);
+        window->show(); window->requestActivate();
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        QCOMPARE(window->property("filter").toString(), "Claude");
+        auto highlight = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session");
+        QVERIFY(highlight); QTRY_VERIFY(highlight->property("flashing").toBool());
+        QCOMPARE(flick->property("contentY").toDouble(), 0.0);
+        QCOMPARE(QRectF(footer->position(), footer->size()), footerRect);
+        QCOMPARE(QRectF(card->mapToScene(QPointF()), card->size()), cardRect);
+        QCOMPARE(scroll->size(), viewportSize);
+        QVERIFY(!findItem(window->contentItem(), "notificationSummary"));
+        QVERIFY(!findItem(window->contentItem(), "notificationSummaryLink"));
+        auto activity = findItem(window->contentItem(), "notificationButton"); QVERIFY(activity);
+        QVERIFY(activity->property("hasActivity").toBool());
+        QCOMPARE(activity->width(), 26.0);
+        auto popup = window->findChild<QObject *>("notificationPopup"); QVERIFY(popup);
+        QVERIFY(!popup->property("visible").toBool());
+        const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture); QTest::qWait(250);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("quiet-notification-%1.png").arg(size.width()))));
+        }
+        activity->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QCOMPARE(QRectF(footer->position(), footer->size()), footerRect);
+        QCOMPARE(QRectF(card->mapToScene(QPointF()), card->size()), cardRect);
+        QCOMPARE(scroll->size(), viewportSize);
+        QVERIFY(popup->property("x").toDouble() >= 0);
+        QVERIFY(popup->property("y").toDouble() >= 0);
+        QVERIFY(popup->property("y").toDouble() + popup->property("height").toDouble() <= footer->y());
+        if (!capture.isEmpty()) {
+            QTest::qWait(150);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("quiet-activity-%1.png").arg(size.width()))));
+        }
+        auto event = findItem(window->contentItem(), "notificationEvent_meter_Cursor_api"); QVERIFY(event);
+        QSignalSpy popupFrame(window, &QQuickWindow::frameSwapped);
+        window->update(); QTRY_VERIFY(!popupFrame.isEmpty());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, event->mapToScene(QPointF(event->width()/2, event->height()/2)).toPoint());
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QTRY_COMPARE(window->property("filter").toString(), "All providers");
+        auto cursor = findItem(window->contentItem(), "notificationHighlight_meter_Cursor_api"); QVERIFY(cursor);
+        QTRY_VERIFY(cursor->property("flashing").toBool());
+        if (size.width() < 700) QTRY_VERIFY(flick->property("contentY").toDouble() > 0);
+        const double savedScroll = flick->property("contentY").toDouble();
+        window->hide();
+        QVERIFY(controller.notifications()->presented().isEmpty());
+        window->show(); window->requestActivate();
+        QTest::qWait(100);
+        QVERIFY(!cursor->property("flashing").toBool());
+        QVERIFY(!activity->property("hasActivity").toBool());
+        QCOMPARE(flick->property("contentY").toDouble(), savedScroll);
+        // A live alert does not interrupt reading by scrolling to its target.
+        controller.notifications()->post("meter_Claude_session", "Claude · Session · Critical", "Synthetic escalation", 3);
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        QTest::qWait(100);
+        QCOMPARE(flick->property("contentY").toDouble(), savedScroll);
+        auto live = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session"); QVERIFY(live);
+        flick->setProperty("contentY", 0);
+        QTRY_VERIFY(live->property("flashing").toBool());
+        auto settings = window->findChild<QObject *>("settingsPanel"); QVERIFY(settings);
+        QVERIFY(QMetaObject::invokeMethod(settings, "open"));
+        QTRY_VERIFY(settings->property("opened").toBool());
+        controller.notifications()->post("meter_Codex_weekly", "ChatGPT · Weekly · Warning", "Synthetic warning", 2);
+        QTest::qWait(80); QCOMPARE(controller.notifications()->unreadCount(), 1);
+        QVERIFY(QMetaObject::invokeMethod(settings, "close"));
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        window->hide();
+        controller.notifications()->post("meter_Gone_missing", "Removed meter", "Previous usage event", 2);
+        window->show(); window->requestActivate();
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        QCOMPARE(controller.notifications()->presented().size(), 1);
+        QVERIFY(QMetaObject::invokeMethod(popup, "open"));
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QVERIFY(findItem(window->contentItem(), "notificationEvent_meter_Gone_missing"));
+        window->hide();
+    }
+
     void dragReordersAndDrivesTray() {
         QTemporaryDir dir;
         const auto capture = [&](const QString &name) {
@@ -84,7 +281,7 @@ private slots:
         auto label = findItem(window->contentItem(), "paceLabel_Claude_session");
         QVERIFY(marker); QVERIFY(marker->isVisible()); QVERIFY(label);
         QCOMPARE(marker->property("color").value<QColor>(), QColor("#f8f8f2"));
-        QVERIFY(label->property("text").toString().contains("under pace"));
+        QVERIFY(label->property("text").toString().contains("behind pace"));
         const double markerFraction = (marker->x() + marker->width() / 2) / marker->parentItem()->width();
         QVERIFY(std::abs(markerFraction - (1.0 - 8400.0 / 18000)) < 0.01);
         auto verifyNotches = [&]() {
@@ -340,6 +537,123 @@ private slots:
         QVERIFY(window->grabWindow().save(capture("headroom-offline-empty.png")));
         QVERIFY(window->setProperty("state", connectedState));
         QTRY_COMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#44475a"));
+    }
+    void bankedResetDeltaFloatsOnce_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("compact") << QSize(460, 600);
+        QTest::newRow("wide") << QSize(1180, 940);
+    }
+    void bankedResetDeltaFloatsOnce() {
+        QFETCH(QSize, size);
+        QTemporaryDir dir;
+        const QString reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithCodex(0, 41, 3, reset));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo info; UpdateService updates(false); RemoteUpdateService remote;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &info);
+        engine.rootContext()->setContextProperty("updateService", &updates);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remote);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(size);
+        window->setProperty("filter", "Claude");
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        window->show(); window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        auto activity = findItem(window->contentItem(), "notificationButton"); QVERIFY(activity);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, activity->mapToScene(QPointF(13, 13)).toPoint());
+        auto popup = window->findChild<QObject *>("notificationPopup"); QVERIFY(popup);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        auto event = findItem(window->contentItem(), "notificationEvent_bankedResets_Codex"); QVERIFY(event);
+        QTRY_VERIFY(event->isVisible() && event->width() > 0 && event->height() > 0);
+        QSignalSpy popupFrame(window, &QQuickWindow::frameSwapped);
+        window->update(); QTRY_VERIFY(!popupFrame.isEmpty());
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, event->mapToScene(QPointF(event->width()/2, event->height()/2)).toPoint());
+        QTRY_VERIFY(!popup->property("visible").toBool());
+        QTRY_COMPARE(window->property("filter").toString(), "All providers");
+        auto delta = [&]() { return findItem(window->contentItem(), "bankedResetDelta_Codex"); };
+        auto counter = [&]() { return findItem(window->contentItem(), "bankedResets_Codex"); };
+        QTRY_VERIFY(delta() && delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), "+1");
+        QCOMPARE(counter()->property("text").toString(), "4 banked resets");
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        QTRY_VERIFY(delta()->property("rise").toDouble() > 5);
+        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
+        QTRY_VERIFY(delta()->mapToItem(scroll, QPointF()).y() >= 0);
+        const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture); QTest::qWait(150);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("banked-plus-%1.png").arg(size.width()))));
+        }
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        QCOMPARE(delta()->opacity(), 0.0);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
+        QTest::qWait(100); QVERIFY(!delta()->property("running").toBool());
+        window->hide(); window->show(); window->requestActivate();
+        QTest::qWait(100); QVERIFY(!delta()->property("running").toBool());
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 3, reset));
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−1"));
+        if (!capture.isEmpty()) {
+            QTest::qWait(250);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("banked-minus-%1.png").arg(size.width()))));
+        }
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, reset));
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−3"));
+        QVERIFY(!counter()->isVisible());
+        QVERIFY(delta()->isVisible());
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        QVERIFY(!counter()->isVisible());
+        auto countdown = [&]() { return findItem(window->contentItem(), "meterReset_Codex_weekly"); };
+        auto details = [&]() { return findItem(window->contentItem(), "meterResetDetails_Codex_weekly"); };
+        QVERIFY(countdown()); QVERIFY(details());
+        // Zero must have exactly the same footer layout as no counter at all,
+        // including no accessory spacing and no change to inline/wrapped layout.
+        QTRY_COMPARE(details()->implicitWidth(), std::ceil(countdown()->implicitWidth()));
+        const auto zeroCountdown = QRectF(countdown()->mapToScene(QPointF()), countdown()->size());
+        if (!capture.isEmpty())
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("zero-counter-%1.png").arg(size.width()))));
+        auto absent = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 0, reset)).array();
+        auto absentCodex = absent[1].toObject(); absentCodex.remove("rate_limit_reset_credits"); absent[1] = absentCodex;
+        controller.replaceSnapshot(QJsonDocument(absent).toJson());
+        QTRY_VERIFY(countdown());
+        QTRY_COMPARE(QRectF(countdown()->mapToScene(QPointF()), countdown()->size()), zeroCountdown);
+        // A provider without a weekly bucket still has a real counter and target.
+        auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 1, reset)).array();
+        auto codex = providers[1].toObject();
+        codex["buckets"] = QJsonArray{codex["buckets"].toArray().first()}; providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(counter() && counter()->isVisible());
+        auto flick = scroll->property("contentItem").value<QQuickItem *>(); QVERIFY(flick);
+        flick->setProperty("contentY", 0);
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), "+1");
+        codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", 0}}; providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(!counter()->isVisible());
+        QTRY_VERIFY(delta()->property("running").toBool());
+        QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−1"));
+        QTRY_VERIFY(!delta()->property("running").toBool());
+        auto card = [&]() { return findItem(window->contentItem(), "providerCard_Codex"); };
+        QVERIFY(card());
+        const auto zeroHeaderSize = card()->size();
+        codex.remove("rate_limit_reset_credits"); providers[1] = codex;
+        controller.replaceSnapshot(QJsonDocument(providers).toJson());
+        QTRY_VERIFY(card());
+        QTRY_COMPARE(card()->size(), zeroHeaderSize);
+        window->hide();
     }
     void bankedResetsFollowWeeklyCriticalState() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
@@ -622,21 +936,22 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(window));
         QTRY_COMPARE(controller.providers().size(), 4);
         const auto originalSettings = controller.settings();
-        auto wide = findItem(window->contentItem(), "desktopUpdateIndicator"); QVERIFY(wide);
-        auto compact = findItem(window->contentItem(), "compactUpdateIndicator"); QVERIFY(compact);
+        auto indicator = findItem(window->contentItem(), "desktopUpdateIndicator"); QVERIFY(indicator);
+        auto title = findItem(window->contentItem(), "footerBrandTitle"); QVERIFY(title);
+        auto logo = findItem(window->contentItem(), "notificationButton"); QVERIFY(logo);
+        auto filter = findItem(window->contentItem(), "providerFilter"); QVERIFY(filter);
         auto server = findItem(window->contentItem(), "serverUpdateIndicator"); QVERIFY(server);
         auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
-        auto indicator = size.width() < 700 ? compact : wide;
-        auto other = size.width() < 700 ? wide : compact;
-        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible()); QVERIFY(!server->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "compactUpdateIndicator"));
+        QVERIFY(!indicator->isVisible()); QVERIFY(!server->isVisible());
         for (const QString state : {"checking", "unavailable", "current"}) {
             updates->setProperty("state", state);
-            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+            QVERIFY(!indicator->isVisible());
         }
         updates->setProperty("state", "available");
         for (const QString method : {"source", "system"}) {
             updates->setProperty("updateMethod", method);
-            QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+            QVERIFY(!indicator->isVisible());
         }
         updates->setProperty("updateMethod", "automatic");
 
@@ -647,7 +962,6 @@ private slots:
         for (const auto &[state, label] : states) {
             updates->setProperty("state", state);
             QTRY_VERIFY(indicator->isVisible());
-            QVERIFY(!other->isVisible());
             QCOMPARE(indicator->property("text").toString(), label);
             QCOMPARE(indicator->property("needsAttention").toBool(), state == "failed");
             const auto contained = [&] {
@@ -658,11 +972,12 @@ private slots:
                     && footer->y() >= 0 && footer->y() + footer->height() <= window->height() + 1;
             };
             QTRY_VERIFY(contained());
-            if (size.width() >= 700) {
-                auto filter = findItem(window->contentItem(), "providerFilter"); QVERIFY(filter);
-                QTRY_VERIFY(indicator->mapToScene(QPointF(indicator->width(), 0)).x()
-                            <= filter->mapToScene(QPointF()).x());
-            }
+            QTRY_VERIFY(std::abs(indicator->mapToScene(QPointF(0, indicator->height() / 2)).y()
+                                - logo->mapToScene(QPointF(0, logo->height() / 2)).y()) < 1);
+            QTRY_VERIFY(indicator->mapToScene(QPointF()).x() >= title->mapToScene(QPointF(title->width(), 0)).x());
+            QTRY_VERIFY(indicator->mapToScene(QPointF(indicator->width(), 0)).x() <= filter->mapToScene(QPointF()).x());
+            QTRY_VERIFY(indicator->mapToScene(QPointF(0, indicator->height())).y() >= logo->mapToScene(QPointF()).y());
+            QTRY_VERIFY(!title->property("truncated").toBool());
         }
         updates->setProperty("state", "staged");
         updates->setProperty("latestVersion", "8.4.1");
@@ -677,6 +992,12 @@ private slots:
             return !desktopRect.intersects(serverRect) && serverRect.right() <= window->width();
         };
         QTRY_VERIFY(separated());
+
+        window->requestActivate();
+        controller.notifications()->post("desktopUpdate", "Headroom is ready to restart", "Synthetic staged update");
+        QTRY_COMPARE(controller.notifications()->unreadCount(), 0);
+        auto updateHighlight = findItem(window->contentItem(), "notificationHighlight_" + indicator->objectName());
+        QVERIFY(updateHighlight); QTRY_VERIFY(updateHighlight->property("flashing").toBool());
 
         const QString captureDir = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!captureDir.isEmpty()) {
@@ -731,7 +1052,7 @@ private slots:
         QVERIFY(!version->isVisible()); QVERIFY(!notes->isVisible());
         QVERIFY(QMetaObject::invokeMethod(panel, "close"));
         QTRY_VERIFY(!panel->property("opened").toBool());
-        QVERIFY(!wide->isVisible()); QVERIFY(!compact->isVisible());
+        QVERIFY(!indicator->isVisible());
         info->setProperty("serverUpdateNotice", "");
         QVERIFY(!server->isVisible());
         // Ordinary settings entry should still start at the connection section.

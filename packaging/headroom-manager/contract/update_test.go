@@ -648,3 +648,144 @@ func TestUpdaterRejectsLinkedStagingRoot(t *testing.T) {
 		t.Fatalf("cleanup traversed staging link and removed external data: %v", err)
 	}
 }
+
+func TestUpdateReusesVerifiedDownloadAcrossClients(t *testing.T) {
+	parent := t.TempDir()
+	root, _ := installFixture(t, parent, "1.2.3")
+	fixture := newUpdateFixture(t, "1.2.4", makePackage(t, parent, "1.2.4", false))
+	first, err := fixture.client().StageLatest(context.Background(), root)
+	if err != nil || first.Stage == nil {
+		t.Fatalf("first stage: %+v, %v", first, err)
+	}
+	fixture.mu.Lock()
+	fixture.paths = nil
+	fixture.mu.Unlock()
+	// Each call uses a fresh client, just like another manager process on launch.
+	for _, action := range []string{"check", "latest", "exact"} {
+		var result UpdateResult
+		switch action {
+		case "check":
+			result, err = fixture.client().Check(context.Background(), root)
+		case "latest":
+			result, err = fixture.client().StageLatest(context.Background(), root)
+		case "exact":
+			result, err = fixture.client().StageVersion(context.Background(), root, "1.2.4")
+		}
+		if err != nil || result.Status != "staged" || result.Stage == nil || *result.Stage != *first.Stage {
+			t.Fatalf("%s did not reuse stage: %+v, %v", action, result, err)
+		}
+	}
+	if fixture.requested("/package") {
+		t.Fatal("cached package was downloaded again")
+	}
+	if !fixture.requested("/release") {
+		t.Fatal("release metadata was not refreshed")
+	}
+	if got := InspectInstall(root).Version; got != "1.2.3" {
+		t.Fatalf("active version changed: %s", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	release, _ := fixture.release()
+	var pkg ReleasePackage
+	for _, candidate := range release.Packages {
+		if candidate.AssetName == first.AssetName {
+			pkg = candidate
+		}
+	}
+	if _, err := reusableUpdateStage(ctx, root, release, pkg); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel: %v", err)
+	}
+}
+
+func TestUpdateRejectsInvalidCachedStages(t *testing.T) {
+	for _, damage := range []string{"missing-file", "changed-file", "extra-file", "broken-record", "archive-hash", "archive-size", "old-record", "wrong-kind", "wrong-version", "wrong-platform", "outside-root"} {
+		t.Run(damage, func(t *testing.T) {
+			parent := t.TempDir()
+			root, _ := installFixture(t, parent, "1.2.3")
+			fixture := newUpdateFixture(t, "1.2.4", makePackage(t, parent, "1.2.4", false))
+			first, err := fixture.client().StageLatest(context.Background(), root)
+			if err != nil || first.Stage == nil {
+				t.Fatalf("first stage: %+v, %v", first, err)
+			}
+			stage := *first.Stage
+			record := stageRecord(stage)
+			_, manifest, err := LoadVerifiedStage(root, record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(stage.PackageRoot, filepath.FromSlash(manifest.Components.Server.Path))
+			switch damage {
+			case "missing-file":
+				err = os.Remove(file)
+			case "changed-file":
+				var data []byte
+				data, err = os.ReadFile(file)
+				if err == nil {
+					data[len(data)-1] ^= 1
+					err = os.WriteFile(file, data, 0755)
+				}
+			case "extra-file":
+				err = os.WriteFile(filepath.Join(stage.PackageRoot, "unexpected"), []byte("extra"), 0600)
+			case "broken-record":
+				err = os.WriteFile(record, []byte("{broken"), 0600)
+			case "archive-hash":
+				stage.ArchiveSHA256 = strings.Repeat("0", 64)
+			case "archive-size":
+				stage.ArchiveSize++
+			case "old-record":
+				stage.ArchiveSHA256, stage.ArchiveSize = "", 0
+			case "wrong-kind":
+				stage.PackageKind = PackageKindCLI
+			case "wrong-version":
+				stage.Version = "1.2.5"
+			case "wrong-platform":
+				stage.Platform = "other"
+			case "outside-root":
+				stage.PackageRoot = parent
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stage != *first.Stage {
+				if err = WriteJSON(record, stage); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fixture.mu.Lock()
+			fixture.paths = nil
+			fixture.mu.Unlock()
+			checked, err := fixture.client().Check(context.Background(), root)
+			if err != nil || checked.Status != "available" {
+				t.Fatalf("damaged check: %+v, %v", checked, err)
+			}
+			if fixture.requested("/package") {
+				t.Fatal("metadata check downloaded package")
+			}
+			second, err := fixture.client().StageLatest(context.Background(), root)
+			if err != nil || second.Stage == nil || second.Stage.PackageRoot == first.Stage.PackageRoot {
+				t.Fatalf("damaged stage reused: %+v, %v", second, err)
+			}
+			if !fixture.requested("/package") {
+				t.Fatal("invalid cache did not trigger download")
+			}
+		})
+	}
+}
+
+func TestUpdateDoesNotReuseStageAfterReleaseDigestChanges(t *testing.T) {
+	parent := t.TempDir()
+	root, _ := installFixture(t, parent, "1.2.3")
+	fixture := newUpdateFixture(t, "1.2.4", makePackage(t, parent, "1.2.4", false))
+	if _, err := fixture.client().StageLatest(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	fixture.badHash = true
+	checked, err := fixture.client().Check(context.Background(), root)
+	if err != nil || checked.Status != "available" {
+		t.Fatalf("changed release: %+v, %v", checked, err)
+	}
+	if _, err := fixture.client().StageLatest(context.Background(), root); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("stale digest accepted: %v", err)
+	}
+}

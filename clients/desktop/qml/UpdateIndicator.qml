@@ -3,6 +3,13 @@ import QtQuick.Controls
 
 ActionButton {
     id: control
+    property string notificationTarget: ""
+    property bool presentingNotifications: false
+    NotificationHighlight {
+        objectName: "notificationHighlight_" + parent.objectName
+        targetKey: parent.notificationTarget
+        presenting: parent.presentingNotifications
+    }
     property bool needsAttention: false
     property string detail: ""
     readonly property color indicatorColor: needsAttention ? Theme.orange : Theme.purple
@@ -16,6 +23,8 @@ ActionButton {
     ToolTip.delay: 500
     contentItem: Text {
         text: control.text
+        elide: Text.ElideRight
+        clip: true
         font: control.font
         color: control.indicatorColor
         horizontalAlignment: Text.AlignHCenter

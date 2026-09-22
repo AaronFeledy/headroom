@@ -1,0 +1,89 @@
+#include "notifications.h"
+#include <algorithm>
+#include <utility>
+
+namespace {
+void replaceTarget(QVariantList &items, const QVariantMap &event) {
+    const auto target = event.value("target").toString();
+    items.erase(std::remove_if(items.begin(), items.end(), [&](const QVariant &item) {
+        return item.toMap().value("target").toString() == target;
+    }), items.end());
+    if (items.size() == Notifications::MaxPending) items.removeFirst();
+    items.append(event);
+}
+}
+
+void Notifications::post(const QString &target, const QString &title, const QString &message, int severity, const QVariantMap &details) {
+    if (target.isEmpty()) return;
+    auto event = details;
+    event.insert("target", target); event.insert("title", title);
+    event.insert("message", message); event.insert("severity", severity);
+    replaceTarget(m_pending, event);
+    emit pendingChanged();
+    emit desktopNotification(title, message, severity);
+}
+
+void Notifications::present() {
+    if (m_pending.isEmpty()) return;
+    for (const auto &event : std::as_const(m_pending)) {
+        replaceTarget(m_presented, event.toMap());
+        m_highlights.insert(event.toMap().value("target").toString());
+    }
+    // Bound presentation state too, even if events keep arriving while open.
+    QSet<QString> retained;
+    for (const auto &event : std::as_const(m_presented)) retained.insert(event.toMap().value("target").toString());
+    m_highlights.intersect(retained);
+    m_pending.clear();
+    emit pendingChanged();
+    emit presentationChanged();
+}
+
+void Notifications::endPresentation() {
+    m_presented.clear(); m_highlights.clear();
+    emit presentationChanged();
+}
+
+bool Notifications::claimHighlight(const QString &target) { return m_highlights.remove(target); }
+
+void Notifications::observeUpdate(const QString &state, const QString &version, const QString &message, bool enabled) {
+    if (state != "available" && state != "staged" && state != "failed") return;
+    // Repeated checks of the same version do not re-arm a dismissed notification.
+    const QString episode = version + (state == "failed" ? message : QString());
+    if (m_updateEpisodes.contains(state) && m_updateEpisodes.value(state) == episode) return;
+    m_updateEpisodes.insert(state, episode);
+    if (!enabled) return;
+    const QString title = state == "available" ? "Headroom update available"
+        : state == "staged" ? "Headroom is ready to restart" : "Headroom update needs attention";
+    post("desktopUpdate", title, message, state == "failed" ? 2 : 0);
+}
+
+void Notifications::resetBankedResetBaseline() {
+    m_bankedResetCount = -1; m_resetAccountFingerprint.clear();
+    const auto removeCounter = [](QVariantList &items) {
+        const auto before = items.size();
+        items.erase(std::remove_if(items.begin(), items.end(), [](const QVariant &item) {
+            return item.toMap().value("target").toString() == "bankedResets_Codex";
+        }), items.end());
+        return items.size() != before;
+    };
+    const bool pendingChangedValue = removeCounter(m_pending);
+    const bool presentationChangedValue = removeCounter(m_presented);
+    m_highlights.remove("bankedResets_Codex");
+    if (pendingChangedValue) emit pendingChanged();
+    if (presentationChangedValue) emit presentationChanged();
+}
+
+void Notifications::observeBankedResetCount(qint64 count, const QString &accountFingerprint, bool enabled) {
+    if (count < 0) return; // Unavailable data is not a zero balance.
+    if (accountFingerprint != m_resetAccountFingerprint) resetBankedResetBaseline();
+    const auto before = m_bankedResetCount;
+    m_bankedResetCount = count; m_resetAccountFingerprint = accountFingerprint;
+    if (before < 0 || count == before || !enabled) return;
+    const auto delta = count - before;
+    // Report what the snapshot establishes; decreases need not mean expiry.
+    const QString title = delta > 0 ? "ChatGPT banked resets increased" : "ChatGPT banked resets decreased";
+    const QString message = QString("Banked resets changed from %1 to %2 (%3%4).")
+        .arg(before).arg(count).arg(delta > 0 ? "+" : "").arg(delta);
+    post("bankedResets_Codex", title, message, delta < 0 ? 2 : 0,
+        {{"delta", delta}, {"previousCount", before}, {"count", count}});
+}

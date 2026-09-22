@@ -4,11 +4,15 @@
 #include <QVariantList>
 #include <QUrl>
 #include <QDateTime>
+#include <QLocale>
 #include <QVariantMap>
 namespace Usage {
 bool parse(const QByteArray &json, QVariantList &providers);
 QUrl endpoint(const QString &base);
 QString countdown(const QString &timestamp);
+QString resetTimeLabel(const QString &timestamp,
+                       const QDateTime &now = QDateTime::currentDateTime(),
+                       const QLocale &locale = QLocale());
 QVariantMap period(const QString &provider, const QVariantMap &bucket);
 QVariantList notches(const QString &provider, const QVariantMap &bucket);
 QVariantMap pacing(const QString &provider, const QVariantMap &bucket,

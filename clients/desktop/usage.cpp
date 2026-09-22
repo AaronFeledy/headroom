@@ -1,6 +1,7 @@
 #include "usage.h"
 #include "sshnetwork.h"
 #include <QDateTime>
+#include <QTimeZone>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -102,6 +103,14 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 else if ((id == "weekly" || id == "on_demand") && !p["secondary_status_text"].toString().trimmed().isEmpty())
                     b["status_text"] = p["secondary_status_text"];
             }
+            // Optional metadata never invalidates an otherwise usable snapshot.
+            const auto start = QDateTime::fromString(b["starts_at"].toString(), Qt::ISODateWithMs);
+            const auto end = QDateTime::fromString(b["resets_at"].toString(), Qt::ISODateWithMs);
+            const auto span = start.secsTo(end);
+            if (!start.isValid() || !end.isValid() || span <= 0 || span > 366LL * 86400)
+                b["starts_at"] = QJsonValue::Null;
+            if (!b["detail_text"].isString() || b["detail_text"].toString().size() > 4096)
+                b["detail_text"] = QJsonValue::Null;
             buckets[i] = b;
         }
         p["buckets"] = buckets;
@@ -129,6 +138,23 @@ QString Usage::countdown(const QString &timestamp) {
     return QString("Resets in %1m").arg(minutes);
 }
 
+QString Usage::resetTimeLabel(const QString &timestamp, const QDateTime &now, const QLocale &locale) {
+    const auto when = QDateTime::fromString(timestamp, Qt::ISODateWithMs);
+    if (!when.isValid() || !now.isValid()) return {};
+    const auto local = when.toTimeZone(now.timeZone());
+    const auto date = local.date();
+    const auto days = now.date().daysTo(date);
+    QString day;
+    if (days == 0) day = QStringLiteral("Today");
+    else if (days == 1) day = QStringLiteral("Tomorrow");
+    // Count local calendar dates, not elapsed 24-hour periods. Next Monday
+    // must show a date on Monday even when it is only 6 days and 5 hours away.
+    else if (days > 1 && days < 7) day = locale.dayName(date.dayOfWeek(), QLocale::LongFormat);
+    else day = locale.toString(date, date.year() == now.date().year()
+        ? QStringLiteral("ddd, MMM d") : QStringLiteral("ddd, MMM d, yyyy"));
+    return QStringLiteral("%1 at %2").arg(day, locale.toString(local.time(), QLocale::ShortFormat));
+}
+
 QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
     const QString name = provider.toLower(), id = bucket["id"].toString().toLower();
     const bool knownProvider = QStringList{"claude", "codex", "cursor", "grok"}.contains(name);
@@ -148,6 +174,15 @@ QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
         const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
         if (reset.isValid()) duration = reset.addMonths(-1).secsTo(reset);
         step = 7 * 86400; window = "calendar-month billing estimate"; unit = "Week";
+    }
+    const auto start = QDateTime::fromString(bucket["starts_at"].toString(), Qt::ISODateWithMs).toUTC();
+    const auto end = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
+    const qint64 reportedDuration = start.secsTo(end);
+    if (start.isValid() && end.isValid() && reportedDuration > 0 && reportedDuration <= 366LL * 86400) {
+        duration = reportedDuration;
+        step = duration > 14 * 86400 ? 7 * 86400 : duration > 86400 ? 86400 : 3600;
+        unit = step == 7 * 86400 ? "Week" : step == 86400 ? "Day" : "Hour";
+        window = "provider-reported usage window";
     }
     return {{"seconds", duration}, {"step", step}, {"unit", unit}, {"label", window}};
 }
@@ -185,12 +220,26 @@ QVariantMap Usage::pacing(const QString &provider, const QVariantMap &bucket, co
     const double expected = 100.0 * (duration - remaining) / duration;
     const double used = bucket["utilization"].toDouble();
     const double difference = used - expected;
-    const int points = qRound(std::abs(difference));
-    const QString label = points == 0 ? "On pace" : QString("%1 pp %2 pace").arg(points).arg(difference > 0 ? "over" : "under");
-    const QString detail = QString("%1% used · %2% expected by now. %3\nThe marker estimates steady spending across a %4.\nOver pace means using your allowance faster than time is passing. Under pace means you have room to use more.")
-        .arg(used, 0, 'f', 1).arg(expected, 0, 'f', 1).arg(label).arg(window);
+    const qint64 seconds = qRound64(difference * duration / 100.0);
+    const bool onPace = std::abs(seconds) < 60;
+    const qint64 minutes = (std::abs(seconds) + 30) / 60;
+    QString offset;
+    if (minutes >= 1440) {
+        offset = QString("%1d").arg(minutes / 1440);
+        if ((minutes % 1440) / 60) offset += QString(" %1h").arg((minutes % 1440) / 60);
+    } else if (minutes >= 60) {
+        offset = QString("%1h").arg(minutes / 60);
+        if (minutes % 60) offset += QString(" %1m").arg(minutes % 60);
+    } else offset = QString("%1m").arg(minutes);
+    const QString label = onPace ? "On pace" : QString("%1 %2 pace").arg(offset, difference > 0 ? "ahead of" : "behind");
+    const QString explanation = onPace ? "Your usage is within one minute of steady spending."
+        : difference > 0 ? QString("You've used the allowance scheduled for %1 from now.").arg(offset)
+                        : QString("You have %1 of steady-spending allowance in reserve.").arg(offset);
+    const QString detail = QString("%1% used · %2% expected by now · %3 pp %4 pace.\n%5\nThe marker estimates steady spending across a %6.\nThis compares usage with elapsed time; it does not predict when you'll run out.")
+        .arg(used, 0, 'f', 1).arg(expected, 0, 'f', 1).arg(std::abs(difference), 0, 'f', 1)
+        .arg(onPace ? "from" : difference >= 0 ? "over" : "under").arg(explanation, window);
     return {{"available", true}, {"expected", expected}, {"difference", difference},
-        {"over", points > 0 && difference > 0}, {"label", label}, {"detail", detail}};
+        {"onPace", onPace}, {"over", !onPace && difference > 0}, {"label", label}, {"detail", detail}};
 }
 
 QVariantMap Usage::concern(const QString &provider, const QVariantMap &bucket, const QDateTime &now) {

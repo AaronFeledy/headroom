@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1180; height: 940; minimumWidth: 460; minimumHeight: 420
+    width: 539; height: 940; minimumWidth: 460; minimumHeight: 420
     visible: !startHidden
     title: "Headroom"
     flags: Qt.FramelessWindowHint | (trayAvailable ? Qt.Tool | Qt.WindowStaysOnTopHint : Qt.Window)
@@ -50,14 +50,78 @@ ApplicationWindow {
     }
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
-    onVisibleChanged: if (visible && !settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
-        restoreEscapeFocus()
+    readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
+        && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetConfirmation.visible
+        && !notificationPopup.visible
+    onPresentingNotificationsChanged: if (presentingNotifications) Qt.callLater(presentNotifications)
+    onVisibleChanged: {
+        if (!visible) {
+            notificationReveal.stop(); notificationReveal.requestedEvent = null
+            notificationPopup.close()
+            backend.notifications.endPresentation()
+        }
+        else if (!settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+            restoreEscapeFocus()
+    }
+    onVisibilityChanged: if (window.visibility === Window.Minimized) {
+        notificationPopup.close()
+        backend.notifications.endPresentation()
+    }
+    function findNotificationItem(root, name) {
+        if (root.objectName === name) return root
+        for (let child of root.children) {
+            const found = findNotificationItem(child, name)
+            if (found) return found
+        }
+        return null
+    }
+    function revealNotification(event, explicit) {
+        if (event.target === "desktopUpdate") {
+            if (explicit) settings.openUpdates()
+            return
+        }
+        if (filter !== "All providers") {
+            filter = "All providers"
+            notificationReveal.requestedEvent = event
+            notificationReveal.restart()
+            return
+        }
+        const item = findNotificationItem(providerRows, event.target)
+        if (!item || !item.visible) return // Activity details remain available when a meter disappears.
+        const point = item.mapToItem(scroll.contentItem, 0, 0)
+        // Leave room above the reset counter for its rising delta animation.
+        const topSpace = event.target.startsWith("bankedResets_") ? 88 : 18
+        scroll.contentItem.contentY = Math.max(0, Math.min(point.y + scroll.contentItem.contentY - topSpace,
+            scroll.contentHeight - scroll.availableHeight))
+    }
+    function presentNotifications() {
+        if (!presentingNotifications || backend.notifications.unreadCount === 0) return
+        backend.notifications.present()
+    }
+    Timer {
+        id: notificationReveal
+        property var requestedEvent: null
+        // Explicit activity navigation may change the provider filter.
+        // Reveal after card geometry settles, especially in compact windows.
+        interval: 50
+        onTriggered: {
+            const event = requestedEvent
+            requestedEvent = null
+            if (window.presentingNotifications && event)
+                window.revealNotification(event, false)
+        }
+    }
+    Connections {
+        target: backend.notifications
+        function onPendingChanged() { Qt.callLater(window.presentNotifications) }
+    }
     function restoreEscapeFocus() {
         window.requestActivate()
         escapeFocus.forceActiveFocus()
     }
     function dismissOverlayOrHide() {
-        if (resetConfirmation.opened) resetConfirmation.close()
+        if (notificationPopup.opened) notificationPopup.close()
+        else if (resetConfirmation.opened) resetConfirmation.close()
         else if (settings.opened) settings.close()
         else if (diagnostics.opened) diagnostics.close()
         else if (filterMenu.opened) filterMenu.close()
@@ -69,6 +133,58 @@ ApplicationWindow {
     Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
+
+    Popup {
+        id: notificationPopup; objectName: "notificationPopup"
+        parent: Overlay.overlay
+        x: window.compact ? 16 : 24
+        y: Math.max(12, window.height - stickyFooter.height - height - 8)
+        width: Math.min(380, parent.width - 32)
+        height: Math.min(activityBody.implicitHeight + padding * 2, Math.max(80, window.height - stickyFooter.height - 24))
+        padding: 16; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: restoreEscapeFocus()
+        background: Rectangle { color: Theme.surface; radius: 12; border.color: Theme.comment }
+        contentItem: ScrollView {
+            id: activityScroll
+            clip: true; contentWidth: availableWidth
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ColumnLayout {
+                id: activityBody
+                width: activityScroll.availableWidth; spacing: 8
+                Text { text: "Recent activity"; color: Theme.foreground; font.pixelSize: 14; font.weight: Font.DemiBold }
+                Repeater {
+                    model: backend.notifications.presented
+                    ActionButton {
+                        required property var modelData
+                        objectName: "notificationEvent_" + modelData.target
+                        Layout.fillWidth: true; quiet: true
+                        implicitHeight: contentItem.implicitHeight + 16
+                        Accessible.name: modelData.title
+                        Accessible.description: modelData.message
+                        contentItem: ColumnLayout {
+                            spacing: 4
+                            Text {
+                                text: modelData.title + " →"; textFormat: Text.PlainText
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                color: Theme.foreground; font.pixelSize: 12
+                            }
+                            Text {
+                                text: modelData.message; textFormat: Text.PlainText
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                color: Theme.muted; font.pixelSize: 11
+                            }
+                        }
+                        onClicked: {
+                            const event = modelData
+                            notificationPopup.close()
+                            Qt.callLater(function() { window.revealNotification(event, true) })
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
     // code that might trigger a reset: doing so can burn a very valuable reset.
@@ -86,11 +202,13 @@ ApplicationWindow {
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
         Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
-            spacing: 18
-            Text { text: "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            spacing: 12
+            Text { text: resetConfirmation.action.automatic ? "Automatic reset scheduled" : "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Text {
-                visible: resetConfirmation.action.canConfirm
-                text: "Use one banked reset for the ChatGPT account connected to your usage server? This spends a reset and cannot be undone."
+                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.automatic
+                text: resetConfirmation.action.automatic
+                    ? "One reset will be used when a usage update reports 100% weekly usage. Keep Headroom running; quitting cancels this choice."
+                    : "Use one reset now, or once a usage update reports 100% weekly usage. Keep Headroom running for automatic use. Spending a reset cannot be undone."
                 color: Theme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Text {
@@ -103,17 +221,32 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
                 Item { Layout.fillWidth: true }
-                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
+                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
             }
-            // DO NOT activate for testing. This is the only UI call site that
-            // can spend a banked reset; skipped tests are intentional safeguards.
+            // DO NOT activate either choice for testing. Both can spend a
+            // banked reset; skipped tests are intentional safeguards.
             ActionButton {
                 objectName: "confirmBankedReset"
                 visible: resetConfirmation.action.canConfirm || resetConfirmation.action.busy
                 enabled: resetConfirmation.action.canConfirm
-                text: resetConfirmation.action.busy ? "Using reset…" : "Use one reset"
+                text: resetConfirmation.action.busy ? "Using reset…" : "Use now"
                 accent: true; Layout.fillWidth: true
                 onClicked: backend.consumeChatGptReset()
+            }
+            ActionButton {
+                objectName: "scheduleBankedReset"
+                visible: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic
+                enabled: resetConfirmation.action.canSchedule
+                text: "Use automatically at 100%"
+                Layout.fillWidth: true
+                onClicked: if (backend.scheduleChatGptReset()) resetConfirmation.close()
+            }
+            ActionButton {
+                objectName: "cancelScheduledBankedReset"
+                visible: resetConfirmation.action.automatic
+                text: "Cancel automatic reset"
+                Layout.fillWidth: true
+                onClicked: { backend.cancelScheduledChatGptReset(); resetConfirmation.close() }
             }
         }
     }
@@ -140,6 +273,8 @@ ApplicationWindow {
                             ProviderCard {
                                 required property var modelData
                                 provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
+                                notificationViewport: scroll
+                                presentingNotifications: window.presentingNotifications && !notificationReveal.running
                                 onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
                             }
                         }
@@ -160,7 +295,7 @@ ApplicationWindow {
             }
         }
         Rectangle {
-            objectName: "stickyFooter"
+            id: stickyFooter; objectName: "stickyFooter"
             Layout.fillWidth: true; implicitHeight: footerBody.implicitHeight + 24
             color: Theme.inset; radius: Theme.windowRadius; antialiasing: true
             Rectangle { anchors.top: parent.top; width: parent.width; height: parent.radius; color: parent.color }
@@ -171,17 +306,7 @@ ApplicationWindow {
                 spacing: 10
                 Flow {
                     Layout.fillWidth: true; spacing: 8
-                    visible: (window.compact && window.desktopUpdateLabel.length > 0)
-                        || appInfo.serverUpdateNotice.length > 0
-                    UpdateIndicator {
-                        id: compactUpdateIndicator; objectName: "compactUpdateIndicator"
-                        visible: window.compact && window.desktopUpdateLabel.length > 0
-                        text: window.desktopUpdateLabel
-                        needsAttention: updateService.state === "failed"
-                        detail: updateService.statusText
-                        Accessible.name: "Headroom: " + text
-                        onClicked: settings.openUpdates()
-                    }
+                    visible: appInfo.serverUpdateNotice.length > 0
                     UpdateIndicator {
                         id: serverUpdateIndicator; objectName: "serverUpdateIndicator"
                         visible: appInfo.serverUpdateNotice.length > 0
@@ -202,29 +327,69 @@ ApplicationWindow {
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: window.compact ? 8 : 12
-                    Image { source: "../headroom.svg"; sourceSize.width: 26; sourceSize.height: 26; Layout.preferredWidth: 26; Layout.preferredHeight: 26 }
-                    ColumnLayout {
-                        Layout.fillWidth: true; spacing: 3
-                        RowLayout {
-                            spacing: 10
-                            Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
-                            UpdateIndicator {
-                                objectName: "desktopUpdateIndicator"
-                                visible: !window.compact && window.desktopUpdateLabel.length > 0
-                                text: window.desktopUpdateLabel
-                                needsAttention: updateService.state === "failed"
-                                detail: updateService.statusText
-                                Accessible.name: "Headroom: " + text
-                                onClicked: settings.openUpdates()
+                    ToolButton {
+                        id: notificationButton; objectName: "notificationButton"
+                        readonly property bool hasActivity: backend.notifications.presented.length > 0
+                        Layout.preferredWidth: 26; Layout.preferredHeight: 26
+                        padding: 0; enabled: hasActivity; activeFocusOnTab: enabled
+                        Accessible.name: "Recent activity"
+                        Accessible.description: "Open notification details without changing the dashboard"
+                        contentItem: Image { source: "../headroom.svg"; sourceSize.width: 26; sourceSize.height: 26 }
+                        background: Rectangle { color: notificationButton.hovered ? Theme.selection : "transparent"; radius: 5 }
+                        Rectangle {
+                            objectName: "notificationActivityDot"
+                            visible: notificationButton.hasActivity
+                            anchors { right: parent.right; top: parent.top }
+                            width: 7; height: 7; radius: 3.5
+                            color: Theme.cyan; border.width: 1; border.color: Theme.inset
+                        }
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.text: "Recent activity"
+                        onClicked: notificationPopup.open()
+                    }
+                    Item {
+                        id: brandingArea
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? 38 : 0)
+                        implicitWidth: brandTitle.implicitWidth + (desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitWidth + 10 : 0)
+                        // Keep even-sized controls on the same pixel-aligned center.
+                        implicitHeight: Math.ceil(Math.max(brandLabels.implicitHeight, desktopUpdateIndicator.visible ? desktopUpdateIndicator.implicitHeight : 0) / 2) * 2
+                        ColumnLayout {
+                            id: brandLabels
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.alignWhenCentered: false
+                            width: desktopUpdateIndicator.visible ? brandTitle.implicitWidth : parent.width
+                            spacing: 3
+                            Text {
+                                id: brandTitle; objectName: "footerBrandTitle"
+                                text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground
+                            }
+                            Text {
+                                id: footerStatus
+                                Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
+                                text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
+                                color: window.state.status === "offline" ? Theme.red : Theme.muted
+                                HoverHandler { id: statusHover }
+                                ToolTip.visible: statusHover.hovered
+                                ToolTip.text: footerStatus.text + "\n" + window.healthy + " / " + window.providers.length + " providers online · Next reset in " + window.nextReset
                             }
                         }
-                        Text {
-                            Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
-                            text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
-                            color: window.state.status === "offline" ? Theme.red : Theme.muted
-                            HoverHandler { id: statusHover }
-                            ToolTip.visible: statusHover.hovered
-                            ToolTip.text: window.healthy + " / " + window.providers.length + " providers online · Next reset in " + window.nextReset
+                        UpdateIndicator {
+                            id: desktopUpdateIndicator; objectName: "desktopUpdateIndicator"
+                            anchors.left: brandLabels.right
+                            anchors.leftMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.alignWhenCentered: false
+                            width: Math.min(implicitWidth, Math.max(28, brandingArea.width - brandLabels.width - 10))
+                            notificationTarget: "desktopUpdate"
+                            presentingNotifications: window.presentingNotifications && !notificationReveal.running
+                            visible: window.desktopUpdateLabel.length > 0
+                            text: window.desktopUpdateLabel
+                            needsAttention: updateService.state === "failed"
+                            detail: updateService.statusText
+                            Accessible.name: "Headroom: " + text
+                            onClicked: settings.openUpdates()
                         }
                     }
                     Text {

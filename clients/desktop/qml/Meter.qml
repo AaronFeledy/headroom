@@ -8,6 +8,8 @@ ColumnLayout {
     required property var bucket
     required property string providerName
     property bool compact: false
+    property var notificationViewport: null
+    property bool presentingNotifications: false
     property color accent: Theme.purple
     property Component footerAccessory: null
     property bool footerAccessoryVisible: false
@@ -17,6 +19,13 @@ ColumnLayout {
     property var clock: backend.state
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
     property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
+    readonly property string providerDetails: bucket.detail_text || ""
+    readonly property string usageDetails: concern.detail + (providerDetails ? "\n\n" + providerDetails : "")
+    readonly property string billingDetails: {
+        meter.clock
+        const reset = backend.resetTimeLabel(bucket.resets_at || "")
+        return [providerDetails, reset ? "Resets: " + reset : ""].filter(line => line.length > 0).join("\n\n")
+    }
     spacing: 6
     GridLayout {
         id: meterHeader
@@ -36,6 +45,11 @@ ColumnLayout {
                 color: Theme.foreground; font.pixelSize: 13
                 Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)
                 elide: Text.ElideRight
+                HoverHandler { id: titleHover }
+                MeterToolTip {
+                    visible: titleHover.hovered && meter.billingDetails.length > 0
+                    text: meter.billingDetails
+                }
             }
             Text {
                 id: severityLabel
@@ -63,7 +77,7 @@ ColumnLayout {
         Layout.fillWidth: true; implicitHeight: 12
         Accessible.role: Accessible.ProgressBar
         Accessible.name: backend.displayName(meter.providerName) + " " + meter.bucket.label
-        Accessible.description: meter.concern.detail
+        Accessible.description: meter.usageDetails
         Rectangle {
             id: track
             objectName: "meterTrack_" + meter.providerName + "_" + meter.bucket.id
@@ -103,16 +117,23 @@ ColumnLayout {
             width: 4; height: 12; radius: 1
             color: Theme.foreground; border.width: 1; border.color: Theme.background
         }
+        NotificationHighlight {
+            objectName: "notificationHighlight_" + meter.objectName
+            targetKey: meter.objectName
+            viewport: meter.notificationViewport
+            presenting: meter.presentingNotifications
+        }
         HoverHandler { id: graphHover }
-        ToolTip.visible: graphHover.hovered
-        ToolTip.text: graph.notchLabel || meter.concern.detail
-        ToolTip.delay: 150
+        MeterToolTip {
+            visible: graphHover.hovered
+            text: graph.notchLabel || meter.usageDetails
+        }
     }
     GridLayout {
         id: meterFooter
         Layout.fillWidth: true
-        // Keep countdowns beside pace when the complete footer fits, including accessories.
-        readonly property bool inlineReset: !meter.statusOnly && resetLabel.visible && !statusLabel.visible
+        // Keep countdowns or status beside pace when the complete footer fits, including accessories.
+        readonly property bool inlineReset: !meter.statusOnly && (resetLabel.visible || statusLabel.visible)
             && width >= Math.ceil(paceLabel.implicitWidth) + Math.ceil(resetDetails.implicitWidth) + columnSpacing
         columns: inlineReset ? 2 : 1
         columnSpacing: 12; rowSpacing: 5
@@ -122,36 +143,65 @@ ColumnLayout {
             visible: !meter.statusOnly
             text: meter.pace.label
             Layout.fillWidth: true; elide: Text.ElideRight
-            color: meter.warning ? meter.usageColor : !meter.pace.available || meter.pace.over ? Theme.muted : Theme.cyan
+            color: !meter.pace.available ? Theme.muted : meter.warning ? meter.usageColor
+                : meter.pace.onPace ? Theme.muted : meter.pace.over ? Theme.orange : Theme.cyan
             font.pixelSize: 11
             HoverHandler { id: paceHover }
             ToolTip.visible: paceHover.hovered
             ToolTip.text: meter.concern.detail
         }
-        RowLayout {
-            id: resetDetails
+        Item {
+            id: resetDetailsHost
             Layout.fillWidth: !meterFooter.inlineReset
             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-            spacing: 8
-            Text {
-                id: resetLabel
-                objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
-                visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
-                text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
-                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+            implicitWidth: resetDetails.implicitWidth
+            implicitHeight: resetDetails.implicitHeight
+            RowLayout {
+                id: resetDetails
+                objectName: "meterResetDetails_" + meter.providerName + "_" + meter.bucket.id
+                anchors.fill: parent
+                spacing: 8
+                Text {
+                    id: resetLabel
+                    objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
+                    visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
+                    text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
+                    color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                    HoverHandler { id: resetHover }
+                    MeterToolTip {
+                        visible: resetHover.hovered && meter.billingDetails.length > 0
+                        text: meter.billingDetails
+                    }
+                }
+                Text {
+                    id: statusLabel
+                    visible: !!meter.bucket.status_text && !!meter.bucket.status_text.trim()
+                    objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
+                    textFormat: Text.PlainText
+                    text: meter.bucket.status_text || ""
+                    Accessible.description: meter.billingDetails
+                    HoverHandler { id: statusHover }
+                    MeterToolTip {
+                        objectName: "meterBillingTooltip_" + meter.providerName + "_" + meter.bucket.id
+                        visible: statusHover.hovered && meter.billingDetails.length > 0
+                        text: meter.billingDetails
+                    }
+                    color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                Item {
+                    visible: meter.footerAccessoryVisible
+                    implicitWidth: accessoryOverlay.implicitWidth
+                    implicitHeight: accessoryOverlay.implicitHeight
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                }
             }
-            Text {
-                id: statusLabel
-                visible: !!meter.bucket.status_text
-                objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
-                textFormat: Text.PlainText
-                text: meter.bucket.status_text || ""
-                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
-            }
+            // Only the visible slot above participates in layout. Keep the
+            // accessory loaded here so its transient delta can float at zero.
             Loader {
+                id: accessoryOverlay
                 sourceComponent: meter.footerAccessory
-                visible: meter.footerAccessoryVisible
-                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
             }
         }
     }

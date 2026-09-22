@@ -141,10 +141,15 @@ QStringList Controller::legacyResetReceiptPaths() const {
 }
 
 QVariantMap Controller::resetAction() const {
-    return {{"busy", m_resetBusy}, {"message", m_resetMessage},
+    const bool automatic = !m_autoResetConnection.isEmpty();
+    const bool canConfirm = !m_resetConfirmation.isEmpty()
+        && m_resetConfirmation == resetConnectionIdentity() && chatGptResetEligible();
+    const auto windowEnd = QDateTime::fromString(canonicalWindow(chatGptWeekly()), Qt::ISODateWithMs);
+    return {{"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", automatic},
         {"awaitingUsage", chatGptResetAwaitingUsage()},
-        {"enabled", m_resetConfirmation.isEmpty() && chatGptResetEligible()},
-        {"canConfirm", !m_resetConfirmation.isEmpty() && m_resetConfirmation == resetConnectionIdentity() && chatGptResetEligible()}};
+        {"enabled", automatic || (m_resetConfirmation.isEmpty() && chatGptResetEligible())},
+        {"canConfirm", canConfirm},
+        {"canSchedule", canConfirm && !automatic && windowEnd.isValid() && windowEnd > QDateTime::currentDateTimeUtc()}};
 }
 
 bool Controller::prepareChatGptReset() {
@@ -198,6 +203,98 @@ void Controller::cancelChatGptResetConfirmation() {
     m_resetConfirmation.clear(); emit changed();
 }
 
+bool Controller::scheduleChatGptReset() {
+    // This button explicitly authorizes ONE future submission. DO NOT invoke
+    // it during testing, even with a mock transport or synthetic usage.
+    if (!resetAction().value("canSchedule").toBool()) return false;
+    m_autoResetConnection = m_resetConfirmation;
+    m_autoResetWindow = canonicalWindow(chatGptWeekly());
+    m_resetConfirmation.clear();
+    m_resetMessage.clear();
+    // Read the server's usage cache promptly without changing its provider
+    // polling cadence. Submission happens only after an accepted snapshot.
+    if (m_startPolling) m_poll.start(0);
+    emit changed();
+    return true;
+}
+
+void Controller::clearScheduledChatGptReset() {
+    m_autoResetConnection.clear();
+    m_autoResetWindow.clear();
+    if (m_startPolling && m_poll.isActive()) m_poll.start(m_interval * 1000);
+}
+
+void Controller::cancelScheduledChatGptReset() {
+    if (m_autoResetConnection.isEmpty()) return;
+    clearScheduledChatGptReset();
+    m_resetMessage = "Automatic reset canceled. No reset was requested.";
+    emit changed();
+}
+
+void Controller::expireScheduledChatGptReset() {
+    // Time-based disarm only, so the periodic clock can retire an arm whose
+    // weekly window ended while the backend was unreachable. Submission still
+    // requires an accepted snapshot: this never reads usage or performs I/O.
+    if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
+    const auto windowEnd = QDateTime::fromString(m_autoResetWindow, Qt::ISODateWithMs);
+    if (windowEnd.isValid() && windowEnd > QDateTime::currentDateTimeUtc()) return;
+    const QString cancellation = "Automatic reset canceled because the weekly window ended.";
+    clearScheduledChatGptReset();
+    m_resetMessage = cancellation;
+    if (m_notifications) m_notificationCenter.post("providerCard_Codex", "ChatGPT · Automatic reset", cancellation);
+    emit changed();
+}
+
+void Controller::observeScheduledChatGptReset() {
+    // DO NOT TEST: this path can spend a reset after explicit one-shot consent.
+    // Unarmed polling remains read-only. Errors never imply exhaustion.
+    if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
+    // An ended window retires the arm even when this snapshot is the first in a
+    // while; the clock applies the same check when no snapshot arrives at all.
+    expireScheduledChatGptReset();
+    if (m_autoResetConnection.isEmpty()) return;
+    const auto weekly = chatGptWeekly();
+    QString cancellation;
+    // A temporary provider error pauses monitoring. A successful response
+    // with a different/missing identity or window invalidates authorization.
+    bool successful = false;
+    for (const auto &value : m_providers) {
+        const auto provider = value.toMap();
+        if (provider.value("provider_name").toString() == "Codex")
+            successful = provider.value("is_success").toBool();
+    }
+    if (!successful) return;
+    if (resetConnectionIdentity() != m_autoResetConnection
+        || canonicalWindow(weekly) != m_autoResetWindow) {
+        cancellation = "Automatic reset canceled because the account, connection, or weekly window changed.";
+    } else {
+        bool validUsage = false;
+        const double utilization = weekly.value("utilization").toDouble(&validUsage);
+        if (!validUsage || !std::isfinite(utilization) || utilization < 0) return;
+        if (utilization < 95) cancellation = "Automatic reset canceled because weekly usage is below 95%.";
+        else if (weekly.value("available_count").toLongLong() <= 0)
+            cancellation = "Automatic reset canceled because no banked resets are available.";
+        else if (chatGptResetAwaitingUsage())
+            cancellation = "Automatic reset canceled because a reset has already been requested.";
+        else if (utilization >= 100 && chatGptResetEligible()) {
+            const QString authorization = m_autoResetConnection;
+            // Disarm before any I/O, including receipt creation. A failure
+            // or ambiguous result must never schedule another attempt.
+            clearScheduledChatGptReset();
+            m_resetConfirmation = authorization;
+            submitChatGptReset(true);
+            if (!m_resetBusy && m_notifications && !m_resetMessage.isEmpty())
+                m_notificationCenter.post("providerCard_Codex", "ChatGPT · Automatic reset", m_resetMessage);
+            return;
+        }
+    }
+    if (cancellation.isEmpty()) return;
+    clearScheduledChatGptReset();
+    m_resetMessage = cancellation;
+    if (m_notifications) m_notificationCenter.post("providerCard_Codex", "ChatGPT · Automatic reset", cancellation);
+    emit changed();
+}
+
 void Controller::observeResetUsage() {
     // Read-only usage polling never sends a redemption. Only a successful
     // reading below 95% releases the account-bound latch. A different reset
@@ -226,18 +323,28 @@ void Controller::observeResetUsage() {
 void Controller::cancelResetRequest() {
     m_resetConfirmation.clear();
     if (!m_resetReply) return;
+    const bool automatic = m_resetReply->property("automaticReset").toBool();
     disconnect(m_resetReply, nullptr, this, nullptr);
     m_resetReply->abort(); m_resetReply->deleteLater(); m_resetReply.clear();
     m_resetBusy = false;
     m_resetMessage = "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
+    if (automatic && m_notifications)
+        m_notificationCenter.post("providerCard_Codex", "ChatGPT · Automatic reset", m_resetMessage);
     // Leave the durable receipt intact, including when the app quits mid-request.
 }
 
 void Controller::consumeChatGptReset() {
     // DO NOT TEST OR INVOKE for validation: this spends a valuable real reset.
-    // Only the explicit confirmation button may call this method. Never retry
-    // automatically, follow redirects, or offer another request until a usage
-    // reading below 95% has released the durable account latch.
+    // The explicit Use now button supersedes any pending automatic choice.
+    if (!resetAction().value("canConfirm").toBool()) return;
+    clearScheduledChatGptReset();
+    submitChatGptReset(false);
+}
+
+void Controller::submitChatGptReset(bool automatic) {
+    // Only explicit immediate or one-shot scheduled consent reaches here.
+    // Never retry automatically, follow redirects, or offer another request
+    // until usage below 95% has released the durable account latch.
     if (!resetAction().value("canConfirm").toBool()) return;
     const QString receiptPath = resetReceiptPath();
     const auto weekly = chatGptWeekly();
@@ -287,12 +394,13 @@ void Controller::consumeChatGptReset() {
         : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
     auto upload = new ResetUpload(body, this);
     auto reply = network->post(request, upload); m_resetReply = reply;
+    reply->setProperty("automaticReset", automatic);
     upload->setParent(reply);
     if (m_mode == "local") ServerTransport::requirePinnedPeer(reply, transport.certificate);
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt, requestWindow]() mutable {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt, requestWindow, automatic]() mutable {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto bytes = reply->readAll();
@@ -315,6 +423,8 @@ void Controller::consumeChatGptReset() {
         else if (status == 409) m_resetMessage = "The server could not safely proceed. Refresh usage or check the previous reset in ChatGPT.";
         else if (status == 401 || status == 403) m_resetMessage = "The reset request was rejected. Check your connection and ChatGPT sign-in.";
         else m_resetMessage = "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
+        if (automatic && m_notifications)
+            m_notificationCenter.post("providerCard_Codex", "ChatGPT · Automatic reset", m_resetMessage);
         emit changed();
         // DO NOT test these callbacks as part of the redemption flow. They
         // only GET usage; they must never repeat or confirm a reset request.

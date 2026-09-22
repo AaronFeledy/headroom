@@ -23,12 +23,13 @@ func grokBotBucket(sand *cursorSandUsage) (usage.Bucket, bool) {
 	if !sand.HasNonZeroIncludedLimit && sand.UsagePercent <= 0 {
 		return usage.Bucket{}, false
 	}
-	reset := sand.NextResetTimestampUtc
+	reset := parseDate(&sand.NextResetTimestampUtc)
 	return usage.Bucket{
 		ID:          grokBotBucketID,
 		Label:       "Grok Bot",
 		Utilization: clampPercent(sand.UsagePercent),
-		ResetsAt:    parseDate(&reset),
+		ResetsAt:    reset,
+		StartsAt:    usage.ValidPeriodStart(parseDate(&sand.CurrentPeriodStart), reset),
 	}, true
 }
 

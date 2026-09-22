@@ -12,6 +12,7 @@ import (
 
 func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacyUsage *cursorUsageResponse, sand *cursorSandUsage) {
 	billingCycleEnd := parseDate(summary.BillingCycleEnd)
+	billingCycleStart := usage.ValidPeriodStart(parseDate(summary.BillingCycleStart), billingCycleEnd)
 	planUsedRaw := intValue(planUsage(summary).Used)
 	planLimitRaw := intValue(planUsage(summary).Limit)
 	planPercent := percentFromPlan(summary, planUsedRaw, planLimitRaw)
@@ -79,6 +80,15 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	}
 	if showOnDemand {
 		buckets = append(buckets, onDemandBucket)
+	}
+	for i := range buckets {
+		if buckets[i].ID == grokBotBucketID {
+			continue
+		}
+		buckets[i].StartsAt = billingCycleStart
+		if buckets[i].ID != usage.BucketOnDemand {
+			buckets[i].DetailText = planDetails(summary)
+		}
 	}
 	*data = data.WithBuckets(buckets)
 	data.Current = legacyCurrent
@@ -246,4 +256,38 @@ func money(cents int) string {
 	dollars := float64(cents) / 100
 	formatted := strconv.FormatFloat(dollars, 'f', 2, 64)
 	return strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+}
+
+// Plan totals cover the whole plan, not either individual model pool.
+func planDetails(summary cursorUsageSummary) *string {
+	lines := []string{}
+	plan := planUsage(summary)
+	addMoney := func(label string, value *int) {
+		if value != nil && *value >= 0 {
+			lines = append(lines, label+": $"+money(*value))
+		}
+	}
+	addMoney("Plan remaining", plan.Remaining)
+	if plan.Breakdown != nil {
+		addMoney("Included usage", plan.Breakdown.Included)
+		addMoney("Bonus usage", plan.Breakdown.Bonus)
+		addMoney("Total plan usage", plan.Breakdown.Total)
+	}
+	if len(lines) > 0 {
+		lines = append([]string{"Plan-wide amounts reported by Cursor:"}, lines...)
+	}
+	if summary.IsUnlimited != nil && *summary.IsUnlimited {
+		lines = append(lines, "Cursor reports unlimited access; model-specific limits may still apply.")
+	}
+	switch summary.LimitType {
+	case "user":
+		lines = append(lines, "Limit scope: individual")
+	case "team":
+		lines = append(lines, "Limit scope: team")
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	detail := strings.Join(lines, "\n")
+	return &detail
 }

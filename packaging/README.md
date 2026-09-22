@@ -114,7 +114,10 @@ text.
   for a newer stable version of the exact native package. `stage-update` performs
   the same check, downloads the complete archive into a private directory,
   verifies its release size and SHA-256 plus the inner package contract, and
-  writes a verified stage without changing the active version. `stage-repair`
+  writes a verified stage without changing the active version. Subsequent checks
+  and staging requests reuse that stage only when its recorded archive size and
+  SHA-256 match fresh release metadata and full package verification succeeds.
+  Missing, damaged, older, or manually staged packages are downloaded again. `stage-repair`
   uses the installed version's exact release tag and is accepted only for a
   trusted installation with a missing server or credential helper. These
   commands accept `--cancel-stdin`; closing their input cancels the bounded
