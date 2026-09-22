@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: window
-    width: 1180; height: 940; minimumWidth: 460; minimumHeight: 420
+    width: 539; height: 940; minimumWidth: 460; minimumHeight: 420
     visible: !startHidden
     title: "Headroom"
     flags: Qt.FramelessWindowHint | (trayAvailable ? Qt.Tool | Qt.WindowStaysOnTopHint : Qt.Window)

@@ -13,6 +13,7 @@
 namespace {
 constexpr int PopupMargin = 24;
 constexpr QSize PopupMinimum(460, 420);
+constexpr QSize PopupDefault(539, 820); // Logical pixels; Qt applies display scaling.
 constexpr QSize PopupMaximum(1600, 1200);
 
 QRect insetWorkArea(const QRect &available)
@@ -39,7 +40,7 @@ QSize PopupPlacement::constrainedSize(QSize available, QSize preferred)
                         qMin(PopupMaximum.height(), available.height()));
     const QSize minimum(qMin(PopupMinimum.width(), maximum.width()),
                         qMin(PopupMinimum.height(), maximum.height()));
-    if (!preferred.isValid()) preferred = QSize(960, 820);
+    if (!preferred.isValid()) preferred = PopupDefault;
     return preferred.expandedTo(minimum).boundedTo(maximum);
 }
 
@@ -92,7 +93,7 @@ QRect PopupPlacement::bounds(const QRect &screen, const QRect &available, QPoint
 }
 TrayPopup::TrayPopup(QQuickWindow *window, bool attached, QSize preferred, SizeWriter sizeWriter, QObject *parent)
     : QObject(parent), m_window(window), m_attached(attached),
-      m_preferred(preferred.isValid() ? preferred : (attached ? QSize(960, 820) : window->size())),
+      m_preferred(preferred.isValid() ? preferred : (attached ? PopupDefault : window->size())),
       m_sizeWriter(std::move(sizeWriter)) {
     m_window->installEventFilter(this);
     m_saveSize.setSingleShot(true);
