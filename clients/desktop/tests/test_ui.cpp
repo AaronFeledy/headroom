@@ -22,12 +22,19 @@
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QtTest>
+#include <QAccessible>
 #include <cmath>
 
 QQuickItem *findItem(QQuickItem *root, const QString &name) {
     if (root->objectName() == name) return root;
     for (auto child : root->childItems()) if (auto found = findItem(child, name)) return found;
     return nullptr;
+}
+QStringList accessibleActions(QQuickItem *item) {
+    auto *iface = QAccessible::queryAccessibleInterface(item);
+    if (!iface) return {};
+    auto *actions = iface->actionInterface();
+    return actions ? actions->actionNames() : QStringList{};
 }
 void escapeFocusedItem(QQuickItem *item) {
     QVERIFY(item);
@@ -856,6 +863,67 @@ private slots:
         QTRY_VERIFY(window->isActive());
         QTest::keyClick(window, Qt::Key_Escape);
         QTRY_VERIFY(!window->isVisible());
+    }
+    void cursorLoginMessageOpensOnlyTheFixedLoginPage() {
+        QTemporaryDir dir;
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        provider["error"] = "Log in to cursor.com, or push Cursor credentials from the tray.";
+        provider["is_success"] = false;
+        provider["needs_reauth"] = false; // Older servers omit the flag for missing credentials.
+        provider["buckets"] = QJsonArray{};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{provider}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(539, 600);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 1);
+        auto card = findItem(window->contentItem(), "providerCard_Cursor"); QVERIFY(card);
+        auto message = findItem(card, "providerError_Cursor"); QVERIFY(message);
+        QTRY_VERIFY(message->isVisible());
+        // The link affordances live on an overlay; the message itself stays plain static text.
+        auto link = findItem(card, "providerErrorLink_Cursor"); QVERIFY(link);
+        QVERIFY(link->activeFocusOnTab());
+        QVERIFY(!message->activeFocusOnTab());
+        QVERIFY(accessibleActions(link).contains(QAccessibleActionInterface::pressAction()));
+        UrlCapture capture;
+        QDesktopServices::setUrlHandler("https", &capture, "capture");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+            message->mapToScene(QPointF(message->width()/2, message->height()/2)).toPoint());
+        link->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Return);
+        QTest::keyClick(window, Qt::Key_Space);
+        provider["needs_reauth"] = true;
+        provider["error"] = "Cursor session expired. Log in to cursor.com again.";
+        card->setProperty("provider", provider.toVariantMap());
+        QCOMPARE(findItem(card, "providerErrorLink_Cursor"), link);
+        QTest::keyClick(window, Qt::Key_Return);
+        const auto urls = capture.urls;
+        QDesktopServices::unsetUrlHandler("https");
+        QCOMPARE(urls, QList<QUrl>(4, QUrl("https://cursor.com/login")));
+        provider["needs_reauth"] = false;
+        provider["error"] = "Cursor usage request failed with HTTP 500.";
+        card->setProperty("provider", provider.toVariantMap());
+        QVERIFY(!card->property("cursorLoginRequired").toBool());
+        // Ordinary errors advertise no press action and take no tab stop.
+        QVERIFY(!findItem(card, "providerErrorLink_Cursor"));
+        QVERIFY(!message->activeFocusOnTab());
+        QVERIFY(!accessibleActions(message).contains(QAccessibleActionInterface::pressAction()));
+        provider["provider_name"] = "Grok"; provider["needs_reauth"] = true;
+        card->setProperty("provider", provider.toVariantMap());
+        QVERIFY(!card->property("cursorLoginRequired").toBool());
+        QVERIFY(!findItem(card, "providerErrorLink_Grok"));
     }
     void updateIndicatorsNavigateWithoutApplying_data() {
         QTest::addColumn<QSize>("size");

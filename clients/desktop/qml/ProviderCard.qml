@@ -14,6 +14,8 @@ Rectangle {
     property bool presentingNotifications: false
     property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
+    readonly property bool cursorLoginRequired: failed && name === "Cursor"
+        && (provider.needs_reauth || (provider.error || "").startsWith("Log in to cursor.com"))
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
     // Tighten both narrow and medium cards while the provider header is above the meters.
@@ -271,8 +273,43 @@ Rectangle {
         }
         ColumnLayout {
             visible: card.failed; spacing: 12; Layout.fillWidth: true
-            Text { text: card.provider.needs_reauth ? "Reconnect your account" : "Usage is unavailable"; color: Theme.red; font.pixelSize: 14; font.weight: Font.Medium }
-            Text { textFormat: Text.PlainText; text: card.provider.error || "The provider could not return usage. Headroom will check again automatically."; color: Theme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: card.provider.needs_reauth || card.cursorLoginRequired ? "Reconnect your account" : "Usage is unavailable"; color: Theme.red; font.pixelSize: 14; font.weight: Font.Medium }
+            Text {
+                id: errorMessage; objectName: "providerError_" + card.name
+                textFormat: Text.PlainText
+                text: card.provider.error || "The provider could not return usage. Headroom will check again automatically."
+                color: card.cursorLoginRequired ? Theme.cyan : Theme.muted
+                font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                font.underline: loginLink.item ? (loginLink.item.hovered || loginLink.item.activeFocus) : false
+                // Ordinary errors stay plain static text. Accessible actions are advertised from the
+                // handlers that are connected, not from the current role, so the link affordances live
+                // on an overlay that only exists while the Cursor sign-in link applies.
+                Accessible.ignored: loginLink.active
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
+                Loader {
+                    id: loginLink
+                    anchors.fill: parent
+                    active: card.cursorLoginRequired
+                    sourceComponent: Item {
+                        objectName: "providerErrorLink_" + card.name
+                        readonly property bool hovered: loginHover.hovered
+                        function openLogin() { Qt.openUrlExternally("https://cursor.com/login") }
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Link
+                        Accessible.name: errorMessage.text
+                        Accessible.description: "Open Cursor sign-in in your browser"
+                        Accessible.onPressAction: openLogin()
+                        Keys.onReturnPressed: openLogin()
+                        Keys.onEnterPressed: openLogin()
+                        Keys.onSpacePressed: openLogin()
+                        TapHandler { onTapped: parent.openLogin() }
+                        HoverHandler { id: loginHover; cursorShape: Qt.PointingHandCursor }
+                        ToolTip.visible: loginHover.hovered || activeFocus
+                        ToolTip.text: "Open Cursor sign-in in your browser"
+                    }
+                }
+            }
             ActionButton { visible: !!card.provider.reauth_command; text: "Copy sign-in command"; onClicked: { backend.copyText(card.provider.reauth_command); text = "Copied" } }
         }
     }
