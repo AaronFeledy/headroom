@@ -259,6 +259,50 @@ private slots:
         bucket["resets_at"] = now.addSecs(7 * 86400 / 2).toString(Qt::ISODate);
         QCOMPARE(Usage::pacing("Claude", bucket, now)["expected"].toDouble(), 50.0);
     }
+    void reportedPeriodsOverrideEstimatesAndBoundNotches() {
+        const auto start = QDateTime::fromString("2026-02-01T00:00:00Z", Qt::ISODate);
+        const auto end = start.addDays(28);
+        QVariantMap bucket{{"id", "api"}, {"utilization", 50},
+            {"starts_at", start.toString(Qt::ISODate)}, {"resets_at", end.toString(Qt::ISODate)}};
+        const auto half = start.addDays(14);
+        QCOMPARE(Usage::pacing("Cursor", bucket, half)["expected"].toDouble(), 50.0);
+        QCOMPARE(Usage::pacing("Cursor", bucket, half)["label"].toString(), QString("On pace"));
+        QVERIFY(Usage::pacing("Cursor", bucket, half)["detail"].toString().contains("provider-reported"));
+        QCOMPARE(Usage::notches("Cursor", bucket).size(), 3);
+        QVERIFY(!Usage::pacing("Cursor", bucket, start.addSecs(-1))["available"].toBool());
+        for (const auto &provider : {QString("Grok"), QString("Cursor")}) {
+            bucket["id"] = "weekly";
+            bucket["resets_at"] = start.addDays(6).toString(Qt::ISODate);
+            QCOMPARE(Usage::pacing(provider, bucket, start.addDays(3))["expected"].toDouble(), 50.0);
+            QCOMPARE(Usage::notches(provider, bucket).size(), 5);
+        }
+        bucket["id"] = "api"; bucket["resets_at"] = end.toString(Qt::ISODate);
+        for (const QString invalid : {QString(), QString("invalid"), end.toString(Qt::ISODate), end.addDays(1).toString(Qt::ISODate), start.addYears(-2).toString(Qt::ISODate)}) {
+            bucket["starts_at"] = invalid;
+            QCOMPARE(Usage::period("Cursor", bucket)["seconds"].toLongLong(), 30LL * 86400);
+            QCOMPARE(Usage::notches("Cursor", bucket).size(), 4);
+        }
+    }
+    void optionalBillingMetadataNeverBreaksOlderSnapshots() {
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[2].toObject();
+        auto bucket = provider["buckets"].toArray()[1].toObject();
+        bucket["resets_at"] = "2026-03-01T00:00:00Z";
+        const auto verify = [&](const QJsonValue &start, const QJsonValue &detail, bool valid) {
+            bucket["starts_at"] = start; bucket["detail_text"] = detail;
+            provider["buckets"] = QJsonArray{bucket};
+            QVariantList parsed;
+            QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+            const auto normalized = parsed[0].toMap()["buckets"].toList()[0].toMap();
+            QCOMPARE(!normalized["starts_at"].isNull(), valid);
+            QCOMPARE(!normalized["detail_text"].isNull(), valid);
+            QCOMPARE(normalized["utilization"], bucket["utilization"].toVariant());
+        };
+        verify("2026-02-01T00:00:00Z", "Plan remaining: 25", true);
+        verify(QJsonValue::Null, QJsonValue::Null, false);
+        verify(12, QJsonArray{}, false);
+        verify("invalid", QString(4097, 'x'), false);
+        verify("2026-03-01T00:00:00Z", false, false);
+    }
     void pacingTimeOffsets_data() {
         QTest::addColumn<QString>("provider");
         QTest::addColumn<QString>("id");

@@ -84,6 +84,25 @@ private slots:
         QTRY_VERIFY(status->mapToScene(QPointF()).x() >= pace->mapToScene(QPointF()).x() + pace->width());
         const auto originalBucket = meter->property("bucket").toMap();
         auto bucket = originalBucket;
+        const QSizeF originalSize = meter->size();
+        bucket["detail_text"] = "Plan-wide amounts reported by Cursor:\nIncluded usage: $150\nBonus usage: $25\nPlan remaining: $250";
+        QVERIFY(meter->setProperty("bucket", bucket));
+        QCOMPARE(meter->size(), originalSize);
+        auto tooltip = status->findChild<QObject *>("meterBillingTooltip_Cursor_api"); QVERIFY(tooltip);
+        QVERIFY(tooltip->property("text").toString().contains("Included usage: $150"));
+        QVERIFY(tooltip->property("text").toString().contains("Resets:"));
+        QTest::mouseMove(window, status->mapToScene(QPointF(status->width()/2, status->height()/2)).toPoint());
+        QTRY_VERIFY(tooltip->property("visible").toBool());
+        QVERIFY(tooltip->property("width").toReal() <= window->width() - 32);
+        QCOMPARE(meter->size(), originalSize);
+        const auto tooltipCapture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!tooltipCapture.isEmpty()) {
+            QDir().mkpath(tooltipCapture);
+            QTest::qWait(200);
+            QVERIFY(window->grabWindow().save(QDir(tooltipCapture).filePath(QString("cursor-billing-tooltip-%1.png").arg(width))));
+        }
+        QTest::mouseMove(window, QPoint(1,1));
+        QTRY_VERIFY(!tooltip->property("visible").toBool());
         bucket["status_text"] = QString("A deliberately long billing explanation that needs to wrap below the pacing label. ").repeated(3);
         QVERIFY(meter->setProperty("bucket", bucket));
         QTRY_VERIFY(status->mapToScene(QPointF()).y() >= pace->mapToScene(QPointF()).y() + pace->height());

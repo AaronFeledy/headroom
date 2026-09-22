@@ -19,6 +19,13 @@ ColumnLayout {
     property var clock: backend.state
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
     property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
+    readonly property string providerDetails: bucket.detail_text || ""
+    readonly property string usageDetails: concern.detail + (providerDetails ? "\n\n" + providerDetails : "")
+    readonly property string billingDetails: {
+        meter.clock
+        const reset = backend.resetTimeLabel(bucket.resets_at || "")
+        return [providerDetails, reset ? "Resets: " + reset : ""].filter(line => line.length > 0).join("\n\n")
+    }
     spacing: 6
     GridLayout {
         id: meterHeader
@@ -38,6 +45,11 @@ ColumnLayout {
                 color: Theme.foreground; font.pixelSize: 13
                 Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)
                 elide: Text.ElideRight
+                HoverHandler { id: titleHover }
+                MeterToolTip {
+                    visible: titleHover.hovered && meter.billingDetails.length > 0
+                    text: meter.billingDetails
+                }
             }
             Text {
                 id: severityLabel
@@ -65,7 +77,7 @@ ColumnLayout {
         Layout.fillWidth: true; implicitHeight: 12
         Accessible.role: Accessible.ProgressBar
         Accessible.name: backend.displayName(meter.providerName) + " " + meter.bucket.label
-        Accessible.description: meter.concern.detail
+        Accessible.description: meter.usageDetails
         Rectangle {
             id: track
             objectName: "meterTrack_" + meter.providerName + "_" + meter.bucket.id
@@ -112,9 +124,10 @@ ColumnLayout {
             presenting: meter.presentingNotifications
         }
         HoverHandler { id: graphHover }
-        ToolTip.visible: graphHover.hovered
-        ToolTip.text: graph.notchLabel || meter.concern.detail
-        ToolTip.delay: 150
+        MeterToolTip {
+            visible: graphHover.hovered
+            text: graph.notchLabel || meter.usageDetails
+        }
     }
     GridLayout {
         id: meterFooter
@@ -154,11 +167,11 @@ ColumnLayout {
                     visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
                     text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
                     color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
-                    readonly property string resetTooltip: { meter.clock; return backend.resetTimeLabel(meter.bucket.resets_at || "") }
                     HoverHandler { id: resetHover }
-                    ToolTip.visible: resetHover.hovered && resetLabel.resetTooltip.length > 0
-                    ToolTip.text: resetLabel.resetTooltip
-                    ToolTip.delay: 150
+                    MeterToolTip {
+                        visible: resetHover.hovered && meter.billingDetails.length > 0
+                        text: meter.billingDetails
+                    }
                 }
                 Text {
                     id: statusLabel
@@ -166,6 +179,13 @@ ColumnLayout {
                     objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
                     textFormat: Text.PlainText
                     text: meter.bucket.status_text || ""
+                    Accessible.description: meter.billingDetails
+                    HoverHandler { id: statusHover }
+                    MeterToolTip {
+                        objectName: "meterBillingTooltip_" + meter.providerName + "_" + meter.bucket.id
+                        visible: statusHover.hovered && meter.billingDetails.length > 0
+                        text: meter.billingDetails
+                    }
                     color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
                 Item {

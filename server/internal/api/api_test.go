@@ -21,7 +21,7 @@ func Test_UsageCollection_returns_cached_enabled_providers_when_requested(t *tes
 
 	// Then
 	assertStatus(t, rec, http.StatusOK)
-	assertJSON(t, rec, `[{"provider_name":"Claude","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":0,"resets_at":null},"weekly":{"utilization":100,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":0,"resets_at":null,"status_text":null},{"id":"weekly","label":"Weekly","utilization":100,"resets_at":null,"status_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null}]`)
+	assertJSON(t, rec, `[{"provider_name":"Claude","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":0,"resets_at":null},"weekly":{"utilization":100,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":0,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null},{"id":"weekly","label":"Weekly","utilization":100,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null}]`)
 	if cache.refetches != 0 {
 		t.Fatalf("GET performed upstream refetches = %d, want 0", cache.refetches)
 	}
@@ -52,7 +52,7 @@ func Test_ProviderUsage_returns_cached_provider_when_present(t *testing.T) {
 
 	// Then
 	assertStatus(t, rec, http.StatusOK)
-	assertJSON(t, rec, `{"provider_name":"Cursor","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":25,"resets_at":null},"weekly":{"utilization":75,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":25,"resets_at":null,"status_text":null},{"id":"weekly","label":"Weekly","utilization":75,"resets_at":null,"status_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null}`)
+	assertJSON(t, rec, `{"provider_name":"Cursor","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":25,"resets_at":null},"weekly":{"utilization":75,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":25,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null},{"id":"weekly","label":"Weekly","utilization":75,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null}`)
 }
 
 func Test_Health_returns_version_and_provider_states_when_cache_empty(t *testing.T) {

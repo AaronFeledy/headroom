@@ -133,7 +133,7 @@ endif()
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
-    qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
+    qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/MeterToolTip.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
     RESOURCES headroom.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
     ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg

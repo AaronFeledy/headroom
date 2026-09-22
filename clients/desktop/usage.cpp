@@ -103,6 +103,14 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 else if ((id == "weekly" || id == "on_demand") && !p["secondary_status_text"].toString().trimmed().isEmpty())
                     b["status_text"] = p["secondary_status_text"];
             }
+            // Optional metadata never invalidates an otherwise usable snapshot.
+            const auto start = QDateTime::fromString(b["starts_at"].toString(), Qt::ISODateWithMs);
+            const auto end = QDateTime::fromString(b["resets_at"].toString(), Qt::ISODateWithMs);
+            const auto span = start.secsTo(end);
+            if (!start.isValid() || !end.isValid() || span <= 0 || span > 366LL * 86400)
+                b["starts_at"] = QJsonValue::Null;
+            if (!b["detail_text"].isString() || b["detail_text"].toString().size() > 4096)
+                b["detail_text"] = QJsonValue::Null;
             buckets[i] = b;
         }
         p["buckets"] = buckets;
@@ -166,6 +174,15 @@ QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
         const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
         if (reset.isValid()) duration = reset.addMonths(-1).secsTo(reset);
         step = 7 * 86400; window = "calendar-month billing estimate"; unit = "Week";
+    }
+    const auto start = QDateTime::fromString(bucket["starts_at"].toString(), Qt::ISODateWithMs).toUTC();
+    const auto end = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
+    const qint64 reportedDuration = start.secsTo(end);
+    if (start.isValid() && end.isValid() && reportedDuration > 0 && reportedDuration <= 366LL * 86400) {
+        duration = reportedDuration;
+        step = duration > 14 * 86400 ? 7 * 86400 : duration > 86400 ? 86400 : 3600;
+        unit = step == 7 * 86400 ? "Week" : step == 86400 ? "Day" : "Hour";
+        window = "provider-reported usage window";
     }
     return {{"seconds", duration}, {"step", step}, {"unit", unit}, {"label", window}};
 }

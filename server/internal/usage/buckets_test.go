@@ -22,7 +22,7 @@ func Test_Bucket_MarshalJSON_emits_ordered_contract_with_UTC_reset(t *testing.T)
 	if err != nil {
 		t.Fatalf("MarshalJSON returned error: %v", err)
 	}
-	want := `{"id":"five_hour","label":"5-Hour","utilization":42.5,"resets_at":"2026-07-12T22:30:00Z","status_text":null}`
+	want := `{"id":"five_hour","label":"5-Hour","utilization":42.5,"resets_at":"2026-07-12T22:30:00Z","status_text":null,"starts_at":null,"detail_text":null}`
 	if string(encoded) != want {
 		t.Fatalf("JSON = %s, want %s", encoded, want)
 	}
@@ -132,5 +132,24 @@ func Test_UsageData_WithBuckets_overwrites_header_and_preserves_provider_metadat
 	}
 	if got.ProviderName != data.ProviderName || got.Subtitle != data.Subtitle || got.PrimaryStatusText != data.PrimaryStatusText || got.SecondaryStatusText != data.SecondaryStatusText || got.ReauthCommand != data.ReauthCommand || got.Error != data.Error || got.NeedsReauth != data.NeedsReauth {
 		t.Fatalf("WithBuckets() did not preserve metadata: got %+v, source %+v", got, data)
+	}
+}
+
+func TestBucketMetadataSerializesUTCAndRejectsInvalidWindow(t *testing.T) {
+	start := time.Date(2026, 7, 7, 4, 0, 0, 0, time.FixedZone("offset", -5*60*60))
+	end := start.Add(7 * 24 * time.Hour)
+	detail := "Prepaid balance: $12.50"
+	bucket := usage.Bucket{ID: "weekly", Label: "Weekly", StartsAt: &start, ResetsAt: &end, DetailText: &detail}
+	encoded, err := json.Marshal(bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"starts_at":"2026-07-07T09:00:00Z"`)) || !bytes.Contains(encoded, []byte(`"detail_text":"Prepaid balance: $12.50"`)) {
+		t.Fatalf("metadata missing: %s", encoded)
+	}
+	bucket.StartsAt = &end
+	encoded, err = json.Marshal(bucket)
+	if err != nil || !bytes.Contains(encoded, []byte(`"starts_at":null`)) {
+		t.Fatalf("invalid window accepted: %s %v", encoded, err)
 	}
 }

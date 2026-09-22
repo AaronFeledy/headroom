@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -19,13 +20,18 @@ type billingResponse struct {
 }
 
 type billingConfig struct {
-	Used               billingValue   `json:"used"`
-	MonthlyLimit       billingValue   `json:"monthlyLimit"`
-	OnDemandUsed       billingValue   `json:"onDemandUsed"`
-	OnDemandCap        billingValue   `json:"onDemandCap"`
-	BillingPeriodEnd   string         `json:"billingPeriodEnd"`
-	CreditUsagePercent *float64       `json:"creditUsagePercent"`
-	CurrentPeriod      *billingPeriod `json:"currentPeriod"`
+	BillingPeriodStart   string                `json:"billingPeriodStart"`
+	PrepaidBalance       *billingValue         `json:"prepaidBalance"`
+	TopUpMethod          string                `json:"topUpMethod"`
+	IsUnifiedBillingUser *bool                 `json:"isUnifiedBillingUser"`
+	ProductUsage         []billingProductUsage `json:"productUsage"`
+	Used                 billingValue          `json:"used"`
+	MonthlyLimit         billingValue          `json:"monthlyLimit"`
+	OnDemandUsed         billingValue          `json:"onDemandUsed"`
+	OnDemandCap          billingValue          `json:"onDemandCap"`
+	BillingPeriodEnd     string                `json:"billingPeriodEnd"`
+	CreditUsagePercent   *float64              `json:"creditUsagePercent"`
+	CurrentPeriod        *billingPeriod        `json:"currentPeriod"`
 }
 
 type billingValue struct {
@@ -37,8 +43,9 @@ type billingPeriodType string
 const billingPeriodTypeWeekly billingPeriodType = "USAGE_PERIOD_TYPE_WEEKLY"
 
 type billingPeriod struct {
-	Type billingPeriodType `json:"type"`
-	End  string            `json:"end"`
+	Start string            `json:"start"`
+	Type  billingPeriodType `json:"type"`
+	End   string            `json:"end"`
 }
 
 type settingsResponse struct {
@@ -83,6 +90,7 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 				Label:       "Weekly",
 				Utilization: math.Max(0, math.Min(100, utilization)),
 				ResetsAt:    &reset,
+				StartsAt:    billingStart(period.Start, &reset),
 			}
 		}
 	}
@@ -103,7 +111,7 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 			legacyReset = reset.UTC()
 			percent := math.Max(0, math.Min(100, *used / *limit * 100))
 			primaryStatus := fmt.Sprintf("%s / %s credits · %s", formatWholeNumber(*used), formatWholeNumber(*limit), formatResetDate(legacyReset, now))
-			buckets = append(buckets, usage.Bucket{ID: usage.BucketCredits, Label: "Credits", Utilization: percent, ResetsAt: &legacyReset, StatusText: &primaryStatus})
+			buckets = append(buckets, usage.Bucket{ID: usage.BucketCredits, Label: "Credits", Utilization: percent, ResetsAt: &legacyReset, StartsAt: billingStart(decoded.Config.BillingPeriodStart, &legacyReset), StatusText: &primaryStatus})
 			data.PrimaryStatusText = &primaryStatus
 		}
 	}
@@ -122,6 +130,10 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 	secondaryLabel := data.SecondaryLabel
 	showSecondary := data.ShowSecondary
 	legacyOnly := legacyMapped && weekly == nil
+	details := billingDetails(decoded.Config)
+	for i := range buckets {
+		buckets[i].DetailText = details
+	}
 	*data = data.WithBuckets(buckets)
 	switch {
 	case weekly != nil:
@@ -248,4 +260,64 @@ func onDemandStatusText(used *float64, usedVal float64, capVal float64) string {
 
 func errorsChangedResponse() error {
 	return fmt.Errorf("Grok billing response changed")
+}
+
+func billingStart(value string, end *time.Time) *time.Time {
+	start, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	return usage.ValidPeriodStart(&start, end)
+}
+
+type billingProductUsage struct {
+	Product      string   `json:"product"`
+	UsagePercent *float64 `json:"usagePercent"`
+}
+
+func billingDetails(config billingConfig) *string {
+	lines := []string{}
+	if config.PrepaidBalance != nil {
+		balance := 0.0 // An empty Cent object represents zero in protobuf JSON.
+		if config.PrepaidBalance.Value != nil {
+			balance = *config.PrepaidBalance.Value
+		}
+		if !math.IsNaN(balance) && !math.IsInf(balance, 0) && balance >= 0 {
+			lines = append(lines, fmt.Sprintf("Prepaid balance: $%.2f", balance/100))
+		}
+	}
+	if config.TopUpMethod == "TOP_UP_METHOD_SAVED_PAYMENT_METHOD" {
+		lines = append(lines, "Top-up method: saved payment method")
+	}
+	if config.IsUnifiedBillingUser != nil && *config.IsUnifiedBillingUser {
+		lines = append(lines, "Shared usage pool across Grok products")
+	}
+	seen := map[string]bool{}
+	for _, product := range config.ProductUsage {
+		name := strings.TrimSpace(product.Product)
+		// Product identifiers must remain short plain labels in a tooltip.
+		validName := name != "" && len(name) <= 40
+		for _, ch := range name {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == ' ' || ch == '_' || ch == '-') {
+				validName = false
+			}
+		}
+		percent := product.UsagePercent
+		if !validName || seen[name] || percent == nil || math.IsNaN(*percent) || math.IsInf(*percent, 0) || *percent < 0 || *percent > 100 {
+			continue
+		}
+		if len(seen) == 12 {
+			break
+		}
+		seen[name] = true
+		if name == "Api" {
+			name = "API"
+		}
+		lines = append(lines, fmt.Sprintf("%s reported usage: %.1f%%", name, *percent))
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	detail := strings.Join(lines, "\n")
+	return &detail
 }

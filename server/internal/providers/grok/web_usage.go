@@ -150,6 +150,7 @@ func weeklyBucket(config *GrokCreditsConfig) *usage.Bucket {
 		Label:       "Weekly",
 		Utilization: math.Min(math.Max(float64(config.GetCreditUsagePercent()), 0), 100),
 		ResetsAt:    reset,
+		StartsAt:    usage.ValidPeriodStart(timestampTime(period.GetStart()), reset),
 	}
 }
 

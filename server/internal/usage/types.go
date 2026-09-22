@@ -35,6 +35,8 @@ type Bucket struct {
 	Utilization float64
 	ResetsAt    *time.Time
 	StatusText  *string
+	StartsAt    *time.Time
+	DetailText  *string
 }
 
 func (b Bucket) MarshalJSON() ([]byte, error) {
@@ -44,13 +46,20 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 		Utilization float64 `json:"utilization"`
 		ResetsAt    *string `json:"resets_at"`
 		StatusText  *string `json:"status_text"`
+		StartsAt    *string `json:"starts_at"`
+		DetailText  *string `json:"detail_text"`
 	}
 	var resetsAt *string
 	if b.ResetsAt != nil {
 		formatted := b.ResetsAt.UTC().Format(time.RFC3339)
 		resetsAt = &formatted
 	}
-	return json.Marshal(bucketJSON{ID: b.ID, Label: b.Label, Utilization: b.Utilization, ResetsAt: resetsAt, StatusText: b.StatusText})
+	var startsAt *string
+	if start := ValidPeriodStart(b.StartsAt, b.ResetsAt); start != nil {
+		formatted := start.Format(time.RFC3339)
+		startsAt = &formatted
+	}
+	return json.Marshal(bucketJSON{StartsAt: startsAt, DetailText: b.DetailText, ID: b.ID, Label: b.Label, Utilization: b.Utilization, ResetsAt: resetsAt, StatusText: b.StatusText})
 }
 
 type UsageData struct {
@@ -176,4 +185,14 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		IsSuccess:             d.Error == nil,
 		RateLimitResetCredits: resetCredits,
 	})
+}
+
+// ValidPeriodStart accepts a bounded provider-reported window, never an estimate.
+// Keep absent/invalid timing optional so older responses remain usable.
+func ValidPeriodStart(start, end *time.Time) *time.Time {
+	if start == nil || end == nil || start.IsZero() || !start.Before(*end) || end.Sub(*start) > 366*24*time.Hour {
+		return nil
+	}
+	utc := start.UTC()
+	return &utc
 }
