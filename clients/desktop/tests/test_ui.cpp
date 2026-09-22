@@ -860,6 +860,7 @@ private slots:
     void updateIndicatorsNavigateWithoutApplying_data() {
         QTest::addColumn<QSize>("size");
         QTest::newRow("minimum") << QSize(460, 420);
+        QTest::newRow("default-width") << QSize(539, 893);
         QTest::newRow("compact") << QSize(699, 600);
         QTest::newRow("wide-boundary") << QSize(700, 600);
         QTest::newRow("wide") << QSize(960, 900);
@@ -944,6 +945,7 @@ private slots:
         auto footer = findItem(window->contentItem(), "stickyFooter"); QVERIFY(footer);
         QVERIFY(!findItem(window->contentItem(), "compactUpdateIndicator"));
         QVERIFY(!indicator->isVisible()); QVERIFY(!server->isVisible());
+        const qreal footerHeightWithoutUpdates = footer->height();
         for (const QString state : {"checking", "unavailable", "current"}) {
             updates->setProperty("state", state);
             QVERIFY(!indicator->isVisible());
@@ -992,6 +994,31 @@ private slots:
             return !desktopRect.intersects(serverRect) && serverRect.right() <= window->width();
         };
         QTRY_VERIFY(separated());
+        const auto serverInline = [&] {
+            const auto center = server->mapToScene(QPointF(0, server->height() / 2)).y();
+            const auto logoCenter = logo->mapToScene(QPointF(0, logo->height() / 2)).y();
+            const auto left = server->mapToScene(QPointF()).x();
+            const auto right = server->mapToScene(QPointF(server->width(), 0)).x();
+            return std::abs(center - logoCenter) < 1
+                && left >= title->mapToScene(QPointF(title->width(), 0)).x()
+                && right <= filter->mapToScene(QPointF()).x()
+                && std::abs(footer->height() - footerHeightWithoutUpdates) < 1;
+        };
+        for (const QString desktopState : {"current", "staged"}) {
+            updates->setProperty("state", desktopState);
+            for (const QString serverState : {"idle", "updating", "failed"}) {
+                remote->setProperty("state", serverState);
+                remote->setProperty("busy", serverState == "updating");
+                QTRY_VERIFY(serverInline());
+                if (indicator->isVisible()) {
+                    QTRY_VERIFY(separated());
+                    QTRY_VERIFY(std::abs(indicator->mapToScene(QPointF(0, indicator->height()/2)).y()
+                        - logo->mapToScene(QPointF(0, logo->height()/2)).y()) < 1);
+                }
+            }
+        }
+        remote->setProperty("state", "idle");
+        remote->setProperty("busy", false);
 
         window->requestActivate();
         controller.notifications()->post("desktopUpdate", "Headroom is ready to restart", "Synthetic staged update");
