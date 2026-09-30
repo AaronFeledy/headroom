@@ -7,7 +7,7 @@ Type=oneshot
 User=USER
 Group=USER
 Environment=HOME=/home/USER
-EnvironmentFile=/home/USER/.config/claude-usage-widget/server.env
+EnvironmentFile=/home/USER/.config/headroom/server.env
 ExecStart=/usr/bin/python3 /home/USER/.local/lib/claude-usage-widget/sync_cursor_auth.py
 UMask=0077
 NoNewPrivileges=true

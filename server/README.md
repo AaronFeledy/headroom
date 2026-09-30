@@ -2,8 +2,9 @@
 
 The Go server polls enabled providers and serves cached usage to Headroom, Home
 Assistant REST sensors, and compatible API clients. The `usage-server` binary,
-configuration keys, environment variables, default paths, and API wire names
-remain compatible with Claude Usage Widget deployments.
+configuration keys, environment variables, and API wire names remain compatible
+with Claude Usage Widget deployments; legacy default config locations migrate
+automatically.
 
 ## Managed installation
 
@@ -116,9 +117,20 @@ Config is applied in this order: defaults, YAML, environment variables, then CLI
 
 Default config path:
 
-- Windows: `%APPDATA%\ClaudeUsageWidget\config.yaml`
-- Linux/macOS with `XDG_CONFIG_HOME`: `$XDG_CONFIG_HOME/claude-usage-widget/config.yaml`
-- Linux/macOS fallback: `~/.config/claude-usage-widget/config.yaml`
+- Windows: `%APPDATA%\Headroom\config.yaml`
+- Unix (including Linux/macOS): `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/config.yaml`
+
+When the new Unix directory is absent, the server renames the real legacy
+`claude-usage-widget` directory to `headroom`, preserving all files and modes,
+then leaves a relative compatibility symlink at the legacy path. Existing units,
+environment-file references, and older server generations keep working. This also
+applies to `--config` or `USAGE_CONFIG` paths directly in either directory;
+unrelated explicit paths and user-managed legacy symlinks are left untouched.
+Windows default-path startup copies the legacy
+`%APPDATA%\ClaudeUsageWidget\config.yaml` without overwriting an existing new
+config and uses the new file from then on, leaving the legacy file and desktop
+settings untouched; explicit Windows paths do not migrate. Migration failures
+are logged and the loader falls back to the legacy config when available.
 
 CLI flags:
 

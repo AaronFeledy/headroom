@@ -7,8 +7,8 @@ StartLimitIntervalSec=0
 [Service]
 Type=exec
 WorkingDirectory=%h
-EnvironmentFile=-%h/.config/claude-usage-widget/server.env
-ExecStart=%h/.local/bin/headroom serve --config %h/.config/claude-usage-widget/config.yaml
+EnvironmentFile=-%h/.config/headroom/server.env
+ExecStart=%h/.local/bin/headroom serve --config %h/.config/headroom/config.yaml
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
