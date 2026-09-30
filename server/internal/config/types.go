@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -25,8 +26,9 @@ type ProviderConfig struct {
 }
 
 type LoadOptions struct {
-	Args []string
-	Env  []string
+	Args   []string
+	Env    []string
+	Logger *slog.Logger
 }
 
 func Defaults() Config {

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,10 @@ type flagValues struct {
 }
 
 func Load(ctx context.Context, opts LoadOptions) (Config, error) {
+	return loadForOS(ctx, opts, runtime.GOOS, migrationOps{rename: os.Rename, symlink: os.Symlink, link: os.Link})
+}
+
+func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migrationOps) (Config, error) {
 	select {
 	case <-ctx.Done():
 		return Config{}, fmt.Errorf("load config canceled: %w", ctx.Err())
@@ -48,7 +53,7 @@ func Load(ctx context.Context, opts LoadOptions) (Config, error) {
 		return Config{}, err
 	}
 	env := parseEnv(opts.Env)
-	path, err := resolveConfigPath(flags, opts.Env, env)
+	path, err := (configMigration{goos: goos, ops: ops, logger: opts.Logger}).resolve(flags, opts.Env)
 	if err != nil {
 		return Config{}, err
 	}
@@ -80,20 +85,6 @@ func parseFlags(args []string) (flagValues, error) {
 	}
 	fs.Visit(func(f *flag.Flag) { values.Set[f.Name] = true })
 	return values, nil
-}
-
-func resolveConfigPath(flags flagValues, envList []string, env map[string]string) (string, error) {
-	if flags.Set["config"] {
-		return flags.ConfigPath, nil
-	}
-	if path := env["USAGE_CONFIG"]; path != "" {
-		return path, nil
-	}
-	path, err := defaultPath(envList)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 func applyYAML(path string, cfg *Config) error {

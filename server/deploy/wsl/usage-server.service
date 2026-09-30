@@ -9,8 +9,8 @@ Type=simple
 User=USER
 Group=USER
 Environment=HOME=/home/USER
-EnvironmentFile=/home/USER/.config/claude-usage-widget/server.env
-ExecStart=/home/USER/.local/bin/usage-server --config /home/USER/.config/claude-usage-widget/config.yaml
+EnvironmentFile=/home/USER/.config/headroom/server.env
+ExecStart=/home/USER/.local/bin/usage-server --config /home/USER/.config/headroom/config.yaml
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

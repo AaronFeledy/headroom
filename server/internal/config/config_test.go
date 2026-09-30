@@ -211,7 +211,8 @@ func Test_Load_returns_invalid_config_error_when_provider_enabled_env_invalid(t 
 
 func Test_DefaultPath_returns_os_config_path(t *testing.T) {
 	// Given
-	env := []string{"XDG_CONFIG_HOME=/tmp/xdg", "APPDATA=C:\\Users\\me\\AppData\\Roaming", "HOME=/home/me"}
+	base := t.TempDir()
+	env := []string{"XDG_CONFIG_HOME=" + base, "APPDATA=" + base, "HOME=" + base}
 
 	// When
 	linuxPath, linuxErr := config.DefaultPath("linux", env)
@@ -221,13 +222,13 @@ func Test_DefaultPath_returns_os_config_path(t *testing.T) {
 	if linuxErr != nil {
 		t.Fatalf("DefaultPath linux returned error: %v", linuxErr)
 	}
-	if linuxPath != filepath.Join("/tmp/xdg", "claude-usage-widget", "config.yaml") {
+	if linuxPath != filepath.Join(base, "headroom", "config.yaml") {
 		t.Fatalf("linux path = %q", linuxPath)
 	}
 	if windowsErr != nil {
 		t.Fatalf("DefaultPath windows returned error: %v", windowsErr)
 	}
-	if windowsPath != filepath.Join("C:\\Users\\me\\AppData\\Roaming", "ClaudeUsageWidget", "config.yaml") {
+	if windowsPath != filepath.Join(base, "Headroom", "config.yaml") {
 		t.Fatalf("windows path = %q", windowsPath)
 	}
 }

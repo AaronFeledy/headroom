@@ -91,11 +91,17 @@ and coordinated Windows/WSL updates.
 
 Changing the frontend does not require moving or renaming an independently
 managed backend. The `usage-server` executable name, HTTP API, provider keys,
-and server configuration paths remain compatible:
+and legacy server configuration paths remain compatible. New defaults are:
 
-- Windows server config: `%APPDATA%\ClaudeUsageWidget\config.yaml`
-- Linux/WSL server config: `${XDG_CONFIG_HOME:-$HOME/.config}/claude-usage-widget/config.yaml`
+- Windows server config: `%APPDATA%\Headroom\config.yaml`
+- Unix server config (including Linux/WSL/macOS): `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/config.yaml`
 - Custom `--config` paths and existing service definitions can stay in place.
+
+Unix startup automatically renames the legacy config directory when the new one
+is absent and leaves a compatibility symlink, preserving `config.yaml`,
+`server.env`, and other entries. Existing units referencing the legacy path keep
+working and may be updated to the new path. Windows default-path startup copies
+the legacy config without removing it or the legacy desktop settings.
 
 Provider credential files stay on the machine running the backend. They are not
 copied by the frontend settings importer. Headroom displays the API's `Codex`

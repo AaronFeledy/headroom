@@ -62,7 +62,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		return sshaccess.ServeStdio(ctx, desktopOptions.input, desktopOptions.output, home)
 	}
-	cfg, err := config.Load(ctx, config.LoadOptions{Args: args, Env: env})
+	cfg, err := config.Load(ctx, config.LoadOptions{Args: args, Env: env, Logger: logger})
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
