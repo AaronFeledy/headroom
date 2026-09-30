@@ -3,7 +3,7 @@
 For a managed installation that supports `headroom update`, use the **per-user**
 [`headroom.service`](headroom.service) and the
 [CLI service setup and Windows/WSL pairing guide](../../../docs/cli.md).
-It uses the existing configuration path and participates in verified restart and
+It uses `~/.config/headroom/` and participates in verified restart and
 rollback. Migrate an existing system-wide service once before opting in.
 
 The legacy sample units below remain available for independently managed
@@ -16,10 +16,15 @@ and adjust the paths before installing them into `/etc/systemd/system`.
 ## Configuration
 
 Install `usage-server` into `~/.local/bin` and create the private directory
-`~/.config/claude-usage-widget`. Its `config.yaml` supplies provider settings and
+`~/.config/headroom` (mode 0700). Its `config.yaml` supplies provider settings and
 the listen address, using the server configuration documented in
 [the server README](../../README.md). Bind to the WSL network adapter that clients
 can reach. An off-loopback bind requires authentication.
+
+The server automatically renames the legacy config directory when the new one
+is absent, leaving a compatibility link so existing units and timers keep
+working. Start the updated server with existing unit paths before switching
+their `EnvironmentFile` paths to the new directory.
 
 Create an owner-readable environment file `server.env` (mode 0600) containing
 `USAGE_AUTH_TOKEN`, `USAGE_API_URL`, and `CURSOR_AUTH_PATH`. Use your server's
