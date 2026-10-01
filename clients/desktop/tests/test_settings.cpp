@@ -57,10 +57,14 @@ private slots:
         QVERIFY(service.save(settings).isEmpty()); settings.remoteCertificate = "not a certificate";
         QVERIFY(!service.save(settings).isEmpty()); QVERIFY(service.value().remoteCertificate.isEmpty());
         const auto invalidJson = QJsonDocument(QJsonObject{{"schemaVersion", 1}, {"connectionMode", "remote"},
-            {"url", "https://example.test"}, {"remoteCertificate", "invalid"}, {"shareBrowserSignIns", "false"}}).toJson();
+            {"url", "https://example.test"}, {"token", "kept-token"}, {"interval", 120}, {"primary", "Cursor"},
+            {"remoteCertificate", "invalid"}, {"shareBrowserSignIns", "false"}}).toJson();
         QVERIFY(writeFile(service.path(), invalidJson));
-        SettingsService invalid(service.path(), false); QVERIFY(!invalid.loadError().isEmpty());
-        QVERIFY(invalid.value().url.isEmpty()); QVERIFY(invalid.value().shareBrowserSignIns);
+        SettingsService invalid(service.path(), false); QVERIFY(invalid.loadError().isEmpty());
+        QVERIFY(!invalid.migrationNotice().isEmpty()); QVERIFY(invalid.value().remoteCertificate.isEmpty());
+        QCOMPARE(invalid.value().url, QStringLiteral("https://example.test")); QCOMPARE(invalid.value().token, QStringLiteral("kept-token"));
+        QCOMPARE(invalid.value().interval, 120); QCOMPARE(invalid.value().primary, QStringLiteral("Cursor"));
+        QVERIFY(invalid.value().shareBrowserSignIns);
     }
     void init()
     {

@@ -262,9 +262,9 @@ bool SettingsService::loadHeadroom()
     m_value.shareBrowserSignIns = readBool(m_document, "shareBrowserSignIns", true);
     if (!m_value.remoteCertificate.isEmpty()
         && (QSslCertificate(m_value.remoteCertificate.toUtf8()).isNull() || QUrl(url).scheme() != QStringLiteral("https"))) {
-        m_loadError = QStringLiteral("Settings contain an invalid server certificate and were not changed.");
-        m_blockImplicitWrites = true; m_value.remoteCertificate.clear(); m_value.url.clear(); m_value.token.clear();
-        return false;
+        // A damaged pin only costs a fresh token proof; keep every other setting.
+        m_value.remoteCertificate.clear();
+        m_migrationNotice = QStringLiteral("Ignored an invalid saved server certificate. Headroom will verify the server again.");
     }
     m_value.interval = qBound(15, readInt(m_document, "interval", 60), 900);
     m_value.notifications = readBool(m_document, "notifications", true);
