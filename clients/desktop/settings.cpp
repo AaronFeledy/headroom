@@ -8,7 +8,13 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QUrl>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 constexpr int CurrentSchemaVersion = 1;
@@ -68,10 +74,45 @@ bool createPrivateBackup(const QString &path, const QByteArray &contents)
     backup.close();
     return true;
 }
+
+bool copyPreviousSettings(const QString &source, const QString &target,
+                          const std::function<void()> &beforeInstall)
+{
+    const QString directory = QFileInfo(target).absolutePath();
+    if (!QDir().mkpath(directory)) return false;
+#ifndef Q_OS_WIN
+    if (!QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
+        return false;
+#endif
+    QFile previous(source);
+    if (!previous.open(QIODevice::ReadOnly)) return false;
+    const QByteArray contents = previous.readAll();
+    if (previous.error() != QFileDevice::NoError) return false;
+    previous.close();
+    QTemporaryFile temporary(QDir(directory).filePath(".settings-XXXXXX"));
+    if (!temporary.open()) return false;
+#ifndef Q_OS_WIN
+    if (!temporary.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) return false;
+#endif
+    if (temporary.write(contents) != contents.size() || !temporary.flush()) return false;
+    temporary.close();
+    if (temporary.error() != QFileDevice::NoError) return false;
+    if (beforeInstall) beforeInstall();
+    // Native no-replace installation is atomic, including a concurrent writer.
+#ifdef Q_OS_WIN
+    const bool installed = MoveFileW(reinterpret_cast<LPCWSTR>(temporary.fileName().utf16()),
+                                     reinterpret_cast<LPCWSTR>(target.utf16()));
+#else
+    const bool installed = ::link(QFile::encodeName(temporary.fileName()).constData(),
+                                  QFile::encodeName(target).constData()) == 0;
+#endif
+    return installed || QFileInfo::exists(target);
+}
 }
 
 SettingsService::SettingsService(QString path, bool allowAutomaticMigration,
-                                 Platform platform, QString legacyPath, QString defaultPathOverride)
+                                 Platform platform, QString legacyPath, QString defaultPathOverride,
+                                 QString previousPathOverride, std::function<void()> beforeMigrationInstall)
     : m_platform(platform), m_explicitPath(!path.isEmpty()),
       m_path(path.isEmpty() ? (defaultPathOverride.isEmpty() ? defaultPath(platform) : defaultPathOverride) : path),
       m_legacyPath(legacyPath.isEmpty() ? defaultLegacyPath() : std::move(legacyPath)),
@@ -81,8 +122,18 @@ SettingsService::SettingsService(QString path, bool allowAutomaticMigration,
     m_value.order = normalizeOrder({}, m_value.primary);
     if (QFileInfo::exists(m_path)) {
         loadHeadroom();
-    } else if (allowAutomaticMigration && !m_explicitPath && isWindows()) {
-        importLegacy();
+    } else if (allowAutomaticMigration && !m_explicitPath) {
+        const QString previous = previousPathOverride.isEmpty() ? previousDefaultPath(platform) : previousPathOverride;
+        if (QFileInfo::exists(previous)) {
+            if (!copyPreviousSettings(previous, m_path, beforeMigrationInstall)) {
+                m_path = previous;
+                m_legacyBackupPath = m_path + ".legacy.bak";
+                m_migrationNotice = "Settings could not be copied; this session is using the previous settings location.";
+            }
+            loadHeadroom();
+        } else if (isWindows()) {
+            importLegacy();
+        }
     }
 }
 
@@ -98,6 +149,29 @@ bool SettingsService::isWindows() const
 }
 
 QString SettingsService::defaultPath(Platform platform)
+{
+    bool windows = platform == Platform::Windows;
+#ifdef Q_OS_WIN
+    if (platform == Platform::Current) windows = true;
+#endif
+    if (windows) {
+        QString base = qEnvironmentVariable("APPDATA");
+        if (base.isEmpty())
+            base = QFileInfo(QFileInfo(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).path()).path();
+        return QDir(base).filePath("Headroom/settings.json");
+    }
+    const QString xdg = qEnvironmentVariable("XDG_CONFIG_HOME");
+    return QDir(xdg.isEmpty() ? QDir::homePath() + "/.config" : xdg).filePath("headroom/settings.json");
+}
+
+QString SettingsService::instanceIdentityPath()
+{
+    // Keep the pre-move identity so old/new generations and the CLI bridge find
+    // the same running instance during updates. Only hashed; nothing is created here.
+    return previousDefaultPath();
+}
+
+QString SettingsService::previousDefaultPath(Platform platform)
 {
     bool mac = platform == Platform::Mac;
     bool windows = platform == Platform::Windows;

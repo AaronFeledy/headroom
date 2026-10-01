@@ -22,6 +22,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     m_primary = loaded.primary; m_order = loaded.order;
     if (!m_settingsService.loadError().isEmpty()) m_message = m_settingsService.loadError();
     log("App", "Usage monitor started.");
+    if (!m_settingsService.migrationNotice().isEmpty()) log("Settings", m_settingsService.migrationNotice());
     m_poll.setSingleShot(true);
     m_poll.setTimerType(Qt::PreciseTimer);
     connect(&m_poll, &QTimer::timeout, this, &Controller::refresh);

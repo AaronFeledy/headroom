@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
@@ -73,9 +74,9 @@ func Test_Load_Unix_migration_is_idempotent(t *testing.T) {
 	requireLogLevels(t, logs)
 }
 
-func Test_Load_Unix_existing_new_directory_prevents_migration(t *testing.T) {
+func Test_Load_Unix_existing_new_directory_merges_without_overwriting(t *testing.T) {
 	for _, newConfig := range []bool{true, false} {
-		t.Run(map[bool]string{true: "new wins", false: "legacy fallback"}[newConfig], func(t *testing.T) {
+		t.Run(map[bool]string{true: "new wins", false: "merge succeeds"}[newConfig], func(t *testing.T) {
 			// Given
 			base := t.TempDir()
 			legacy, next := filepath.Join(base, "claude-usage-widget"), filepath.Join(base, "headroom")
@@ -83,6 +84,8 @@ func Test_Load_Unix_existing_new_directory_prevents_migration(t *testing.T) {
 			if err := os.Mkdir(next, 0o700); err != nil {
 				t.Fatal(err)
 			}
+			writeMigrationFile(t, filepath.Join(next, "settings.json"), "desktop fixture")
+			writeMigrationFile(t, filepath.Join(legacy, "server.env"), "private fixture")
 			want := "127.0.0.1:7123"
 			if newConfig {
 				writeMigrationFile(t, filepath.Join(next, "config.yaml"), nextYAML)
@@ -94,17 +97,32 @@ func Test_Load_Unix_existing_new_directory_prevents_migration(t *testing.T) {
 			requireMigrationLoad(t, config.LoadOptions{Env: []string{"XDG_CONFIG_HOME=" + base}, Logger: logger}, "linux", want)
 
 			// Then
-			info, err := os.Lstat(legacy)
-			if err != nil || !info.IsDir() {
-				t.Fatalf("legacy directory changed: %v", err)
-			}
+			requireMigrationFile(t, filepath.Join(next, "settings.json"), "desktop fixture")
+			requireMigrationFile(t, filepath.Join(next, "server.env"), "private fixture")
 			requireMigrationFile(t, filepath.Join(legacy, "config.yaml"), legacyYAML)
 			if newConfig {
+				info, err := os.Lstat(legacy)
+				if err != nil || !info.IsDir() {
+					t.Fatalf("legacy directory changed: %v", err)
+				}
 				requireMigrationFile(t, filepath.Join(next, "config.yaml"), nextYAML)
+				requireLogLevels(t, logs, slog.LevelWarn, slog.LevelWarn)
+				if !strings.Contains(logs.String(), "names=config.yaml") {
+					t.Fatalf("missing conflict names: %s", logs)
+				}
 			} else {
-				requireMissing(t, filepath.Join(next, "config.yaml"))
+				target, err := os.Readlink(legacy)
+				if err != nil || target != "headroom" {
+					t.Fatalf("legacy link=%q, err=%v", target, err)
+				}
+				for path, mode := range map[string]os.FileMode{next: 0o700, filepath.Join(next, "config.yaml"): 0o600, filepath.Join(next, "server.env"): 0o600} {
+					info, err := os.Stat(path)
+					if err != nil || info.Mode().Perm() != mode {
+						t.Fatalf("mode of %s: info=%v, err=%v", path, info, err)
+					}
+				}
+				requireLogLevels(t, logs, slog.LevelInfo)
 			}
-			requireLogLevels(t, logs, slog.LevelWarn)
 		})
 	}
 }
