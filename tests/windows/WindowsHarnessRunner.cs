@@ -40,6 +40,11 @@ internal static class WindowsHarnessRunner
         await snapshotTests.Test_ReaderContinuesAfterMalformedProfile();
         await snapshotTests.Test_ReaderDiscoversFirefoxProfilesLazily();
         await snapshotTests.Test_HelperProtocolAcceptsOnlyKnownProviderAndBoundsOutput();
+        await snapshotTests.Test_HelperJsonShapeSourceAndNulls();
+        await snapshotTests.Test_InstalledBrowsersOrderAndSourcePriority();
+        await snapshotTests.Test_ChromiumStatusesAndProfileAggregation();
+        await snapshotTests.Test_LockedAndStatusPrecedence();
+        await snapshotTests.Test_FirefoxDefaultsAbsolutePathsAndStatuses();
         await snapshotTests.Test_ReaderDecryptsNativeDpapiAndAesFixturesOnWindows();
         var iconOwnershipTests = new IconOwnershipTests();
         await iconOwnershipTests.Test_NativeIconLeaseDisposesHandleExactlyOnce();

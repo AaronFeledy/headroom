@@ -3,6 +3,7 @@ using ClaudeUsageWidget.Services;
 using Headroom.CredentialHelper;
 using System.Text;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 internal sealed class BrowserCookieSnapshotTests
 {
@@ -121,6 +122,129 @@ internal sealed class BrowserCookieSnapshotTests
         return Task.CompletedTask;
     }
 
+    public Task Test_HelperJsonShapeSourceAndNulls()
+    {
+        using var fixture = BrowserFixture.Create();
+        fixture.AddChromiumProfile("Default", new ChromiumCookie("cursor.com", "WorkosCursorSessionToken", "v20blocked"u8.ToArray(), fixture.FutureChromium));
+        fixture.AddFirefoxProfile("default", new FirefoxCookie("cursor.com", "WorkosCursorSessionToken", "synthetic-firefox", fixture.FutureUnix));
+        var output = new StringWriter();
+        AssertEqual(0, CredentialHelperProtocol.Run(["cursor"], fixture.Reader(), output));
+        AssertEqual("{\"provider\":\"cursor\",\"cookie\":\"WorkosCursorSessionToken=synthetic-firefox\",\"source\":\"Firefox\",\"checked\":[{\"name\":\"Chrome\",\"status\":\"encrypted\"},{\"name\":\"Firefox\",\"status\":\"signed_in\"}]}", output.ToString());
+        output = new StringWriter();
+        AssertEqual(0, CredentialHelperProtocol.Run(["grok"], fixture.Reader(), output));
+        AssertEqual("{\"provider\":\"grok\",\"cookie\":null,\"source\":null,\"checked\":[{\"name\":\"Chrome\",\"status\":\"signed_out\"},{\"name\":\"Firefox\",\"status\":\"signed_out\"}]}", output.ToString());
+        using var json = JsonDocument.Parse(output.ToString());
+        AssertEqual("provider,cookie,source,checked", string.Join(',', json.RootElement.EnumerateObject().Select(property => property.Name)));
+        fixture.AssertNoSnapshots();
+        return Task.CompletedTask;
+    }
+
+    public Task Test_InstalledBrowsersOrderAndSourcePriority()
+    {
+        using var fixture = BrowserFixture.Create();
+        var edge = Directory.CreateDirectory(Path.Combine(fixture.Root, "edge")).FullName;
+        var brave = Directory.CreateDirectory(Path.Combine(fixture.Root, "brave")).FullName;
+        fixture.AddChromiumProfile("Default", new ChromiumCookie("grok.com", "sso", Encoding.UTF8.GetBytes("chrome"), fixture.FutureChromium));
+        fixture.AddChromiumProfileAt(edge, "Default", new ChromiumCookie("grok.com", "sso", Encoding.UTF8.GetBytes("edge"), fixture.FutureChromium));
+        fixture.AddChromiumProfileAt(brave, "Default", new ChromiumCookie("grok.com", "sso", Encoding.UTF8.GetBytes("brave"), fixture.FutureChromium));
+        fixture.AddFirefoxProfile("default", new FirefoxCookie("grok.com", "sso", "firefox", fixture.FutureUnix));
+        var roots = new BrowserCookieRoot[] { new("Brave", brave), new("Edge", edge), new("Chrome", fixture.ChromiumRoot), new("Absent", Path.Combine(fixture.Root, "absent")) };
+        var result = fixture.Reader(roots).ReadGrokCookies();
+        AssertEqual("Chrome,Edge,Brave,Firefox", string.Join(',', result.Checked.Select(check => check.Name)));
+        AssertEqual(true, result.Checked.All(check => check.Status == "signed_in"));
+        AssertEqual("Chrome", result.Source);
+        AssertEqual("sso=chrome", result.Cookie);
+        AssertEqual("Edge", fixture.Reader([new("Edge", edge), new("Brave", brave)]).ReadGrokCookies().Source);
+        AssertEqual("Brave", fixture.Reader([new("Brave", brave)]).ReadGrokCookies().Source);
+        fixture.AssertNoSnapshots();
+        return Task.CompletedTask;
+    }
+
+    public Task Test_ChromiumStatusesAndProfileAggregation()
+    {
+        foreach (var scenario in new[] { "signed_out", "expired", "encrypted", "aes_failure", "dpapi_failure", "unreadable" })
+        {
+            using var fixture = BrowserFixture.Create(bytes => bytes.Length == 32 ? bytes : throw new CryptographicException());
+            if (scenario == "unreadable")
+            {
+                var network = Directory.CreateDirectory(Path.Combine(fixture.ChromiumRoot, "Default", "Network")).FullName;
+                File.WriteAllText(Path.Combine(network, "Cookies"), "invalid sqlite");
+            }
+            else
+            {
+                var value = scenario == "aes_failure" ? fixture.EncryptAes("synthetic") : Encoding.UTF8.GetBytes(scenario == "encrypted" ? "v20blocked" : "legacy");
+                if (scenario == "aes_failure") value[^1] ^= 1;
+                fixture.AddChromiumProfile("Default", new ChromiumCookie(scenario == "signed_out" ? "unrelated.com" : "cursor.com", "WorkosCursorSessionToken", value,
+                    scenario == "expired" ? fixture.PastChromium : fixture.FutureChromium));
+            }
+            var expected = scenario is "aes_failure" or "dpapi_failure" ? "encrypted" : scenario;
+            var result = fixture.Reader().ReadCursorCookies();
+            AssertEqual(expected, result.Checked.Single().Status);
+            AssertEqual<string?>(null, result.Cookie);
+            AssertEqual<string?>(null, result.Source);
+            fixture.AddChromiumProfile("Profile 1", new ChromiumCookie("cursor.com", "WorkosCursorSessionToken", fixture.EncryptAes("usable"), fixture.FutureChromium));
+            result = fixture.Reader().ReadCursorCookies();
+            AssertEqual("signed_in", result.Checked.Single().Status);
+            AssertEqual("Chrome", result.Source);
+            AssertEqual("WorkosCursorSessionToken=usable", fixture.Reader().ReadCursorCookieHeader());
+            fixture.AssertNoSnapshots();
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task Test_LockedAndStatusPrecedence()
+    {
+        foreach (var failure in new Exception[] { new UnauthorizedAccessException(), new IOException("sharing", unchecked((int)0x80070020)),
+            new IOException("locking", unchecked((int)0x80070021)), new IOException("other"), new SqliteException("busy", 5), new SqliteException("locked", 6) })
+        {
+            using var fixture = BrowserFixture.Create();
+            fixture.AddChromiumProfile("Default");
+            var expected = failure is IOException && (failure.HResult & 0xffff) is not (32 or 33) ? "unreadable" : "locked";
+            var reader = fixture.Reader(snapshotFactory: path => Path.GetDirectoryName(Path.GetDirectoryName(path)) == Path.Combine(fixture.ChromiumRoot, "Default")
+                ? throw failure : BrowserCookieDatabaseSnapshot.Create(path, fixture.SnapshotRoot));
+            AssertEqual(expected, reader.ReadCursorCookies().Checked.Single().Status);
+            fixture.AddChromiumProfile("Profile 1", new ChromiumCookie("cursor.com", "WorkosCursorSessionToken", "v20blocked"u8.ToArray(), fixture.FutureChromium));
+            AssertEqual("encrypted", reader.ReadCursorCookies().Checked.Single().Status);
+            fixture.AssertNoSnapshots();
+        }
+        using (var fixture = BrowserFixture.Create())
+        {
+            fixture.AddChromiumProfile("Default");
+            fixture.AddChromiumProfile("Profile 1", new ChromiumCookie("cursor.com", "WorkosCursorSessionToken", "v20expired"u8.ToArray(), fixture.PastChromium));
+            var unreadable = fixture.Reader(snapshotFactory: path => path.Contains("Default", StringComparison.Ordinal)
+                ? throw new InvalidOperationException() : BrowserCookieDatabaseSnapshot.Create(path, fixture.SnapshotRoot));
+            AssertEqual("expired", unreadable.ReadCursorCookies().Checked.Single().Status);
+            var locked = fixture.Reader(snapshotFactory: path => path.Contains("Default", StringComparison.Ordinal)
+                ? throw new UnauthorizedAccessException() : BrowserCookieDatabaseSnapshot.Create(path, fixture.SnapshotRoot));
+            AssertEqual("locked", locked.ReadCursorCookies().Checked.Single().Status);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task Test_FirefoxDefaultsAbsolutePathsAndStatuses()
+    {
+        using var fixture = BrowserFixture.Create();
+        fixture.AddFirefoxProfile("a-first", new FirefoxCookie("cursor.com", "WorkosCursorSessionToken", "alphabetical", fixture.FutureUnix));
+        fixture.AddFirefoxProfile("z-default", new FirefoxCookie("cursor.com", "WorkosCursorSessionToken", "preferred", fixture.FutureUnix));
+        fixture.AddFirefoxProfile("m-expired", new FirefoxCookie("grok.com", "sso", "expired", fixture.FutureUnix - 7200));
+        var absolute = Path.Combine(fixture.Root, "external-default");
+        fixture.AddFirefoxProfile(absolute, new FirefoxCookie("cursor.com", "WorkosCursorSessionToken", "absolute", fixture.FutureUnix));
+        var root = Path.GetDirectoryName(fixture.FirefoxRoot)!;
+        File.WriteAllText(Path.Combine(root, "installs.ini"), "[InstallOne]\nDefault=Profiles/z-default\n[broken\ninvalid\n");
+        File.WriteAllText(Path.Combine(root, "profiles.ini"), $"[Profile0]\nPath={absolute}\nIsRelative=0\nDefault=1\n");
+        AssertEqual("z-default,external-default,a-first,m-expired", string.Join(',', WindowsBrowserCookieReaderOptions.DiscoverFirefoxProfiles(root).Select(Path.GetFileName)));
+        AssertEqual("WorkosCursorSessionToken=preferred", fixture.Reader().ReadCursorCookieHeader());
+        AssertEqual("expired", fixture.Reader().ReadGrokCookies().Checked.Single(check => check.Name == "Firefox").Status);
+        File.Delete(Path.Combine(root, "installs.ini"));
+        AssertEqual("WorkosCursorSessionToken=absolute", fixture.Reader().ReadCursorCookieHeader());
+        File.WriteAllText(Path.Combine(root, "profiles.ini"), "malformed\n[Profile0]\nPath=missing\nDefault=1\n");
+        AssertEqual("a-first,m-expired,z-default", string.Join(',', WindowsBrowserCookieReaderOptions.DiscoverFirefoxProfiles(root).Select(Path.GetFileName)));
+        var locked = fixture.Reader(snapshotFactory: _ => throw new UnauthorizedAccessException());
+        AssertEqual("locked", locked.ReadCursorCookies().Checked.Single(check => check.Name == "Firefox").Status);
+        fixture.AssertNoSnapshots();
+        return Task.CompletedTask;
+    }
+
     public Task Test_ReaderDecryptsNativeDpapiAndAesFixturesOnWindows()
     {
 #if WINDOWS
@@ -153,10 +277,12 @@ internal sealed class BrowserCookieSnapshotTests
     }
 }
 
-internal sealed class ProtocolCookieReader(string value) : IProviderCookieReader
+internal sealed class ProtocolCookieReader(string value) : IBrowserCookieReader
 {
     public string? ReadCursorCookieHeader() => value;
     public string? ReadGrokCookieHeader() => value;
+    public BrowserCookieReadResult ReadCursorCookies() => new(value, "Chrome", [new("Chrome", "signed_in")]);
+    public BrowserCookieReadResult ReadGrokCookies() => ReadCursorCookies();
 }
 
 internal sealed record ChromiumCookie(string Host, string Name, byte[] Value, long Expiry);
@@ -180,7 +306,7 @@ internal sealed class BrowserFixture : IDisposable
     {
         Root = root;
         ChromiumRoot = Directory.CreateDirectory(Path.Combine(root, "chromium")).FullName;
-        FirefoxRoot = Directory.CreateDirectory(Path.Combine(root, "firefox")).FullName;
+        FirefoxRoot = Directory.CreateDirectory(Path.Combine(root, "firefox", "Profiles")).FullName;
         SnapshotRoot = Directory.CreateDirectory(Path.Combine(root, "snapshots")).FullName;
         _unprotect = unprotect;
         var encoded = Convert.ToBase64String("DPAPI"u8.ToArray().Concat(protectMasterKey(_key)).ToArray());
@@ -191,15 +317,16 @@ internal sealed class BrowserFixture : IDisposable
         new(Directory.CreateTempSubdirectory("headroom-browser-fixture-").FullName,
             unprotect ?? (bytes => bytes), protectMasterKey ?? (bytes => bytes));
 
-    public WindowsBrowserCookieReader Reader()
+    public WindowsBrowserCookieReader Reader(IReadOnlyList<BrowserCookieRoot>? roots = null, Func<string, BrowserCookieDatabaseSnapshot>? snapshotFactory = null)
     {
         return new WindowsBrowserCookieReader(new WindowsBrowserCookieReaderOptions
         {
-            ChromiumRoots = [new BrowserCookieRoot("Fixture", ChromiumRoot)],
-            FirefoxProfiles = () => Directory.EnumerateDirectories(FirefoxRoot).Reverse().ToArray(),
+            ChromiumRoots = roots ?? [new BrowserCookieRoot("Chrome", ChromiumRoot)],
+            FirefoxProfiles = () => WindowsBrowserCookieReaderOptions.DiscoverFirefoxProfiles(Path.GetDirectoryName(FirefoxRoot)!),
             UtcNow = () => Now,
             Unprotect = _unprotect,
-            TemporaryRoot = SnapshotRoot
+            TemporaryRoot = SnapshotRoot,
+            SnapshotFactory = snapshotFactory
         });
     }
 
@@ -221,8 +348,11 @@ internal sealed class BrowserFixture : IDisposable
     }
 
     public void AddChromiumProfile(string profileName, params ChromiumCookie[] cookies)
+        => AddChromiumProfileAt(ChromiumRoot, profileName, cookies);
+
+    public void AddChromiumProfileAt(string root, string profileName, params ChromiumCookie[] cookies)
     {
-        var network = Directory.CreateDirectory(Path.Combine(ChromiumRoot, profileName, "Network")).FullName;
+        var network = Directory.CreateDirectory(Path.Combine(root, profileName, "Network")).FullName;
         var connection = OpenWal(Path.Combine(network, "Cookies"));
         using (var create = connection.CreateCommand())
         {

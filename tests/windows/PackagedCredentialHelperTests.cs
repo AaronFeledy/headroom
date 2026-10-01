@@ -2,6 +2,11 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
+if (!OperatingSystem.IsWindows())
+{
+    Console.WriteLine("SKIP: Packaged Windows helper execution requires Windows.");
+    return 0;
+}
 if (args.Length != 1 || !File.Exists(args[0])) return 2;
 var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -46,7 +51,11 @@ try
     if (helper.ExitCode != 0 || error.Length != 0) throw new Exception($"helper failed with {helper.ExitCode}");
     using var document = JsonDocument.Parse(output);
     if (document.RootElement.GetProperty("provider").GetString() != "grok" ||
-        document.RootElement.GetProperty("cookie").GetString() != "sso=synthetic-package-cookie")
+        document.RootElement.GetProperty("cookie").GetString() != "sso=synthetic-package-cookie" ||
+        document.RootElement.GetProperty("source").GetString() != "Firefox" ||
+        string.Join(',', document.RootElement.EnumerateObject().Select(property => property.Name)) != "provider,cookie,source,checked" ||
+        document.RootElement.GetProperty("checked").EnumerateArray().Last().GetProperty("name").GetString() != "Firefox" ||
+        document.RootElement.GetProperty("checked").EnumerateArray().Last().GetProperty("status").GetString() != "signed_in")
         throw new Exception("helper did not read the generated SQLite fixture");
     if (Directory.EnumerateFileSystemEntries(snapshots).Any()) throw new Exception("helper left a browser snapshot behind");
     return 0;

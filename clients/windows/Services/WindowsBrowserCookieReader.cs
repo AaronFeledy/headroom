@@ -6,6 +6,14 @@ using Microsoft.Data.Sqlite;
 namespace ClaudeUsageWidget.Services;
 
 public sealed record BrowserCookieRoot(string Name, string UserDataPath);
+public sealed record BrowserCookieCheck(string Name, string Status);
+public sealed record BrowserCookieReadResult(string? Cookie, string? Source, IReadOnlyList<BrowserCookieCheck> Checked);
+
+public interface IBrowserCookieReader : IProviderCookieReader
+{
+    BrowserCookieReadResult ReadCursorCookies();
+    BrowserCookieReadResult ReadGrokCookies();
+}
 
 public sealed class WindowsBrowserCookieReaderOptions
 {
@@ -14,12 +22,14 @@ public sealed class WindowsBrowserCookieReaderOptions
     public required Func<DateTimeOffset> UtcNow { get; init; }
     public required Func<byte[], byte[]> Unprotect { get; init; }
     public string? TemporaryRoot { get; init; }
+    public Func<bool>? FirefoxInstalled { get; init; }
+    public Func<string, BrowserCookieDatabaseSnapshot>? SnapshotFactory { get; init; }
 
     public static WindowsBrowserCookieReaderOptions ForCurrentUser(string? temporaryRoot = null)
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var firefoxRoot = Path.Combine(roaming, "Mozilla", "Firefox", "Profiles");
+        var firefoxRoot = Path.Combine(roaming, "Mozilla", "Firefox");
         return new WindowsBrowserCookieReaderOptions
         {
             ChromiumRoots =
@@ -28,13 +38,76 @@ public sealed class WindowsBrowserCookieReaderOptions
                 new("Edge", Path.Combine(local, "Microsoft", "Edge", "User Data")),
                 new("Brave", Path.Combine(local, "BraveSoftware", "Brave-Browser", "User Data"))
             ],
-            FirefoxProfiles = () => Directory.Exists(firefoxRoot)
-                ? Directory.EnumerateDirectories(firefoxRoot).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToArray()
-                : [],
+            FirefoxProfiles = () => DiscoverFirefoxProfiles(firefoxRoot),
+            FirefoxInstalled = () => Directory.Exists(firefoxRoot),
             UtcNow = () => DateTimeOffset.UtcNow,
             Unprotect = DefaultUnprotect,
             TemporaryRoot = temporaryRoot
         };
+    }
+
+    public static IReadOnlyList<string> DiscoverFirefoxProfiles(string root)
+    {
+        var preferred = new List<string>();
+        foreach (var section in ReadIni(Path.Combine(root, "installs.ini")))
+            if (section.TryGetValue("Default", out var path)) AddProfile(path, true);
+        var profiles = ReadIni(Path.Combine(root, "profiles.ini"));
+        foreach (var section in profiles)
+            if (section.GetValueOrDefault("Default") == "1" && section.TryGetValue("Path", out var path))
+                AddProfile(path, section.GetValueOrDefault("IsRelative") != "0");
+        var remaining = new List<string>();
+        foreach (var section in profiles)
+            if (section.TryGetValue("Path", out var path))
+            {
+                var resolved = ResolveProfile(path, section.GetValueOrDefault("IsRelative") != "0");
+                if (resolved != null) remaining.Add(resolved);
+            }
+        var directory = Path.Combine(root, "Profiles");
+        if (Directory.Exists(directory)) remaining.AddRange(Directory.EnumerateDirectories(directory));
+        return preferred.Concat(remaining.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        void AddProfile(string path, bool relative)
+        {
+            var resolved = ResolveProfile(path, relative);
+            if (resolved != null) preferred.Add(resolved);
+        }
+
+        string? ResolveProfile(string path, bool relative)
+        {
+            try
+            {
+                var resolved = Path.GetFullPath(relative ? Path.Combine(root, path) : path);
+                return Directory.Exists(resolved) ? resolved : null;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+    }
+
+    private static List<Dictionary<string, string>> ReadIni(string path)
+    {
+        var sections = new List<Dictionary<string, string>>();
+        try
+        {
+            Dictionary<string, string>? section = null;
+            foreach (var raw in File.ReadAllLines(path))
+            {
+                var line = raw.Trim();
+                if (line.StartsWith(';') || line.StartsWith('#')) continue;
+                if (line.StartsWith('[') && line.EndsWith(']'))
+                {
+                    section = new(StringComparer.OrdinalIgnoreCase);
+                    sections.Add(section);
+                }
+                else if (section != null && line.IndexOf('=') is var equals && equals > 0)
+                    section[line[..equals].Trim()] = line[(equals + 1)..].Trim();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return sections;
     }
 
     private static byte[] DefaultUnprotect(byte[] bytes)
@@ -47,21 +120,19 @@ public sealed class WindowsBrowserCookieReaderOptions
     }
 }
 
-public class WindowsBrowserCookieReader : IProviderCookieReader
+public class WindowsBrowserCookieReader : IBrowserCookieReader
 {
     private static readonly BrowserCookieQuery CursorCookies = new(
         "Cursor",
         "(host_key = 'cursor.com' OR host_key = 'cursor.sh' OR host_key LIKE '%.cursor.com' OR host_key LIKE '%.cursor.sh') " +
-        "AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token') " +
-        "AND (expires_utc = 0 OR expires_utc > $now)",
+        "AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')",
         "(host = 'cursor.com' OR host = 'cursor.sh' OR host LIKE '%.cursor.com' OR host LIKE '%.cursor.sh') " +
-        "AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token') " +
-        "AND (expiry = 0 OR expiry > $now)");
+        "AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')");
 
     private static readonly BrowserCookieQuery GrokCookies = new(
         "Grok",
-        "(host_key = 'grok.com' OR host_key LIKE '%.grok.com') AND name = 'sso' AND (expires_utc = 0 OR expires_utc > $now)",
-        "(host = 'grok.com' OR host LIKE '%.grok.com') AND name = 'sso' AND (expiry = 0 OR expiry > $now)");
+        "(host_key = 'grok.com' OR host_key LIKE '%.grok.com') AND name = 'sso'",
+        "(host = 'grok.com' OR host LIKE '%.grok.com') AND name = 'sso'");
 
     private readonly DebugService? _debugService;
     private readonly WindowsBrowserCookieReaderOptions _options;
@@ -77,52 +148,48 @@ public class WindowsBrowserCookieReader : IProviderCookieReader
         _debugService = debugService;
     }
 
-    public virtual string? ReadCursorCookieHeader() => ReadCookieHeader(CursorCookies);
-    public virtual string? ReadGrokCookieHeader() => ReadCookieHeader(GrokCookies);
+    public virtual string? ReadCursorCookieHeader() => ReadCursorCookies().Cookie;
+    public virtual string? ReadGrokCookieHeader() => ReadGrokCookies().Cookie;
+    public BrowserCookieReadResult ReadCursorCookies() => ReadCookies(CursorCookies);
+    public BrowserCookieReadResult ReadGrokCookies() => ReadCookies(GrokCookies);
 
-    private string? ReadCookieHeader(BrowserCookieQuery query)
+    private BrowserCookieReadResult ReadCookies(BrowserCookieQuery query)
     {
-        foreach (var root in _options.ChromiumRoots)
+        string? cookie = null;
+        string? source = null;
+        var checks = new List<BrowserCookieCheck>();
+        foreach (var root in _options.ChromiumRoots.OrderBy(root => root.Name switch { "Chrome" => 0, "Edge" => 1, "Brave" => 2, _ => 3 }))
         {
-            try
-            {
-                var cookieHeader = TryReadChromiumCookieHeader(root, query);
-                if (!string.IsNullOrWhiteSpace(cookieHeader)) return cookieHeader;
-            }
-            catch (Exception ex)
-            {
-                _debugService?.LogWarning(query.Provider, $"Cookie import failed for {root.Name}", ex.GetType().Name);
-            }
+            if (!Directory.Exists(root.UserDataPath)) continue;
+            var result = ReadSafely(() => ReadChromiumCookies(root, query));
+            AddResult(root.Name, result);
         }
+        var firefox = ReadSafely(() =>
+        {
+            var profiles = _options.FirefoxProfiles();
+            if (profiles.Count == 0 && !(_options.FirefoxInstalled?.Invoke() ?? false)) return new CookieResult(null, "absent");
+            var result = new CookieResult(null, "signed_out");
+            foreach (var profile in profiles)
+                result = Merge(result, ReadSafely(() => ReadDatabase(Path.Combine(profile, "cookies.sqlite"), [], query, true)));
+            return result;
+        });
+        if (firefox.Status != "absent") AddResult("Firefox", firefox);
+        return new(cookie, source, checks);
 
-        IReadOnlyList<string> firefoxProfiles;
-        try
+        void AddResult(string name, CookieResult result)
         {
-            firefoxProfiles = _options.FirefoxProfiles();
-        }
-        catch (Exception ex)
-        {
-            _debugService?.LogWarning(query.Provider, "Cookie import failed for Firefox", ex.GetType().Name);
-            return null;
-        }
-        foreach (var profile in firefoxProfiles.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
-        {
-            try
+            checks.Add(new(name, result.Status));
+            _debugService?.LogInfo(query.Provider, $"Browser {name}: {result.Status}");
+            if (cookie == null && result.Cookie != null)
             {
-                var cookieHeader = TryReadFirefoxCookieHeader(profile, query);
-                if (!string.IsNullOrWhiteSpace(cookieHeader)) return cookieHeader;
-            }
-            catch (Exception ex)
-            {
-                _debugService?.LogWarning(query.Provider, "Cookie import failed for Firefox", ex.GetType().Name);
+                cookie = result.Cookie;
+                source = name;
             }
         }
-        return null;
     }
 
-    private string? TryReadChromiumCookieHeader(BrowserCookieRoot root, BrowserCookieQuery query)
+    private CookieResult ReadChromiumCookies(BrowserCookieRoot root, BrowserCookieQuery query)
     {
-        if (!Directory.Exists(root.UserDataPath)) return null;
         byte[] masterKey;
         try
         {
@@ -132,71 +199,73 @@ public class WindowsBrowserCookieReader : IProviderCookieReader
         {
             masterKey = [];
         }
+        var result = new CookieResult(null, "signed_out");
         foreach (var cookiePath in EnumerateCookieDatabases(root.UserDataPath))
-        {
-            try
-            {
-                var cookieHeader = TryReadCookiesFromDatabase(cookiePath, masterKey, query);
-                if (!string.IsNullOrWhiteSpace(cookieHeader))
-                {
-                    _debugService?.LogInfo(query.Provider, $"Using browser cookies from {root.Name}");
-                    return cookieHeader;
-                }
-            }
-            catch (Exception ex)
-            {
-                _debugService?.LogWarning(query.Provider, $"Cookie import failed for {root.Name}", ex.GetType().Name);
-            }
-        }
-        return null;
+            result = Merge(result, ReadSafely(() => ReadDatabase(cookiePath, masterKey, query, false)));
+        return result;
     }
 
-    private string? TryReadFirefoxCookieHeader(string profilePath, BrowserCookieQuery query)
+    private CookieResult ReadDatabase(string cookieDbPath, byte[] masterKey, BrowserCookieQuery query, bool firefox)
     {
-        var cookieDbPath = Path.Combine(profilePath, "cookies.sqlite");
-        if (!File.Exists(cookieDbPath)) return null;
-        using var snapshot = BrowserCookieDatabaseSnapshot.Create(cookieDbPath, _options.TemporaryRoot);
+        if (!File.Exists(cookieDbPath)) return new(null, "signed_out");
+        using var snapshot = _options.SnapshotFactory != null ? _options.SnapshotFactory(cookieDbPath)
+            : BrowserCookieDatabaseSnapshot.Create(cookieDbPath, _options.TemporaryRoot);
         using var connection = OpenReadOnlyCookieDatabase(snapshot.DatabasePath);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT host, name, value FROM moz_cookies WHERE {query.FirefoxWhere} " +
-            "ORDER BY LENGTH(host) DESC, expiry DESC, lastAccessed DESC";
-        command.Parameters.AddWithValue("$now", _options.UtcNow().ToUnixTimeSeconds());
+        command.CommandText = firefox
+            ? $"SELECT host, name, value, expiry FROM moz_cookies WHERE {query.FirefoxWhere} ORDER BY LENGTH(host) DESC, expiry DESC, lastAccessed DESC"
+            : $"SELECT host_key, name, encrypted_value, expires_utc FROM cookies WHERE {query.ChromiumWhere} ORDER BY LENGTH(host_key) DESC, expires_utc DESC";
+        var now = firefox ? _options.UtcNow().ToUnixTimeSeconds() : ChromiumTimestamp(_options.UtcNow());
         using var reader = command.ExecuteReader();
         var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        var expired = false;
+        var active = false;
+        var encrypted = false;
         while (reader.Read())
         {
+            var expiry = reader.GetInt64(3);
+            if (expiry != 0 && expiry <= now) { expired = true; continue; }
+            active = true;
             var name = reader.GetString(1);
             if (cookies.ContainsKey(name)) continue;
-            var value = reader.GetString(2);
+            string? value;
+            if (firefox) value = reader.GetString(2);
+            else
+            {
+                var encryptedValue = (byte[])reader[2];
+                try { value = DecryptCookieValue(encryptedValue, masterKey); }
+                catch { value = null; }
+                if (value == null) encrypted = true;
+            }
             if (!string.IsNullOrWhiteSpace(value)) cookies[name] = value;
         }
-        if (cookies.Count == 0) return null;
-        _debugService?.LogInfo(query.Provider, "Using browser cookies from Firefox");
-        return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
+        return cookies.Count > 0
+            ? new(string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}")), "signed_in")
+            : new(null, encrypted ? "encrypted" : expired && !active ? "expired" : "signed_out");
     }
 
-    private string? TryReadCookiesFromDatabase(string cookieDbPath, byte[] masterKey, BrowserCookieQuery query)
+    private static CookieResult ReadSafely(Func<CookieResult> read)
     {
-        using var snapshot = BrowserCookieDatabaseSnapshot.Create(cookieDbPath, _options.TemporaryRoot);
-        using var connection = OpenReadOnlyCookieDatabase(snapshot.DatabasePath);
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT host_key, name, encrypted_value FROM cookies WHERE {query.ChromiumWhere} " +
-            "ORDER BY LENGTH(host_key) DESC, expires_utc DESC";
-        command.Parameters.AddWithValue("$now", ChromiumTimestamp(_options.UtcNow()));
-        using var reader = command.ExecuteReader();
-        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
-        while (reader.Read())
+        try { return read(); }
+        catch (Exception ex)
         {
-            var name = reader.GetString(1);
-            if (cookies.ContainsKey(name)) continue;
-            var encryptedValue = (byte[])reader[2];
-            var decryptedValue = DecryptCookieValue(encryptedValue, masterKey);
-            if (!string.IsNullOrWhiteSpace(decryptedValue)) cookies[name] = decryptedValue;
+            var locked = ex is UnauthorizedAccessException ||
+                ex is IOException && (ex.HResult & 0xffff) is 5 or 13 or 32 or 33 ||
+                ex is SqliteException sqlite && sqlite.SqliteErrorCode is 3 or 5 or 6 or 23;
+            return new(null, locked ? "locked" : "unreadable");
         }
-        return cookies.Count == 0 ? null : string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
     }
+
+    private static CookieResult Merge(CookieResult first, CookieResult next) =>
+        first.Cookie != null || StatusRank(first.Status) >= StatusRank(next.Status) ? first : next;
+
+    private static int StatusRank(string status) => status switch
+    {
+        "signed_in" => 6, "encrypted" => 5, "locked" => 4, "expired" => 3, "unreadable" => 2, _ => 1
+    };
+
+    private sealed record CookieResult(string? Cookie, string Status);
 
     private static SqliteConnection OpenReadOnlyCookieDatabase(string path)
     {
@@ -216,14 +285,14 @@ public class WindowsBrowserCookieReader : IProviderCookieReader
         return _options.Unprotect(encryptedKey.AsSpan(5).ToArray());
     }
 
-    private string DecryptCookieValue(byte[] encryptedValue, byte[] masterKey)
+    private string? DecryptCookieValue(byte[] encryptedValue, byte[] masterKey)
     {
         if (encryptedValue.Length == 0) return string.Empty;
         var prefix = encryptedValue.Length >= 3 ? Encoding.ASCII.GetString(encryptedValue, 0, 3) : string.Empty;
-        if (prefix == "v20") return string.Empty;
+        if (prefix == "v20") return null;
         if (prefix is "v10" or "v11")
         {
-            if (encryptedValue.Length < 31 || masterKey.Length is not (16 or 24 or 32)) return string.Empty;
+            if (encryptedValue.Length < 31 || masterKey.Length is not (16 or 24 or 32)) return null;
             try
             {
                 var nonce = encryptedValue.AsSpan(3, 12);
@@ -236,7 +305,7 @@ public class WindowsBrowserCookieReader : IProviderCookieReader
             }
             catch (CryptographicException)
             {
-                return string.Empty;
+                return null;
             }
         }
         try
@@ -245,7 +314,7 @@ public class WindowsBrowserCookieReader : IProviderCookieReader
         }
         catch (CryptographicException)
         {
-            return string.Empty;
+            return null;
         }
     }
 
