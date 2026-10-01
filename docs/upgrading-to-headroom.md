@@ -123,7 +123,11 @@ do not need their provider keys renamed.
 
 Browser credential recovery now requires the verified bundled local session,
 HTTPS, or an SSH-capable client and backend. An existing plain HTTP connection
-can still supply usage, but browser cookies will not be forwarded to it. If an
+can still supply usage, but browser cookies will not be forwarded to it. Current
+servers bound off-loopback also answer HTTPS on the same port; once both sides are
+updated, Headroom verifies the certificate with your token and upgrades a saved
+`http://` address automatically. Servers now read cursor-agent's login for any
+bind, so the WSL `usage-server-cursor-auth.timer` is no longer needed. If an
 independently managed local server requires a bearer token, configure its address
 and token explicitly under **HTTP(S)** (called **Remote** in v1.8.0). See the
 [connection guide](../clients/desktop/README.md).
