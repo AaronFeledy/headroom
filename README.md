@@ -150,9 +150,10 @@ steps, preserved settings, server compatibility, and rollback.
 
 On the first normal Windows launch, Headroom imports the legacy schema 0–3 file
 at `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new Headroom
-settings file does not exist. It keeps the old file untouched and writes a
-create-once backup beside the new settings. An empty legacy API URL remains
-Local mode; a configured URL remains a direct HTTP(S) connection. The installer
+settings file and previous nested Headroom file do not exist. It keeps the old
+file untouched and writes a create-once backup beside the new settings. An empty
+legacy API URL remains Local mode; a configured URL remains a direct HTTP(S)
+connection. The installer
 stops the legacy executable at its standard installation path before launching
 Headroom; quit portable or custom-path copies yourself.
 
@@ -169,9 +170,19 @@ and rollback; it is not the default packaged UI.
 
 Headroom stores settings atomically at:
 
-- Windows: `%APPDATA%\Headroom\Headroom\settings.json`
-- Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json`
-- macOS: `~/Library/Application Support/Headroom/Headroom/settings.json`
+- Windows: `%APPDATA%\Headroom\settings.json`
+- Linux and macOS: `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json`
+
+This is the same folder as the server's `config.yaml`. Normal launches copy a
+previous settings file once if the new file is absent, keeping the source and
+leaving backup siblings in place. Previous locations are
+`${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json` on Linux,
+`~/Library/Application Support/Headroom/Headroom/settings.json` on macOS, and
+`%APPDATA%\Headroom\Headroom\settings.json` on Windows. If copying fails, the
+session loads and saves at the previous location and records a token-free
+diagnostic notice. Single-instance and CLI bridge identity stays on the previous
+path so updates find the same running app. Explicit `--config` and screenshot
+sessions do not copy or import settings automatically.
 
 The file contains a remote bearer token in plaintext. Linux and macOS write it and its
 migration backups with mode `0600`; Windows uses the current user's roaming app

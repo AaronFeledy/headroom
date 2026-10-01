@@ -85,10 +85,18 @@ The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
-modules/imports, `usage-server` binary, legacy server config/service paths, API
-provider key `Codex`, and snake_case API fields. Use the canonical Headroom
-repository URL for public acquisition and user-facing links while accepting the
-former repository's exact release URLs where updater compatibility requires it.
+modules/imports, `usage-server` binary, legacy service names/paths, API provider
+key `Codex`, and snake_case API fields. Default server config locations are
+`${XDG_CONFIG_HOME:-$HOME/.config}/headroom/config.yaml` on Unix and
+`%APPDATA%\Headroom\config.yaml` on Windows. Legacy `claude-usage-widget` /
+`ClaudeUsageWidget` config locations migrate automatically and must stay readable:
+Unix leaves a compatibility symlink; Windows keeps the legacy file. Use the
+same folder for desktop `settings.json`, copying the previous
+`Headroom/Headroom/settings.json` once and keeping it, while instance identity
+stays on the previous path. Use the canonical Headroom repository URL for public
+acquisition and user-facing links
+while accepting the former repository's exact release URLs where updater
+compatibility requires it.
 Headroom displays `Codex` as ChatGPT. On first normal Windows launch it may import
 `%APPDATA%\ClaudeUsageWidget\settings.json`; the retained WinForms project is not
 the default packaged UI.

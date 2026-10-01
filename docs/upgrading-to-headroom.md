@@ -33,8 +33,8 @@ future Headroom releases.
    if that shortcut points at the standard legacy installation.
 3. Let the installer launch Headroom normally. If it was already open, quit and
    reopen it to use the newly installed version. Automatic import runs only when
-   the Headroom settings file does not exist; screenshot and explicit `--config`
-   sessions do not import legacy settings.
+   neither the new nor previous Headroom settings file exists; screenshot and
+   explicit `--config` sessions do not copy or import settings automatically.
 4. Check Connection settings, provider order, and **Start Headroom when I sign
    in**. Existing HTTP(S) connections stay selected. A fresh installation or an
    empty legacy API address uses Local mode. Choosing SSH is a separate setup
@@ -45,7 +45,17 @@ future Headroom releases.
 
 The importer reads schema versions 0–3 from
 `%APPDATA%\ClaudeUsageWidget\settings.json` and writes
-`%APPDATA%\Headroom\Headroom\settings.json`.
+`%APPDATA%\Headroom\settings.json`.
+
+Existing Qt settings are copied once from
+`%APPDATA%\Headroom\Headroom\settings.json` when the new file is absent. Linux
+copies from
+`${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json`, and macOS from
+`~/Library/Application Support/Headroom/Headroom/settings.json`, to
+`${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json`. Sources are retained;
+later saves use the new file. A failed copy keeps using the previous file for
+that session and records a notice in diagnostics. Single-instance identity stays
+on the previous path, including for the CLI bridge.
 
 | Existing preference | Headroom behavior |
 | --- | --- |
@@ -91,11 +101,20 @@ and coordinated Windows/WSL updates.
 
 Changing the frontend does not require moving or renaming an independently
 managed backend. The `usage-server` executable name, HTTP API, provider keys,
-and server configuration paths remain compatible:
+and legacy server configuration paths remain compatible. New defaults are:
 
-- Windows server config: `%APPDATA%\ClaudeUsageWidget\config.yaml`
-- Linux/WSL server config: `${XDG_CONFIG_HOME:-$HOME/.config}/claude-usage-widget/config.yaml`
+- Windows server config: `%APPDATA%\Headroom\config.yaml`
+- Unix server config (including Linux/WSL/macOS): `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/config.yaml`
 - Custom `--config` paths and existing service definitions can stay in place.
+
+Unix startup automatically renames the legacy config directory when the new one
+is absent and leaves a compatibility symlink, preserving `config.yaml`,
+`server.env`, and other entries. Existing units referencing the legacy path keep
+working and may be updated to the new path. If the desktop has already created
+the new folder, Unix startup merges nonconflicting legacy entries into it and
+leaves the link when the old folder is empty. Conflicting names stay in the old
+folder with a warning; the new config wins. Windows default-path startup copies
+the legacy config without removing it or the legacy desktop settings.
 
 Provider credential files stay on the machine running the backend. They are not
 copied by the frontend settings importer. Headroom displays the API's `Codex`

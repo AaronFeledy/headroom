@@ -132,10 +132,15 @@ systemctl --user status headroom.service
 ```
 
 Run these commands from the checkout containing that sample file, or download
-the sample first. Keep your existing private `config.yaml` and optional
-`server.env` in `~/.config/claude-usage-widget/`. Adjust `ExecStart` for a custom
-CLI path or config location. Do not rename the unit. The update command uses
-only the current user's fixed unit and never invokes sudo.
+the sample first. Keep your private `config.yaml` and optional `server.env` in
+`~/.config/headroom/`. The Unix default config base honors `XDG_CONFIG_HOME`;
+adjust the sample paths if it is set. Startup automatically renames the real
+legacy directory when the new one is absent and leaves a compatibility symlink.
+Existing units referencing the legacy path keep working and may be updated to
+the new path. Start the updated server with the existing unit first so migration
+completes before changing its `EnvironmentFile` path. Adjust `ExecStart` for a
+custom CLI path or config location. Do not rename the unit. The update command
+uses only the current user's fixed unit and never invokes sudo.
 
 For startup before login, enable lingering for the service account with
 `loginctl enable-linger "$USER"` (your system may require administrator approval).

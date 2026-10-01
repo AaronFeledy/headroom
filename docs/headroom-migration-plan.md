@@ -43,7 +43,13 @@ The old Windows implementation has known limitations that should not become requ
 - Move the Qt source to `clients/desktop/`, leaving a small compatibility build wrapper or explicit redirect from `clients/linux/` while scripts and existing instructions migrate. Keep one QML module and one warning policy. New build directories must be ignored.
 - Extract settings and platform services from the controller incrementally. The controller remains the owner of usage snapshots and warning states. Platform services report controlled status/error summaries rather than exposing tokens or raw process/network output to QML.
 - Persist an explicit `local` or `remote` connection mode. On first Windows launch, legacy empty `ApiUrl` means local managed mode; nonempty means remote. On Linux, an existing empty configuration keeps the current setup flow and must not unexpectedly start a server. An explicit local option can use the same manager on Linux.
-- Preserve Linux `~/.config/Headroom/Headroom/settings.json`, honoring its current XDG behavior. Use an explicit documented Windows Headroom user configuration path and import `%APPDATA%/ClaudeUsageWidget/settings.json` only when no Headroom configuration exists. Never overwrite the original or a malformed file during automatic import. `--config` remains an isolated override and must not silently import the user's real settings.
+- Store settings beside the server config: Unix
+  `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json`, Windows
+  `%APPDATA%\Headroom\settings.json`. Copy previous nested Headroom settings once
+  when the new file is absent, keeping the source and the previous single-instance
+  identity. Import `%APPDATA%/ClaudeUsageWidget/settings.json` only when neither
+  Headroom file exists. Never overwrite the original or a malformed file during
+  automatic import. `--config` remains isolated and must not import real settings.
 - The new managed-server service uses asynchronous `QProcess` and injectable process/probe seams. Windows adds Job Object ownership; a process it only attaches to is never killed. Keep process ownership separate from reachability and provider health.
 - Reuse the existing tested Windows browser discovery/snapshot/DPAPI/AES implementation through a small self-contained, headless C# helper, rather than rewriting browser cryptography in C++. The helper can link the existing reader source and narrow interfaces. It takes only a provider identifier, returns a bounded result through its private child-process pipe, and performs no networking. The Qt client sends credentials. Helper output is never forwarded into diagnostics. Fixture mode must not access real browser profiles. Native C++ replacement is acceptable only if it preserves equivalent tests and does not expand the task into new browser decryption techniques.
 - Browser credential forwarding is Windows-specific parity, not a requirement to add Linux browser decryption. Linux local and remote modes use the Go server's supported credential discovery or explicitly configured credential sync. Preserve the current WSL deployment.
@@ -76,7 +82,8 @@ Implement Windows startup registration under the current user's Run key, with He
 Acceptance:
 
 - Fixture migrations cover old schema versions, local and remote mode, Unicode/space paths, preserved token/order/interval/preferences, malformed JSON, missing files, existing Headroom config, repeat launch, and explicit `--config` isolation.
-- No migration changes Linux's existing settings location or server config files.
+- Desktop migration copies Linux settings to the shared config folder, retaining
+  the previous file and instance identity; it does not change server config files.
 - Native Windows tests enable/disable a temporary isolated startup entry and verify quoting/error reporting without altering the user's actual startup setting.
 - Single-instance activation and popup positioning/focus tests pass on Windows and Linux. The Windows manual smoke checks no title bar, no taskbar entry in tray mode, no console window, and usable multi-DPI placement.
 
