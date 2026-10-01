@@ -31,8 +31,21 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 			fmt.Fprintf(&output, "  %s", terminalText(*provider.Subtitle))
 		}
 		output.WriteByte('\n')
+		message := ""
 		if provider.Error != nil {
-			fmt.Fprintf(&output, "  Error: %s\n", terminalText(*provider.Error))
+			message = *provider.Error
+			fmt.Fprintf(&output, "  Error: %s\n", terminalText(message))
+		}
+		if provider.Auth != nil && provider.Auth.State != "signed_in" {
+			// The server's error often names the command already; print only new hints.
+			if command := provider.Auth.SignInCommand; command != nil && !strings.Contains(message, *command) {
+				fmt.Fprintf(&output, "  Run: %s\n", terminalText(*command))
+			}
+			if url := provider.Auth.SignInURL; url != nil && !strings.Contains(message, *url) {
+				fmt.Fprintf(&output, "  Sign in: %s\n", terminalText(*url))
+			}
+		}
+		if provider.Error != nil {
 			if provider.NeedsReauth {
 				output.WriteString("  Sign-in required\n")
 			}

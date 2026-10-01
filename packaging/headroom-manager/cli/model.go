@@ -25,6 +25,7 @@ type Bucket struct {
 }
 
 type Provider struct {
+	Auth                  *ProviderAuth          `json:"auth"`
 	ProviderName          string                 `json:"provider_name"`
 	PrimaryLabel          string                 `json:"primary_label"`
 	SecondaryLabel        string                 `json:"secondary_label"`
@@ -40,6 +41,12 @@ type Provider struct {
 	NeedsReauth           bool                   `json:"needs_reauth"`
 	IsSuccess             bool                   `json:"is_success"`
 	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
+}
+
+type ProviderAuth struct {
+	State         string  `json:"state"`
+	SignInCommand *string `json:"sign_in_command"`
+	SignInURL     *string `json:"sign_in_url"`
 }
 
 type RateLimitResetCredits struct {
