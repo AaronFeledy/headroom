@@ -161,6 +161,24 @@ when the child exits or connection settings change. To use authentication with
 an independently managed server, configure it explicitly in HTTP(S) or SSH
 settings; direct browser credential forwarding requires HTTPS.
 
+For direct HTTP connections with a saved token, Headroom tries HTTPS on the same
+host and port before reading usage. A separate, unauthenticated nonce/HMAC proof
+verifies the server certificate with that token, then saves the HTTPS address and
+certificate pin. Failed upgrades leave HTTP selected and retry no more than once
+every six hours, or after changing connection settings. HTTPS never downgrades.
+System-trusted HTTPS needs no pin; untrusted HTTPS and certificate rotation use
+the same proof. A failed certificate verification blocks the connection. Changing
+the address's host or port clears the pin. Settings shows the encryption status.
+
+On Windows, **Share browser sign-ins with the server** is enabled by default.
+Turning it off prevents the helper from reading browser sign-ins. Sharing still
+requires HTTPS (system-trusted or token-verified) or SSH; plain HTTP is refused.
+New servers supply source-aware sign-in cards: they name the expired CLI, app,
+browser, or shared sign-in, show where to sign in, and offer **Copy command** or
+**Open cursor.com** when appropriate. Up to two browser-readability notes explain
+encrypted, locked, expired, or unreadable sources. Older servers retain the
+existing error message and Cursor sign-in link.
+
 The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,
 not a forced provider refresh. Polling defaults to 60 seconds and can be adjusted
 in settings. Requests time out, refuse redirects, and retain last

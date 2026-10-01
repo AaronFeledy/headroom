@@ -377,9 +377,9 @@ void Controller::submitChatGptReset(bool automatic) {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(95000);
     const ServerConnection transport = m_mode == "local" ? m_server.connection()
-        : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), QSslCertificate()};
+        : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    if (m_mode == "local") ServerTransport::secureRequest(request, transport.certificate);
+    ServerTransport::secureRequest(request, transport.certificate);
     const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")},
         {"confirmed", true}, {"account_fingerprint", fingerprint}}).toJson(QJsonDocument::Compact);
     request.setHeader(QNetworkRequest::ContentLengthHeader, qint64(body.size()));
@@ -396,7 +396,7 @@ void Controller::submitChatGptReset(bool automatic) {
     auto reply = network->post(request, upload); m_resetReply = reply;
     reply->setProperty("automaticReset", automatic);
     upload->setParent(reply);
-    if (m_mode == "local") ServerTransport::requirePinnedPeer(reply, transport.certificate);
+    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });

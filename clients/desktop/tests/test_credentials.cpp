@@ -108,6 +108,52 @@ private slots:
         QVERIFY(!QFileInfo::exists(m_record));
         QVERIFY(!service.busy());
     }
+    void authControlsRecoveryAndSourceCompatibility_data() {
+        QTest::addColumn<bool>("auth"); QTest::addColumn<bool>("newHelper");
+        QTest::newRow("new-server-new-helper") << true << true;
+        QTest::newRow("legacy-server-new-helper") << false << true;
+        QTest::newRow("new-server-legacy-helper") << true << false;
+        QTest::newRow("legacy-server-legacy-helper") << false << false;
+    }
+    void authControlsRecoveryAndSourceCompatibility() {
+        QFETCH(bool, auth); QFETCH(bool, newHelper);
+        qputenv("HEADROOM_CREDENTIAL_FIXTURE_MODE", newHelper ? "sources" : "valid");
+        CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
+        service.configure("remote", server.url(), "fixture-token", TlsFixture::certificate());
+        auto provider = cursorFailure();
+        if (auth) {
+            provider["needs_reauth"] = false;
+            provider["auth"] = QVariantMap{{"state", "expired"}, {"accepts_browser_credentials", true}};
+        }
+        service.consider({provider}); QTRY_COMPARE(recovered.size(), 1);
+        const auto payload = QJsonDocument::fromJson(server.requests.first().mid(server.requests.first().indexOf("\r\n\r\n") + 4)).object();
+        QCOMPARE(payload.contains("source_name"), auth && newHelper);
+        if (auth && newHelper) QCOMPARE(payload["source_name"].toString(), QStringLiteral("Firefox"));
+        QCOMPARE(service.checked("Cursor").size(), newHelper ? 2 : 0);
+        QCOMPARE(service.sharingStatus(), QStringLiteral("available"));
+    }
+    void authSignedInOrDisabledNeverRunsHelper() {
+        CredentialService service(options());
+        service.configure("remote", "https://127.0.0.1:65530", "", TlsFixture::certificate());
+        auto provider = cursorFailure(); provider["auth"] = QVariantMap{{"state", "signed_in"}, {"accepts_browser_credentials", true}};
+        service.consider({provider}); QTest::qWait(60); QVERIFY(!QFileInfo::exists(m_record));
+        provider["auth"] = QVariantMap{{"state", "expired"}, {"accepts_browser_credentials", false}};
+        service.consider({provider}); QTest::qWait(60); QVERIFY(!QFileInfo::exists(m_record));
+        service.configure("remote", "https://127.0.0.1:65530", "", TlsFixture::certificate(), false);
+        service.consider({cursorFailure()}); QTest::qWait(60); QVERIFY(!QFileInfo::exists(m_record));
+        QCOMPARE(service.sharingStatus(), QStringLiteral("disabled"));
+    }
+    void sharingStatusReportsPolicyAndAvailability() {
+        auto missing = options(); missing.helperPath = m_dir.filePath("missing");
+        CredentialService service(missing); service.configure("remote", "https://example.test", "");
+        QCOMPARE(service.sharingStatus(), QStringLiteral("unavailable"));
+        service.configure("remote", "http://example.test", "");
+        QCOMPARE(service.sharingStatus(), QStringLiteral("insecure"));
+        missing.enabled = false; CredentialService unsupported(missing);
+        unsupported.configure("ssh", "ssh://example.test", "");
+        QCOMPARE(unsupported.sharingStatus(), QStringLiteral("unsupported"));
+    }
     void unownedLocalServerNeverReadsBrowserOrSendsSecrets() {
         CredentialHttpFixture impostor; QVERIFY(impostor.listen(QHostAddress::LocalHost));
         CredentialService service(options()); QSignalSpy events(&service, &CredentialService::event);

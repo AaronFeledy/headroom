@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "usage.h"
+#include "logincopy.h"
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QDateTime>
@@ -35,6 +36,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     connect(&m_credentials, &CredentialService::event, this, [this](const QString &message) {
         log(QStringLiteral("Credentials"), message);
     });
+    connect(&m_credentials, &CredentialService::checkedChanged, this, [this] { emit settingsChanged(); emit providersChanged(); });
     connect(&m_credentials, &CredentialService::providerRecovered, this, [this](const QVariantMap &replacement) {
         const QString name = replacement.value(QStringLiteral("provider_name")).toString();
         bool replaced = false;
@@ -85,8 +87,14 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
 }
 
 QVariantMap Controller::settings() const {
+    QString connectionStatus;
+    if (QUrl(m_url).scheme() == QStringLiteral("https")) connectionStatus = m_settingsService.value().remoteCertificate.isEmpty()
+        ? QStringLiteral("Encrypted.") : QStringLiteral("Encrypted. The server's identity was verified with your access token.");
+    else connectionStatus = m_token.isEmpty() ? QStringLiteral("Not encrypted.")
+        : QStringLiteral("Not encrypted. Headroom switches to HTTPS automatically when the server supports it.");
     return {{"mode", m_mode}, {"url", m_url}, {"sshUrl", m_sshUrl}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
-        {"notifications", m_notifications}, {"primary", primary()}};
+        {"notifications", m_notifications}, {"primary", primary()}, {"connectionStatus", connectionStatus},
+        {"shareBrowserSignIns", m_settingsService.value().shareBrowserSignIns}, {"browserSharingStatus", m_credentials.sharingStatus()}};
 }
 QVariantMap Controller::state() const {
     const auto elapsed = m_lastGood ? QDateTime::currentSecsSinceEpoch() - m_lastGood : 0;
@@ -102,17 +110,54 @@ QString Controller::backendToken() const {
     return m_mode == "local" ? QString::fromUtf8(m_server.connection().token) : (m_mode == "ssh" ? QString() : m_token);
 }
 QSslCertificate Controller::backendCertificate() const {
-    return m_mode == "local" ? m_server.connection().certificate : QSslCertificate();
+    return m_mode == "local" ? m_server.connection().certificate
+        : m_mode == "remote" ? QSslCertificate(m_settingsService.value().remoteCertificate.toUtf8()) : QSslCertificate();
 }
 void Controller::syncConnection() {
     if (m_mode == QStringLiteral("local")) {
         const auto transport = m_server.connection();
-        m_credentials.configure(m_mode, transport.url.toString(), QString::fromUtf8(transport.token), transport.certificate);
+        m_credentials.configure(m_mode, transport.url.toString(), QString::fromUtf8(transport.token), transport.certificate, m_settingsService.value().shareBrowserSignIns);
     } else {
-        m_credentials.configure(m_mode, backendUrl(), backendToken(), QSslCertificate());
+        m_credentials.configure(m_mode, backendUrl(), backendToken(), backendCertificate(), m_settingsService.value().shareBrowserSignIns);
     }
 }
 QString Controller::displayName(const QString &provider) const { return Usage::displayName(provider); }
+QVariantMap Controller::loginCopy(const QVariantMap &provider) const {
+    return LoginCopy::compose(provider, m_mode, m_credentials.sharingStatus(),
+                              m_credentials.checked(provider.value(QStringLiteral("provider_name")).toString()));
+}
+QVariantMap Controller::browserChecked() const {
+    return {{QStringLiteral("Cursor"), m_credentials.checked(QStringLiteral("Cursor"))},
+            {QStringLiteral("Grok"), m_credentials.checked(QStringLiteral("Grok"))}};
+}
+
+void Controller::verifyRemote(bool upgrade) {
+    if (m_proving || m_mode != QStringLiteral("remote") || m_token.isEmpty()) return;
+    m_proving = true; m_loading = true; m_proofAttempted = true;
+    const bool rotation = !backendCertificate().isNull();
+    m_nextUpgradeAttempt = QDateTime::currentSecsSinceEpoch() + 6 * 3600;
+    emit changed();
+    m_tlsProof.request(QUrl(m_url), m_token.toUtf8(), [this, upgrade, rotation](TlsProof::Result result) {
+        m_proving = false; m_loading = false;
+        if (!result.verified()) {
+            log(QStringLiteral("Connection"), QStringLiteral("Token-verified HTTPS proof did not succeed."));
+            if (upgrade) { requestUsage(); return; }
+            fail(QStringLiteral("The server certificate could not be verified with your access token. Check the server and connection settings."), QStringLiteral("certificate"));
+            return;
+        }
+        auto updated = m_settingsService.value();
+        if (upgrade) updated.url = TlsProof::upgradeUrl(QUrl(m_url)).toString();
+        updated.remoteCertificate = QString::fromUtf8(result.certificate.toPem());
+        const QString error = m_settingsService.save(updated);
+        if (!error.isEmpty()) { fail(QStringLiteral("The verified server certificate could not be saved."), QStringLiteral("settings")); return; }
+        m_url = m_settingsService.value().url;
+        cancelResetRequest(); cancelScheduledChatGptReset(); m_network.clearConnectionCache(); syncConnection();
+        log(QStringLiteral("Connection"), upgrade ? QStringLiteral("Connection upgraded to HTTPS.")
+            : rotation ? QStringLiteral("The server certificate changed and was verified with your access token.")
+                       : QStringLiteral("The server's identity was verified with your access token."));
+        emit settingsChanged(); emit changed(); requestUsage();
+    });
+}
 
 void Controller::cancel() {
     if (m_reply) { disconnect(m_reply, nullptr, this, nullptr); m_reply->abort(); m_reply->deleteLater(); m_reply.clear(); }
@@ -173,6 +218,8 @@ void Controller::refresh() {
 void Controller::requestUsage() {
     if (m_loading || m_resetBusy) return;
     m_poll.stop();
+    if (m_mode == QStringLiteral("remote") && TlsProof::shouldUpgrade(QUrl(m_url), !m_token.isEmpty(),
+        QDateTime::currentSecsSinceEpoch(), m_nextUpgradeAttempt)) { verifyRemote(true); return; }
     const QString baseUrl = backendUrl();
     const auto url = Usage::endpoint(baseUrl);
     if (url.isEmpty()) { fail("Enter a valid HTTP or HTTPS backend address in settings."); return; }
@@ -182,26 +229,34 @@ void Controller::requestUsage() {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(10000);
     const ServerConnection transport = m_mode == QStringLiteral("local")
-        ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), QSslCertificate()};
+        ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    if (m_mode == QStringLiteral("local")) ServerTransport::secureRequest(request, transport.certificate);
+    ServerTransport::secureRequest(request, transport.certificate);
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
     QNetworkAccessManager *network = m_mode == QStringLiteral("local") ? &m_localNetwork
         : m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
     auto reply = network->get(request); m_reply = reply;
-    if (m_mode == QStringLiteral("local")) ServerTransport::requirePinnedPeer(reply, transport.certificate);
+    connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError> &errors) {
+        if (!errors.isEmpty()) reply->setProperty("headroomCertificateErrors", true);
+    });
+    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(m_mode == QStringLiteral("ssh") ? 27000 : 12000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
-        const auto error = reply->error(); const auto body = reply->readAll();
+        const auto error = reply->error(); const auto body = reply->isOpen() ? reply->readAll() : QByteArray();
+        const bool certificateFailure = reply->property("headroomPinMismatch").toBool() || reply->property("headroomCertificateErrors").toBool();
         reply->deleteLater(); m_reply.clear(); m_loading = false;
         if (redirected) { fail("The backend redirected the request. Enter its final address in settings.", "api"); return; }
         if (status == 401 || status == 403) { fail("Your backend rejected the token. Update it in connection settings.", "auth"); return; }
         if (status && status != 200) { fail(QString("Backend returned HTTP %1. Check the address and try again.").arg(status), "api"); return; }
         if (error != QNetworkReply::NoError) {
+            if (m_mode == QStringLiteral("remote") && QUrl(m_url).scheme() == QStringLiteral("https") && certificateFailure) {
+                if (!m_token.isEmpty() && (!m_proofAttempted || QDateTime::currentSecsSinceEpoch() >= m_nextUpgradeAttempt)) { verifyRemote(false); return; }
+                fail(QStringLiteral("The server certificate could not be verified. Check the server and access token; HTTPS will not be downgraded."), QStringLiteral("certificate")); return;
+            }
             if (m_mode == "local") {
                 m_waitingForUsageRetry = true;
                 m_server.reportConnectionFailure();
@@ -213,6 +268,7 @@ void Controller::requestUsage() {
         QVariantList providers;
         if (body.size() > 1024 * 1024 || !Usage::parse(body, providers)) { fail("The backend returned an unexpected usage response.", "malformed"); return; }
         acceptSnapshot(providers);
+        m_proofAttempted = false;
     });
 }
 void Controller::acceptSnapshot(const QVariantList &providers) {
@@ -240,8 +296,9 @@ Controller::~Controller() {
     // disconnected and aborted before the members its handler touches are destroyed.
     cancel();
     cancelResetRequest();
+    m_tlsProof.cancel();
 }
-QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl) {
+QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl, bool shareBrowserSignIns) {
     if (m_resetBusy) return "Wait for the reset request to finish before changing connections.";
     m_resetConfirmation.clear();
     if (mode != "local" && mode != "remote" && mode != "ssh") mode = "remote";
@@ -255,11 +312,15 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     const QString savedToken = forgetToken && mode == "remote" ? QString()
         : (token.isEmpty() && (mode != "remote" || url == m_url) ? m_token : token);
     const QString retainedSshUrl = sshUrl.isEmpty() && mode != "ssh" ? m_sshUrl : sshUrl;
-    const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary);
+    const bool connectionChanged = m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl;
+    const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary, shareBrowserSignIns);
     if (!error.isEmpty()) return error;
     cancel();
+    m_tlsProof.cancel(); m_proving = false;
+    if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; }
+    m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); cancelScheduledChatGptReset(); }
+    if (connectionChanged) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); cancelScheduledChatGptReset(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();
@@ -267,10 +328,11 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
 }
-QString Controller::writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary) {
+QString Controller::writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns) {
     DesktopSettings updated = m_settingsService.value();
     updated.connectionMode = mode; updated.url = url; updated.token = token;
     updated.sshUrl = sshUrl;
+    updated.shareBrowserSignIns = shareBrowserSignIns;
     updated.interval = interval; updated.notifications = notifications;
     updated.primary = primary; updated.order = m_order;
     return m_settingsService.save(updated, true);

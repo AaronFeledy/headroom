@@ -14,7 +14,10 @@ Rectangle {
     property bool presentingNotifications: false
     property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
+    readonly property var loginCopy: { backend.settings; return backend.loginCopy(provider) }
+    readonly property bool hasAuthCopy: !!loginCopy.title
     readonly property bool cursorLoginRequired: failed && name === "Cursor"
+        && !hasAuthCopy
         && (provider.needs_reauth || (provider.error || "").startsWith("Log in to cursor.com"))
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
@@ -273,9 +276,20 @@ Rectangle {
         }
         ColumnLayout {
             visible: card.failed; spacing: 12; Layout.fillWidth: true
-            Text { text: card.provider.needs_reauth || card.cursorLoginRequired ? "Reconnect your account" : "Usage is unavailable"; color: Theme.red; font.pixelSize: 14; font.weight: Font.Medium }
+            Text { objectName: "providerErrorTitle_" + card.name; textFormat: Text.PlainText; text: card.hasAuthCopy ? card.loginCopy.title : card.provider.needs_reauth || card.cursorLoginRequired ? "Reconnect your account" : "Usage is unavailable"; color: Theme.red; font.pixelSize: 14; font.weight: Font.Medium }
+            Repeater {
+                model: card.hasAuthCopy ? card.loginCopy.lines : []
+                Text {
+                    required property string modelData
+                    required property int index
+                    objectName: "providerLoginLine_" + card.name + "_" + index
+                    text: modelData; textFormat: Text.PlainText; color: Theme.muted
+                    font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+            }
             Text {
                 id: errorMessage; objectName: "providerError_" + card.name
+                visible: !card.hasAuthCopy
                 textFormat: Text.PlainText
                 text: card.provider.error || "The provider could not return usage. Headroom will check again automatically."
                 color: card.cursorLoginRequired ? Theme.cyan : Theme.muted
@@ -310,7 +324,13 @@ Rectangle {
                     }
                 }
             }
-            ActionButton { visible: !!card.provider.reauth_command; text: "Copy sign-in command"; onClicked: { backend.copyText(card.provider.reauth_command); text = "Copied" } }
+            ActionButton { visible: !card.hasAuthCopy && !!card.provider.reauth_command; text: "Copy sign-in command"; onClicked: { backend.copyText(card.provider.reauth_command); text = "Copied" } }
+            Flow {
+                Layout.fillWidth: true; Layout.preferredHeight: childrenRect.height; spacing: 8
+                visible: card.hasAuthCopy && (!!card.loginCopy.command || !!card.loginCopy.url)
+                ActionButton { objectName: "providerCopyCommand_" + card.name; visible: !!card.loginCopy.command; text: "Copy command"; Accessible.name: "Copy command"; onClicked: backend.copyText(card.loginCopy.command) }
+                ActionButton { objectName: "providerOpenLogin_" + card.name; visible: !!card.loginCopy.url; text: "Open cursor.com"; Accessible.name: "Open cursor.com"; onClicked: Qt.openUrlExternally(card.loginCopy.url) }
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "tls_fixture.h"
 
 #include <QDir>
 #include <QFile>
@@ -33,6 +34,34 @@ class SettingsTest : public QObject {
     QString previousOrganization;
     QString previousApplication;
 private slots:
+    void certificateAndBrowserSharingPersistence() {
+        QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);
+        QVERIFY(service.value().shareBrowserSignIns); QVERIFY(service.value().remoteCertificate.isEmpty());
+        auto settings = service.value(); settings.connectionMode = "remote"; settings.url = "https://example.test:7823";
+        QVERIFY(service.save(settings).isEmpty());
+        settings.remoteCertificate = QString::fromUtf8(TlsFixture::certificate().toPem()); settings.shareBrowserSignIns = false;
+        QVERIFY(service.save(settings).isEmpty());
+        SettingsService reopened(service.path(), false);
+        QCOMPARE(reopened.value().remoteCertificate, settings.remoteCertificate); QVERIFY(!reopened.value().shareBrowserSignIns);
+        settings.url = "https://example.test:7823/prefix"; QVERIFY(service.save(settings).isEmpty());
+        QVERIFY(!service.value().remoteCertificate.isEmpty());
+        settings.url = "https://other.test:7823"; QVERIFY(service.save(settings).isEmpty());
+        QVERIFY(service.value().remoteCertificate.isEmpty());
+        settings = service.value(); settings.remoteCertificate = QString::fromUtf8(TlsFixture::certificate().toPem());
+        QVERIFY(service.save(settings).isEmpty()); settings.url = "https://other.test:9000";
+        QVERIFY(service.save(settings).isEmpty()); QVERIFY(service.value().remoteCertificate.isEmpty());
+    }
+    void invalidCertificateIsRejectedWithoutChangingSettings() {
+        QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);
+        auto settings = service.value(); settings.url = "https://example.test"; settings.connectionMode = "remote";
+        QVERIFY(service.save(settings).isEmpty()); settings.remoteCertificate = "not a certificate";
+        QVERIFY(!service.save(settings).isEmpty()); QVERIFY(service.value().remoteCertificate.isEmpty());
+        const auto invalidJson = QJsonDocument(QJsonObject{{"schemaVersion", 1}, {"connectionMode", "remote"},
+            {"url", "https://example.test"}, {"remoteCertificate", "invalid"}, {"shareBrowserSignIns", "false"}}).toJson();
+        QVERIFY(writeFile(service.path(), invalidJson));
+        SettingsService invalid(service.path(), false); QVERIFY(!invalid.loadError().isEmpty());
+        QVERIFY(invalid.value().url.isEmpty()); QVERIFY(invalid.value().shareBrowserSignIns);
+    }
     void init()
     {
         previousXdg = qgetenv("XDG_CONFIG_HOME");

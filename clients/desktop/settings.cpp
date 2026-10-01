@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QUrl>
+#include <QSslCertificate>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
 #else
@@ -257,6 +258,14 @@ bool SettingsService::loadHeadroom()
     m_value.url = url;
     m_value.token = rawToken.trimmed();
     m_value.sshUrl = rawSshUrl.trimmed();
+    m_value.remoteCertificate = readString(m_document, "remoteCertificate");
+    m_value.shareBrowserSignIns = readBool(m_document, "shareBrowserSignIns", true);
+    if (!m_value.remoteCertificate.isEmpty()
+        && (QSslCertificate(m_value.remoteCertificate.toUtf8()).isNull() || QUrl(url).scheme() != QStringLiteral("https"))) {
+        m_loadError = QStringLiteral("Settings contain an invalid server certificate and were not changed.");
+        m_blockImplicitWrites = true; m_value.remoteCertificate.clear(); m_value.url.clear(); m_value.token.clear();
+        return false;
+    }
     m_value.interval = qBound(15, readInt(m_document, "interval", 60), 900);
     m_value.notifications = readBool(m_document, "notifications", true);
     m_value.primary = normalizeProvider(readString(m_document, "primary", "Claude"));
@@ -363,6 +372,8 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["url"] = settings.url;
     result["token"] = settings.token;
     result["sshUrl"] = settings.sshUrl;
+    result["remoteCertificate"] = settings.remoteCertificate;
+    result["shareBrowserSignIns"] = settings.shareBrowserSignIns;
     result["interval"] = settings.interval;
     result["notifications"] = settings.notifications;
     result["primary"] = settings.primary;
@@ -405,6 +416,12 @@ QString SettingsService::save(const DesktopSettings &settings, bool explicitUser
     normalized.url = normalized.url.trimmed();
     normalized.token = normalized.token.trimmed();
     normalized.sshUrl = normalized.sshUrl.trimmed();
+    const QUrl oldUrl(m_value.url), newUrl(normalized.url);
+    if (oldUrl.host() != newUrl.host() || oldUrl.port(oldUrl.scheme() == "https" ? 443 : 80)
+        != newUrl.port(newUrl.scheme() == "https" ? 443 : 80)) normalized.remoteCertificate.clear();
+    if (!normalized.remoteCertificate.isEmpty()
+        && (QSslCertificate(normalized.remoteCertificate.toUtf8()).isNull() || newUrl.scheme() != QStringLiteral("https")))
+        return QStringLiteral("Use a valid PEM server certificate with an HTTPS address.");
     if (!validToken(settings.token)) return "The bearer token must be a single line.";
     if (normalized.connectionMode == "remote" && !validRemoteUrl(normalized.url))
         return "Use an HTTP or HTTPS address without credentials, a query, or a fragment.";

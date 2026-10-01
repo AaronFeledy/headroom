@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QTextStream>
 #include <QTimer>
 
@@ -39,7 +40,12 @@ int main(int argc, char **argv)
     const QString cookie = arguments[1] == QStringLiteral("cursor")
         ? QStringLiteral("WorkosCursorSessionToken=synthetic-cursor")
         : QStringLiteral("sso=synthetic-grok");
-    QTextStream(stdout) << QJsonDocument(QJsonObject{{QStringLiteral("provider"), arguments[1]},
-        {QStringLiteral("cookie"), cookie}}).toJson(QJsonDocument::Compact);
+    QJsonObject output{{QStringLiteral("provider"), arguments[1]}, {QStringLiteral("cookie"), cookie}};
+    if (mode == QStringLiteral("sources")) {
+        output[QStringLiteral("source")] = QStringLiteral("Firefox");
+        output[QStringLiteral("checked")] = QJsonArray{QJsonObject{{"name", "Chrome"}, {"status", "encrypted"}},
+            QJsonObject{{"name", "Firefox"}, {"status", "signed_in"}}};
+    }
+    QTextStream(stdout) << QJsonDocument(output).toJson(QJsonDocument::Compact);
     return 0;
 }

@@ -84,19 +84,31 @@ CredentialService::~CredentialService()
 }
 
 void CredentialService::configure(const QString &mode, const QString &baseUrl, const QString &token,
-                                  const QSslCertificate &certificate)
+                                  const QSslCertificate &certificate, bool shareBrowserSignIns)
 {
     const QString normalizedMode = mode == QStringLiteral("local") ? QStringLiteral("local")
         : mode == QStringLiteral("ssh") ? QStringLiteral("ssh") : QStringLiteral("remote");
     const QString effectiveToken = normalizedMode == QStringLiteral("ssh") ? QString() : token;
-    if (normalizedMode == m_mode && baseUrl == m_baseUrl && effectiveToken == m_token && certificate == m_certificate) return;
+    if (normalizedMode == m_mode && baseUrl == m_baseUrl && effectiveToken == m_token && certificate == m_certificate
+        && shareBrowserSignIns == m_shareBrowserSignIns) return;
     cancel();
     m_localNetwork.clearConnectionCache();
+    m_remoteNetwork.clearConnectionCache();
     m_mode = normalizedMode;
     m_baseUrl = baseUrl;
     m_token = effectiveToken;
     m_certificate = certificate;
+    m_shareBrowserSignIns = shareBrowserSignIns;
     m_attempts.clear();
+    m_hasAuth.clear(); m_checked.clear(); emit checkedChanged();
+}
+
+QString CredentialService::sharingStatus() const {
+    if (!m_shareBrowserSignIns) return QStringLiteral("disabled");
+    if (QUrl(m_baseUrl).scheme() == QStringLiteral("http")) return QStringLiteral("insecure");
+    if (!m_options.enabled) return QStringLiteral("unsupported");
+    if (!QFileInfo(helperPath()).isExecutable()) return QStringLiteral("unavailable");
+    return QStringLiteral("available");
 }
 
 void CredentialService::cancel()
@@ -145,14 +157,21 @@ void CredentialService::cancelActiveAttempt()
 
 void CredentialService::consider(const QVariantList &providers)
 {
-    if (!m_options.enabled || m_baseUrl.isEmpty()) return;
+    if (!m_options.enabled || !m_shareBrowserSignIns || m_baseUrl.isEmpty()) return;
     bool cursorCondition = false;
     bool grokCondition = false;
     for (const auto &value : providers) {
         const auto provider = value.toMap();
         const QString name = provider.value(QStringLiteral("provider_name")).toString();
+        m_hasAuth[name] = provider.contains(QStringLiteral("auth"));
         if (name == QStringLiteral("Cursor")) {
-            cursorCondition = provider.value(QStringLiteral("needs_reauth")).toBool()
+            if (m_hasAuth.value(name)) {
+                const auto auth = provider.value(QStringLiteral("auth")).toMap();
+                const QString state = auth.value(QStringLiteral("state")).toString();
+                cursorCondition = auth.value(QStringLiteral("accepts_browser_credentials")).metaType().id() == QMetaType::Bool
+                    && auth.value(QStringLiteral("accepts_browser_credentials")).toBool()
+                    && (state == QStringLiteral("signed_out") || state == QStringLiteral("expired"));
+            } else cursorCondition = provider.value(QStringLiteral("needs_reauth")).toBool()
                 || provider.value(QStringLiteral("error")).toString() == cursorPrompt;
         } else if (name == QStringLiteral("Grok") && provider.value(QStringLiteral("is_success")).toBool()) {
             grokCondition = true;
@@ -207,7 +226,7 @@ void CredentialService::resolvePolicy(const QString &provider)
             continueQueue();
             return;
         }
-        startHelper(provider, !m_certificate.isNull());
+        startHelper(provider, m_mode == QStringLiteral("local") && !m_certificate.isNull());
         return;
     }
     if (endpoint.scheme() == QStringLiteral("http"))
@@ -284,6 +303,7 @@ void CredentialService::finishHelper(bool success)
     const bool localNoProxy = m_activeLocalNoProxy;
     m_activeProvider.clear();
     QByteArray cookie;
+    QString source;
     if (success && m_helperOutput.size() <= maximumHelperBytes) {
         QJsonParseError error;
         const auto document = QJsonDocument::fromJson(m_helperOutput, &error);
@@ -291,7 +311,22 @@ void CredentialService::finishHelper(bool success)
         if (error.error == QJsonParseError::NoError && document.isObject()
             && canonical(object.value(QStringLiteral("provider")).toString()) == provider
             && (object.value(QStringLiteral("cookie")).isString() || object.value(QStringLiteral("cookie")).isNull()))
+        {
             cookie = object.value(QStringLiteral("cookie")).toString().trimmed().toUtf8();
+            source = object.value(QStringLiteral("source")).toString().trimmed();
+            if (source.size() > 40 || hasControl(source)) source.clear();
+            QVariantList checked;
+            for (const auto &value : object.value(QStringLiteral("checked")).toArray()) {
+                const auto entry = value.toObject();
+                const QString name = entry.value(QStringLiteral("name")).toString();
+                const QString status = entry.value(QStringLiteral("status")).toString();
+                if (name.isEmpty() || name.size() > 80 || hasControl(name)
+                    || !QStringList{"signed_in", "signed_out", "encrypted", "locked", "expired", "unreadable"}.contains(status)) continue;
+                checked.append(QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("status"), status}});
+                if (checked.size() == 12) break;
+            }
+            m_checked[provider] = checked; emit checkedChanged();
+        }
     }
     m_helperOutput.fill('\0');
     m_helperOutput.clear();
@@ -307,10 +342,10 @@ void CredentialService::finishHelper(bool success)
         continueQueue();
         return;
     }
-    submit(provider, std::move(cookie), fingerprint, localNoProxy);
+    submit(provider, std::move(cookie), fingerprint, localNoProxy, source);
 }
 
-void CredentialService::submit(const QString &provider, QByteArray cookie, const QByteArray &fingerprint, bool localNoProxy)
+void CredentialService::submit(const QString &provider, QByteArray cookie, const QByteArray &fingerprint, bool localNoProxy, const QString &source)
 {
     const QUrl endpoint = credentialEndpoint(provider);
     if (endpoint.isEmpty()) { cookie.fill('\0'); continueQueue(); return; }
@@ -327,14 +362,16 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(m_options.requestTimeoutMs);
     if (m_mode != QStringLiteral("ssh") && !m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
-    if (localNoProxy) ServerTransport::secureRequest(request, m_certificate);
-    const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("cookie"), QString::fromUtf8(cookie)}}).toJson(QJsonDocument::Compact);
+    ServerTransport::secureRequest(request, m_certificate);
+    QJsonObject payload{{QStringLiteral("cookie"), QString::fromUtf8(cookie)}};
+    if (provider == QStringLiteral("Cursor") && m_hasAuth.value(provider) && !source.isEmpty()) payload[QStringLiteral("source_name")] = source;
+    const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
     cookie.fill('\0');
     m_activeProvider = provider;
     QNetworkAccessManager *network = m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
         : localNoProxy ? &m_localNetwork : &m_remoteNetwork;
     auto reply = network->put(request, body);
-    if (localNoProxy) ServerTransport::requirePinnedPeer(reply, m_certificate);
+    ServerTransport::requirePinnedPeer(reply, m_certificate, m_mode == QStringLiteral("remote"));
     m_reply = reply;
     const quint64 operation = ++m_operation;
     auto deadline = new QTimer(reply);
