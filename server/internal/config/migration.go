@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Per-load operations allow deterministic failures without global test hooks.
@@ -81,7 +82,12 @@ func (m configMigration) resolve(flags flagValues, envList []string) (string, er
 }
 
 func (m configMigration) moveUnix(legacy, next string) {
-	if _, err := os.Lstat(next); !os.IsNotExist(err) {
+	nextInfo, nextErr := os.Lstat(next)
+	if nextErr == nil && nextInfo.IsDir() {
+		m.mergeUnix(legacy, next)
+		return
+	}
+	if !os.IsNotExist(nextErr) {
 		return
 	}
 	info, err := os.Lstat(legacy)
@@ -105,6 +111,48 @@ func (m configMigration) moveUnix(legacy, next string) {
 		return
 	}
 	m.log(slog.LevelInfo, "config directory migrated", "from", legacy, "to", next)
+}
+
+func (m configMigration) mergeUnix(legacy, next string) {
+	info, err := os.Lstat(legacy)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	// ReadDir sorts names; Lstat also detects dangling links as conflicts.
+	entries, err := os.ReadDir(legacy)
+	if err != nil {
+		m.log(slog.LevelWarn, "config directory merge failed", "error", err.Error())
+		return
+	}
+	var conflicts []string
+	for _, entry := range entries {
+		source, target := filepath.Join(legacy, entry.Name()), filepath.Join(next, entry.Name())
+		if _, err := os.Lstat(target); err == nil {
+			conflicts = append(conflicts, entry.Name())
+			continue
+		} else if !os.IsNotExist(err) {
+			m.log(slog.LevelWarn, "config directory merge failed", "error", err.Error())
+			return
+		}
+		if err := m.ops.rename(source, target); err != nil {
+			m.log(slog.LevelWarn, "config directory merge failed", "entry", entry.Name(), "error", err.Error())
+			return
+		}
+	}
+	if len(conflicts) > 0 {
+		m.log(slog.LevelWarn, "config directory merge conflicts", "names", strings.Join(conflicts, ", "))
+		return
+	}
+	// Remove only an empty directory, including if another startup added an entry.
+	if err := os.Remove(legacy); err != nil {
+		m.log(slog.LevelWarn, "config directory merge failed", "error", err.Error())
+		return
+	}
+	if err := m.ops.symlink("headroom", legacy); err != nil {
+		m.log(slog.LevelWarn, "config compatibility link failed", "from", legacy, "to", next, "error", err.Error())
+		return
+	}
+	m.log(slog.LevelInfo, "config directory merged", "from", legacy, "to", next)
 }
 
 func (m configMigration) selectDefault(legacy, next string) string {

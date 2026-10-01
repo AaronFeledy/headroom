@@ -45,7 +45,7 @@ int desktopCLIRequest(int argc, char **argv) {
     if (bytes.isEmpty() || bytes.size() > 4096) return 1;
     const auto command = QJsonDocument::fromJson(bytes);
     if (!command.isObject()) return 1;
-    InstanceService instance(SettingsService::defaultPath());
+    InstanceService instance(SettingsService::instanceIdentityPath());
     const int timeout = command.object().value(QStringLiteral("command")).toString() == QStringLiteral("update") ? 8 * 60 * 1000 : 3000;
     const auto response = instance.request(command.toJson(QJsonDocument::Compact), timeout);
     if (response.isEmpty()) return instance.primaryUnavailable() ? 3 : 1;
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         QMessageBox::critical(nullptr, "Headroom", "The --config option requires a settings file path.");
         return 2;
     }
-    const QString settingsPath = isolated ? parser.value("config") : SettingsService::defaultPath();
+    const QString settingsPath = isolated ? parser.value("config") : SettingsService::instanceIdentityPath();
     InstanceService instance(settingsPath);
     if (!capture) {
         const auto result = instance.start();

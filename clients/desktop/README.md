@@ -124,9 +124,20 @@ Failures back off exponentially up to five minutes (or the configured interval
 if longer), with normal polling restored after success. Manual Refresh bypasses
 the wait.
 
-Configuration is saved atomically at `~/.config/Headroom/Headroom/settings.json`
-on Linux, honoring `XDG_CONFIG_HOME`, `~/Library/Application Support/Headroom/Headroom/settings.json`
-on macOS, and `%APPDATA%\Headroom\Headroom\settings.json` on Windows. Linux and macOS settings and migration backups use owner-only (`0600`)
+Configuration is saved atomically beside the server's `config.yaml`:
+`${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json` on Linux and macOS,
+and `%APPDATA%\Headroom\settings.json` on Windows. A normal launch copies a
+previous file once when the new file is absent, without copying backup siblings
+or changing the source. Previous locations are
+`${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json` on Linux,
+`~/Library/Application Support/Headroom/Headroom/settings.json` on macOS, and
+`%APPDATA%\Headroom\Headroom\settings.json` on Windows. The copy uses a private
+directory (`0700`) and file (`0600`) on Unix and never overwrites a concurrently
+created file. On copy failure, the session loads and saves at the previous path;
+Open diagnostics shows a controlled notice, not a settings load error.
+Single-instance and CLI bridge identity stays on the previous path, which is
+only hashed, so old and new generations find the same running app during updates.
+Linux and macOS settings and migration backups use owner-only (`0600`)
 permissions. Windows uses the current user's roaming application-data directory;
 POSIX mode bits are not used as a claim about Windows ACLs. These files contain
 the bearer token in plaintext. Tokens never appear in the exposed UI state or error messages. Leave the token
@@ -222,10 +233,11 @@ with `--background`. On macOS it atomically manages the owner-only
 `~/Library/LaunchAgents/io.headroom.Headroom.plist` entry for the next login.
 This toggle is disabled in capture
 and isolated-config modes. On the first normal Windows launch, Headroom imports
-schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
-settings file is absent. The legacy file remains untouched and a create-once
-backup is kept beside the new settings. Imported empty API addresses retain local
-mode. Local mode probes and attaches to a compatible server on `127.0.0.1:7823`,
+schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when neither
+the new nor previous Headroom settings file exists. The legacy file remains
+untouched and a create-once backup is kept beside the new settings. Imported empty
+API addresses retain local mode. Local mode probes and attaches to a compatible
+server on `127.0.0.1:7823`,
 or starts an adjacent bundled `usage-server` executable with bounded readiness and
 restart handling. Headroom stops only a server process that it started.
 
