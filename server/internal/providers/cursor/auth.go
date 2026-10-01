@@ -16,7 +16,8 @@ type localAuthFile struct {
 }
 
 type jwtClaims struct {
-	Subject string `json:"sub"`
+	Subject   string `json:"sub"`
+	ExpiresAt int64  `json:"exp"`
 }
 
 func cookieFromAccessToken(accessToken string) (string, error) {
@@ -72,6 +73,9 @@ func readLocalCookieHeader(ctx context.Context, authPath string) (string, error)
 	var auth localAuthFile
 	if err := json.Unmarshal(data, &auth); err != nil {
 		return "", fmt.Errorf("parse Cursor auth file: %w", err)
+	}
+	if strings.TrimSpace(auth.AccessToken) == "" {
+		return "", ErrUnauthorized
 	}
 	cookieHeader, err := cookieFromAccessToken(auth.AccessToken)
 	if err != nil {

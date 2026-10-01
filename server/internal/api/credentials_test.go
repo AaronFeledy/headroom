@@ -27,7 +27,7 @@ func Test_CursorCredentials_updates_memory_credentials_and_refetches_once(t *tes
 
 	// Then
 	assertStatus(t, rec, http.StatusOK)
-	assertJSON(t, rec, `{"provider":"Cursor","refetched":true,"usage":{"provider_name":"Cursor","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":10,"resets_at":null},"weekly":{"utilization":20,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":10,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null},{"id":"weekly","label":"Weekly","utilization":20,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null}}`)
+	assertJSON(t, rec, `{"provider":"Cursor","refetched":true,"usage":{"provider_name":"Cursor","primary_label":"Current","secondary_label":"Weekly","show_secondary":true,"subtitle":null,"primary_status_text":null,"secondary_status_text":null,"reauth_command":null,"current":{"utilization":10,"resets_at":null},"weekly":{"utilization":20,"resets_at":null},"buckets":[{"id":"session","label":"Current","utilization":10,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null},{"id":"weekly","label":"Weekly","utilization":20,"resets_at":null,"status_text":null,"starts_at":null,"detail_text":null}],"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null,"auth":{"state":"signed_out","source":null,"sign_in_command":"cursor-agent login","sign_in_url":"https://cursor.com/login","accepts_browser_credentials":true,"checked":[]}}}`)
 	if cursor.cookie != "WorkosCursorSessionToken=sub::token" {
 		t.Fatalf("cookie setter = %q", cursor.cookie)
 	}
@@ -206,6 +206,10 @@ func (t *blockingCredentialTransaction) SetCookieHeader(cookie string) {
 	if t.setters == 2 {
 		close(t.secondSetterCalled)
 	}
+}
+
+func (t *blockingCredentialTransaction) SetDesktopCookie(cookie, sourceName string) {
+	t.SetCookieHeader(cookie)
 }
 
 func (t *blockingCredentialTransaction) SetAccessToken(string) error { return nil }

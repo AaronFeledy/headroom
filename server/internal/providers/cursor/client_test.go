@@ -19,7 +19,7 @@ import (
 func Test_Client_Fetch_maps_usage_summary_when_cookie_pushed(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=session"})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("WorkosCursorSessionToken=session")
 
 	// When
@@ -52,7 +52,7 @@ func Test_Client_Fetch_maps_usage_summary_when_cookie_pushed(t *testing.T) {
 func Test_Client_Fetch_emits_grok_bot_bucket_when_sand_usage_present(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "cookie", sandUsage: true})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When
@@ -80,7 +80,7 @@ func Test_Client_Fetch_emits_grok_bot_bucket_when_sand_usage_present(t *testing.
 func Test_Client_Fetch_maps_legacy_request_usage_when_auth_me_has_subject(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "cookie", authSub: "user-123", legacyUsage: true})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When
@@ -102,7 +102,7 @@ func Test_Client_Fetch_maps_legacy_request_usage_when_auth_me_has_subject(t *tes
 func Test_Client_Fetch_clears_secret_and_needs_reauth_when_unauthorized(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{status: http.StatusUnauthorized})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When
@@ -123,7 +123,7 @@ func Test_Client_Fetch_clears_secret_and_needs_reauth_when_unauthorized(t *testi
 func Test_Client_Fetch_reports_error_when_forbidden_without_reauth(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{status: http.StatusForbidden})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When
@@ -141,7 +141,7 @@ func Test_Client_Fetch_reports_error_when_forbidden_without_reauth(t *testing.T)
 func Test_Client_Fetch_reports_error_when_summary_malformed(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "cookie", malformedSummary: true})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When
@@ -162,7 +162,7 @@ func Test_Client_Fetch_honors_canceled_context(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	t.Cleanup(srv.Close)
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -180,7 +180,7 @@ func Test_Client_SetAccessToken_builds_workos_cookie_from_last_jwt_subject_segme
 	// Given
 	token := jwtWithSub("auth0|user_abc", "payload")
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=user_abc%3A%3A" + token})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 
 	// When
 	err := client.SetAccessToken(token)
@@ -194,7 +194,7 @@ func Test_Client_SetAccessToken_builds_workos_cookie_from_last_jwt_subject_segme
 
 func Test_Client_SetAccessToken_rejects_bad_jwt_without_storing_secret(t *testing.T) {
 	// Given
-	client := NewClient(Options{})
+	client := newTestClient(t, Options{})
 
 	// When
 	err := client.SetAccessToken("not-a-jwt")
@@ -205,12 +205,12 @@ func Test_Client_SetAccessToken_rejects_bad_jwt_without_storing_secret(t *testin
 	}
 }
 
-func Test_Client_Fetch_uses_local_auth_only_when_discovery_enabled(t *testing.T) {
+func Test_Client_Fetch_uses_local_auth(t *testing.T) {
 	// Given
 	token := jwtWithSub("local-sub", "payload")
 	authPath := writeAuthFile(t, token)
 	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=local-sub%3A%3A" + token})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client(), AuthPath: authPath, AllowLocalDiscovery: true})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client(), AuthPath: authPath})
 
 	// When
 	got, err := client.Fetch(context.Background())
@@ -221,10 +221,11 @@ func Test_Client_Fetch_uses_local_auth_only_when_discovery_enabled(t *testing.T)
 	}
 }
 
-func Test_Client_Fetch_does_not_discover_local_auth_when_disabled(t *testing.T) {
+func Test_Client_Fetch_discovers_local_auth_without_loopback_gate(t *testing.T) {
 	// Given
 	authPath := writeAuthFile(t, jwtWithSub("local-sub", "payload"))
-	client := NewClient(Options{AuthPath: authPath, AllowLocalDiscovery: false})
+	srv := newCursorTestServer(t, cursorTestBehavior{})
+	client := newTestClient(t, Options{AuthPath: authPath, BaseURL: srv.URL, HTTPClient: srv.Client()})
 
 	// When
 	got, err := client.Fetch(context.Background())
@@ -233,7 +234,7 @@ func Test_Client_Fetch_does_not_discover_local_auth_when_disabled(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Fetch returned error: %v", err)
 	}
-	if got.Error == nil || got.NeedsReauth {
+	if got.Error != nil || got.NeedsReauth || got.Auth.Source == nil || got.Auth.Source.Kind != "cli" {
 		t.Fatalf("error/reauth = %v/%v", got.Error, got.NeedsReauth)
 	}
 }
@@ -241,7 +242,7 @@ func Test_Client_Fetch_does_not_discover_local_auth_when_disabled(t *testing.T) 
 func Test_Client_Setters_are_safe_during_concurrent_fetches(t *testing.T) {
 	// Given
 	srv := newCursorTestServer(t, cursorTestBehavior{})
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup

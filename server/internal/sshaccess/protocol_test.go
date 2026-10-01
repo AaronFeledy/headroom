@@ -161,6 +161,10 @@ func (provider *statefulCursor) SetCookieHeader(cookie string) {
 	provider.cookie = cookie
 }
 
+func (provider *statefulCursor) SetDesktopCookie(cookie, sourceName string) {
+	provider.SetCookieHeader(cookie)
+}
+
 func (provider *statefulCursor) SetAccessToken(string) error { return nil }
 
 func (provider *statefulCursor) Fetch(context.Context) (usage.UsageData, error) {

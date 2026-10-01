@@ -407,8 +407,8 @@ func managedServiceEnvironment(environment []string) []string {
 		if runtime.GOOS == "windows" {
 			checkedKey = strings.ToUpper(key)
 		}
-		allowed := checkedKey == "USAGE_CONFIG" || checkedKey == "USAGE_LISTEN_ADDR" || checkedKey == "USAGE_AUTH_TOKEN" || checkedKey == "USAGE_POLL_INTERVAL" || checkedKey == "USAGE_SSH_ACCESS" ||
-			(strings.HasPrefix(checkedKey, "USAGE_PROVIDER_") && (strings.HasSuffix(checkedKey, "_ENABLED") || strings.HasSuffix(checkedKey, "_CREDENTIALS_PATH")))
+		allowed := checkedKey == "USAGE_CONFIG" || checkedKey == "USAGE_LISTEN_ADDR" || checkedKey == "USAGE_AUTH_TOKEN" || checkedKey == "USAGE_POLL_INTERVAL" || checkedKey == "USAGE_SSH_ACCESS" || checkedKey == "USAGE_TLS" || checkedKey == "USAGE_TLS_CERT_FILE" || checkedKey == "USAGE_TLS_KEY_FILE" ||
+			(strings.HasPrefix(checkedKey, "USAGE_PROVIDER_") && (strings.HasSuffix(checkedKey, "_ENABLED") || strings.HasSuffix(checkedKey, "_CREDENTIALS_PATH") || strings.HasSuffix(checkedKey, "_BROWSER_CREDENTIALS")))
 		if allowed {
 			result = append(result, item)
 		}

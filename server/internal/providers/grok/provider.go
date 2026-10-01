@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,19 +81,35 @@ func NewProvider(opts Options) (*Provider, error) {
 
 func (p *Provider) Name() string { return providerName }
 
-func (p *Provider) Fetch(ctx context.Context) (usage.UsageData, error) {
+func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
+	state := "signed_out"
+	var source *usage.AuthSource
+	defer func() {
+		if result.NeedsReauth && source != nil {
+			state = "expired"
+		}
+		result.Auth = usage.NewAuth(providerName, state, source)
+	}()
 	data := baseUsageData()
 	creds, err := p.credentials(ctx)
 	if err != nil {
 		data, err = p.authError(data, err)
 	} else {
+		ready := true
+		state = "signed_in"
+		name := "Grok CLI"
+		if strings.HasPrefix(p.credentialsPath, `\\wsl.`) {
+			name += " (WSL)"
+		}
+		source = &usage.AuthSource{Kind: "cli", Name: name}
 		if creds.needsRefresh(p.now()) {
 			creds, err = p.refresh(ctx, creds, refreshReasonProactive)
 			if err != nil {
+				ready = false
 				data, err = p.refreshError(data, err)
 			}
 		}
-		if err == nil {
+		if ready && err == nil {
 			data, err = p.fetchWithToken(ctx, data, creds)
 		}
 	}
@@ -109,6 +126,10 @@ func (p *Provider) Fetch(ctx context.Context) (usage.UsageData, error) {
 		return data, webErr
 	}
 	if webAdded {
+		if source == nil {
+			state = "signed_in"
+			source = &usage.AuthSource{Kind: "desktop", Name: "browser"}
+		}
 		return data, nil
 	}
 	return data, err

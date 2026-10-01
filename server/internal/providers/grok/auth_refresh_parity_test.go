@@ -139,8 +139,10 @@ func Test_Provider_Fetch_does_not_retry_invalid_grant(t *testing.T) {
 	// Given
 	authPath := writeAuthFile(t, `{"https://auth.x.ai/oauth2/token":{"key":"old-token","refresh_token":"bad-refresh","expires_at":1}}`)
 	var tokenCalls atomic.Int32
+	var billingCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/oauth2/token" {
+			billingCalls.Add(1)
 			http.NotFound(w, r)
 			return
 		}
@@ -149,7 +151,7 @@ func Test_Provider_Fetch_does_not_retry_invalid_grant(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -166,6 +168,9 @@ func Test_Provider_Fetch_does_not_retry_invalid_grant(t *testing.T) {
 	}
 	if got := tokenCalls.Load(); got != 1 {
 		t.Fatalf("token endpoint calls = %d, want 1", got)
+	}
+	if got := billingCalls.Load(); got != 0 {
+		t.Fatalf("billing calls after invalid grant = %d", got)
 	}
 }
 

@@ -66,12 +66,16 @@ func (panicCache) Snapshot() []poller.Entry        { panic("secret panic") }
 func (panicCache) Get(string) (poller.Entry, bool) { return poller.Entry{}, false }
 
 type fakeCursor struct {
-	cookie string
-	token  string
-	setErr error
+	sourceName string
+	cookie     string
+	token      string
+	setErr     error
 }
 
 func (c *fakeCursor) SetCookieHeader(cookie string) { c.cookie = cookie }
+func (c *fakeCursor) SetDesktopCookie(cookie, sourceName string) {
+	c.cookie, c.sourceName = cookie, sourceName
+}
 func (c *fakeCursor) SetAccessToken(token string) error {
 	c.token = token
 	if strings.Count(token, ".") != 2 {

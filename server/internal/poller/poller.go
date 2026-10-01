@@ -210,6 +210,7 @@ func (s *providerState) overlayExpectedError(data usage.UsageData) usage.UsageDa
 		return copyUsageData(data)
 	}
 	overlay := copyUsageData(s.lastGood)
+	overlay.Auth = copyAuth(data.Auth)
 	overlay.Error = copyString(data.Error)
 	overlay.NeedsReauth = data.NeedsReauth
 	overlay.ReauthCommand = copyString(data.ReauthCommand)
@@ -236,6 +237,7 @@ func (s *providerState) overlayFetchFailure(data usage.UsageData, err error) usa
 }
 
 func overlayFetchFailureFields(base usage.UsageData, partial usage.UsageData) usage.UsageData {
+	base.Auth = copyAuth(partial.Auth)
 	base.NeedsReauth = partial.NeedsReauth
 	base.ReauthCommand = copyString(partial.ReauthCommand)
 	base.PrimaryStatusText = copyString(partial.PrimaryStatusText)

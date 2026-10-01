@@ -14,7 +14,7 @@ func Test_Client_Fetch_reports_error_when_upstream_hangs_until_timeout(t *testin
 		<-r.Context().Done()
 	}))
 	t.Cleanup(srv.Close)
-	client := NewClient(Options{
+	client := newTestClient(t, Options{
 		BaseURL:    srv.URL,
 		HTTPClient: &http.Client{Timeout: time.Nanosecond},
 	})
@@ -40,7 +40,7 @@ func Test_Client_Fetch_treats_redirect_html_as_non_auth_failure(t *testing.T) {
 		_, _ = w.Write([]byte("<html>login</html>"))
 	}))
 	t.Cleanup(srv.Close)
-	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client := newTestClient(t, Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 	client.SetCookieHeader("cookie")
 
 	// When

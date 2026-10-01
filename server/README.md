@@ -69,7 +69,8 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `GET /api/v1/usage` - array of cached provider usage entries.
 - `GET /api/v1/usage/{provider}` - one cached provider entry, for example `Claude` or `codex`.
 - `GET /api/v1/health` - server status, version, and provider health.
-- `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
+- `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one of `cookie` or `access_token`. Cookies may include `source_name` (trimmed, 1–40 characters, no controls); access tokens may not.
+- `GET /api/v1/tls/proof?nonce=<64 hex>` - unauthenticated TLS identity proof; available only over HTTPS when a bearer token is configured.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 - `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
 
@@ -107,7 +108,17 @@ After submission, the server waits three seconds and performs one read-only Open
 usage fetch. The desktop checks the usage cache after 5, 12, and 25 seconds while
 waiting, then continues normal polling. These reads never resubmit a reset.
 
-When `auth_token` or `USAGE_AUTH_TOKEN` is set, every public HTTP endpoint requires
+Each usage entry also includes an always-present `auth` object: `state`
+(`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,
+nullable `sign_in_command` and `sign_in_url`, `accepts_browser_credentials`, and
+an array `checked` (up to 12 `{kind, name, status}` entries). Only Cursor accepts
+browser credentials and populates `checked`. A signed-in credential can coexist
+with a network or upstream error. Existing fields remain unchanged; Cursor's
+`needs_reauth` is true when signed out or expired, and `reauth_command` mirrors
+its sign-in command.
+
+When `auth_token` or `USAGE_AUTH_TOKEN` is set, public HTTP endpoints other than
+the TLS proof endpoint require
 `Authorization: Bearer <token>`. The protected SSH socket authenticates the local
 OS account and supplies that token internally; an SSH client does not need it.
 
@@ -144,6 +155,8 @@ CLI flags:
 - `--config <path>` - config YAML path.
 - `--listen-addr <host:port>` - HTTP listen address.
 - `--auth-token <token>` - bearer token.
+- `--tls <auto|on|off>` - default `auto` enables TLS for non-loopback binds.
+- `--tls-cert-file <path>` and `--tls-key-file <path>` - optional paired PEM files.
 - `--poll-interval <duration>` - Go duration such as `30s`, `1m`, or `5m`.
 - `--ssh-access` - opt in to the private per-account SSH socket on Linux/WSL;
   disabled by default and incompatible with `--desktop-session`.
@@ -162,16 +175,21 @@ Environment variables:
 - `USAGE_CONFIG` - config YAML path.
 - `USAGE_LISTEN_ADDR` - HTTP listen address.
 - `USAGE_AUTH_TOKEN` - bearer token.
+- `USAGE_TLS`, `USAGE_TLS_CERT_FILE`, `USAGE_TLS_KEY_FILE` - TLS settings.
 - `USAGE_POLL_INTERVAL` - Go duration.
 - `USAGE_SSH_ACCESS` - boolean enabling the Linux/WSL SSH socket.
 - `USAGE_PROVIDER_<NAME>_ENABLED` - boolean provider toggle, for example `USAGE_PROVIDER_CODEX_ENABLED=true`.
 - `USAGE_PROVIDER_<NAME>_CREDENTIALS_PATH` - provider credential path, for example `USAGE_PROVIDER_GROK_CREDENTIALS_PATH=/var/lib/usage-server/grok-auth.json`.
+- `USAGE_PROVIDER_CURSOR_BROWSER_CREDENTIALS` - boolean; defaults to true.
 
 YAML keys:
 
 ```yaml
 listen_addr: 127.0.0.1:7823
 auth_token: ""
+tls: auto
+tls_cert_file: ""
+tls_key_file: ""
 poll_interval: 60s
 ssh_access: false
 providers:
@@ -184,6 +202,7 @@ providers:
   cursor:
     enabled: true
     credentials_path: ""
+    browser_credentials: true
   grok:
     enabled: true
     credentials_path: ~/.grok/auth.json
@@ -195,14 +214,50 @@ when no path is set. Disable unwanted providers with `enabled: false` or
 `USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
 retained while Headroom displays it as ChatGPT. Codex can also discover
 `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode
-auth. Cursor local discovery is intended for local browser sessions; remote
-deployments should prefer an in-memory credential push over HTTPS because
+auth. Cursor discovery works on every bind, including off-loopback. Its priority
+is cursor-agent `auth.json`, Cursor app `state.vscdb`, server-side Firefox, then
+memory-only desktop cookies or API access tokens. An explicit Cursor credential
+path replaces only CLI-file discovery. On WSL it also checks Windows profiles
+(preferring `$USER`, respecting the automount root in `/etc/wsl.conf`); native
+Windows checks WSL homes without running Windows executables. Cross-kernel
+source names include `(Windows)` or `(WSL)`.
+
+Firefox profiles are searched default-first. Chrome, Edge, Brave, and Chromium
+are detected but their cookies are never decrypted; `checked` can report
+`encrypted`, `locked`, `unreadable`, `signed_out`, or `expired`. Set
+`providers.cursor.browser_credentials: false` to skip server-side browsers.
+Working credentials remain active until rejected or a higher-priority file
+changes. Rejected credentials are remembered in memory and fallbacks are tried
+within the same fetch; JWT expiration is checked before HTTP requests. Browser
+databases are read through private, disposable SQLite snapshots including WAL
+files. No pushed credential is persisted.
+
 Headroom never sends browser credentials to remote plain HTTP. Grok weekly usage
 primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json`
 or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback
-when CLI weekly data is unavailable. Browser discovery is available in official
-Windows Headroom packages only; Linux deployments use server-side files or the
-documented WSL sync.
+when CLI weekly data is unavailable.
+
+## HTTPS identity and verification
+
+TLS-enabled standalone servers accept both HTTP and HTTPS on the same port;
+existing plain-HTTP clients keep working. Explicit cert/key files enable TLS
+and must be supplied together; combining them with `tls: off` is invalid.
+Without files, a self-signed RSA identity is saved in the migrated config base's
+`headroom/tls/{cert.pem,key.pem}` (`Headroom\\tls` under `%APPDATA%` on Windows).
+The directory is mode 0700 and the key is 0600. Certificates last 397 days and
+are regenerated at startup if invalid or fewer than 30 days remain. In `auto`
+mode an identity failure logs a warning and leaves HTTP available; `on` and
+explicit files fail startup instead. The listening log records the leaf's
+SHA-256 fingerprint. Desktop-session TLS and SSH sockets are unchanged.
+
+The CLI first uses system certificate trust. With a token, an untrusted HTTPS
+certificate can be verified using a fresh nonce and the token-keyed HMAC proof,
+without sending the token. The proof binds the exact peer leaf certificate;
+authenticated requests then use an in-memory pin with certificate verification
+enabled. Rotation requires a new successful proof. An explicit HTTP URL with a
+token attempts HTTPS on the same host and port first; older HTTP-only servers
+remain supported. Never disable verification on authenticated clients merely
+to accept a self-signed server.
 
 ## Authentication Safety
 

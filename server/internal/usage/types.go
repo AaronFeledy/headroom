@@ -63,6 +63,7 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 }
 
 type UsageData struct {
+	Auth                  Auth
 	ProviderName          string
 	PrimaryLabel          string
 	SecondaryLabel        string
@@ -159,6 +160,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		NeedsReauth           bool                   `json:"needs_reauth"`
 		IsSuccess             bool                   `json:"is_success"`
 		RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
+		Auth                  Auth                   `json:"auth"`
 	}
 	buckets := d.Buckets
 	if d.Error != nil || buckets == nil {
@@ -168,7 +170,12 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 	if d.Error != nil {
 		resetCredits = nil
 	}
+	auth := d.Auth
+	if auth.State == "" {
+		auth = NewAuth(d.ProviderName, "signed_out", nil)
+	}
 	return json.Marshal(usageJSON{
+		Auth:                  auth,
 		ProviderName:          d.ProviderName,
 		PrimaryLabel:          d.PrimaryLabel,
 		SecondaryLabel:        d.SecondaryLabel,
