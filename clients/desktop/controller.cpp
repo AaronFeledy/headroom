@@ -33,6 +33,8 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_server.configure(m_mode, m_token);
     syncConnection();
+    // Start a pending HTTPS upgrade at once; version checks wait for its result.
+    if (m_startPolling && remoteVerificationPending()) QTimer::singleShot(0, this, [this] { requestUsage(); });
     connect(&m_credentials, &CredentialService::event, this, [this](const QString &message) {
         log(QStringLiteral("Credentials"), message);
     });
@@ -129,6 +131,11 @@ QVariantMap Controller::loginCopy(const QVariantMap &provider) const {
 QVariantMap Controller::browserChecked() const {
     return {{QStringLiteral("Cursor"), m_credentials.checked(QStringLiteral("Cursor"))},
             {QStringLiteral("Grok"), m_credentials.checked(QStringLiteral("Grok"))}};
+}
+
+bool Controller::remoteVerificationPending() const {
+    return m_mode == QStringLiteral("remote") && (m_proving || TlsProof::shouldUpgrade(QUrl(m_url), !m_token.isEmpty(),
+        QDateTime::currentSecsSinceEpoch(), m_nextUpgradeAttempt));
 }
 
 void Controller::verifyRemote(bool upgrade) {

@@ -118,6 +118,7 @@ private slots:
         QVERIFY(controller.saveSettings("remote", url, "synthetic-token", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
         QCOMPARE(proofs, 1); QCOMPARE(usage, 1); QCOMPARE(controller.backendUrl(), url);
+        QVERIFY(!controller.remoteVerificationPending());
         controller.refresh(); QTRY_COMPARE(usage, 2); QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(proofs, 1);
         QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(usage, 3); QCOMPARE(proofs, 1);
@@ -152,8 +153,11 @@ private slots:
         QTemporaryDir dir; SettingsService settings(dir.filePath("settings.json"), false);
         auto value = settings.value(); value.connectionMode = "remote"; value.url = server.url(scheme); value.token = QString::fromUtf8(server.token);
         QVERIFY(settings.save(value).isEmpty());
-        Controller controller(settings.path(), nullptr, false, {}, {}, {}, false); controller.refresh();
+        Controller controller(settings.path(), nullptr, false, {}, {}, {}, false);
+        QCOMPARE(controller.remoteVerificationPending(), scheme == QStringLiteral("http"));
+        controller.refresh();
         QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+        QVERIFY(!controller.remoteVerificationPending());
         QCOMPARE(server.requests.size(), 2);
         QVERIFY(server.requests[0].startsWith("GET /base/api/v1/tls/proof?nonce="));
         QVERIFY(!HttpAssertions::hasHeader(server.requests[0], "Authorization"));

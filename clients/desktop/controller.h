@@ -35,6 +35,9 @@ public:
     QVariantMap state() const;
     QVariantMap settings() const;
     QVariantMap browserChecked() const;
+    // True while a saved http:// remote should first try token-verified HTTPS.
+    // Other authenticated requests wait so the bearer is not sent in plain text.
+    bool remoteVerificationPending() const;
     QVariantList diagnostics() const { return m_diagnostics; }
     Q_INVOKABLE void clearDiagnostics();
     Q_INVOKABLE QString diagnosticText() const;
