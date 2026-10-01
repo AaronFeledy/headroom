@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QStandardPaths>
 #include <QtTest>
 
 namespace {
@@ -27,7 +28,29 @@ QJsonObject readObject(const QString &path)
 
 class SettingsTest : public QObject {
     Q_OBJECT
+    QByteArray previousXdg;
+    QByteArray previousAppData;
+    QString previousOrganization;
+    QString previousApplication;
 private slots:
+    void init()
+    {
+        previousXdg = qgetenv("XDG_CONFIG_HOME");
+        previousAppData = qgetenv("APPDATA");
+        previousOrganization = QCoreApplication::organizationName();
+        previousApplication = QCoreApplication::applicationName();
+        QCoreApplication::setOrganizationName("Headroom");
+        QCoreApplication::setApplicationName("Headroom");
+    }
+    void cleanup()
+    {
+        if (previousXdg.isNull()) qunsetenv("XDG_CONFIG_HOME");
+        else qputenv("XDG_CONFIG_HOME", previousXdg);
+        if (previousAppData.isNull()) qunsetenv("APPDATA");
+        else qputenv("APPDATA", previousAppData);
+        QCoreApplication::setOrganizationName(previousOrganization);
+        QCoreApplication::setApplicationName(previousApplication);
+    }
     void defaultsToLocalAndPreservesOverrides_data()
     {
         QTest::addColumn<int>("platform");
@@ -38,8 +61,130 @@ private slots:
 
     void macDefaultPathIsStable()
     {
+        qunsetenv("XDG_CONFIG_HOME");
         QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Mac),
-                 QDir(QDir::homePath()).filePath(QStringLiteral("Library/Application Support/Headroom/Headroom/settings.json")));
+                 QDir(QDir::homePath()).filePath(QStringLiteral(".config/headroom/settings.json")));
+    }
+    void defaultPathsHonorEnvironment()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        qputenv("XDG_CONFIG_HOME", QFile::encodeName(dir.path()));
+        qputenv("APPDATA", QFile::encodeName(dir.path()));
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Linux), dir.filePath("headroom/settings.json"));
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Mac), dir.filePath("headroom/settings.json"));
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Windows), dir.filePath("Headroom/settings.json"));
+        qputenv("XDG_CONFIG_HOME", "");
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Linux), QDir::homePath() + "/.config/headroom/settings.json");
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Mac), QDir::homePath() + "/.config/headroom/settings.json");
+        qunsetenv("XDG_CONFIG_HOME");
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Linux), QDir::homePath() + "/.config/headroom/settings.json");
+        qputenv("APPDATA", "");
+        const auto roaming = QFileInfo(QFileInfo(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).path()).path();
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Windows), QDir(roaming).filePath("Headroom/settings.json"));
+    }
+    void previousPathsAndInstanceIdentityStayStable()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        qputenv("XDG_CONFIG_HOME", QFile::encodeName(dir.path()));
+        QCOMPARE(SettingsService::previousDefaultPath(SettingsService::Platform::Mac),
+                 QDir::homePath() + "/Library/Application Support/Headroom/Headroom/settings.json");
+        QCOMPARE(SettingsService::previousDefaultPath(SettingsService::Platform::Linux),
+                 QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)).filePath("settings.json"));
+#ifdef Q_OS_LINUX
+        QCOMPARE(SettingsService::previousDefaultPath(), dir.filePath("Headroom/Headroom/settings.json"));
+#endif
+        QCOMPARE(SettingsService::previousDefaultPath(SettingsService::Platform::Windows),
+                 QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("settings.json"));
+        QCOMPARE(SettingsService::instanceIdentityPath(), SettingsService::previousDefaultPath());
+        QVERIFY(SettingsService::instanceIdentityPath() != SettingsService::defaultPath());
+    }
+    void copiesPreviousSettingsPrivately_data()
+    {
+        QTest::addColumn<int>("platform");
+        QTest::newRow("linux") << int(SettingsService::Platform::Linux);
+        QTest::newRow("mac") << int(SettingsService::Platform::Mac);
+        QTest::newRow("windows") << int(SettingsService::Platform::Windows);
+    }
+    void copiesPreviousSettingsPrivately()
+    {
+        QFETCH(int, platform);
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString previous = dir.filePath("previous/settings.json"), target = dir.filePath("headroom/settings.json");
+        const QByteArray original = R"({"schemaVersion":1,"connectionMode":"remote","url":"https://example.test","token":"fixture"})";
+        QVERIFY(writeFile(previous, original));
+        QVERIFY(writeFile(previous + ".bak", "backup"));
+        QVERIFY(writeFile(previous + ".legacy.bak", "legacy backup"));
+        SettingsService service({}, true, SettingsService::Platform(platform), {}, target, previous);
+        QCOMPARE(service.path(), target);
+        QVERIFY(service.loadError().isEmpty());
+        QVERIFY(service.migrationNotice().isEmpty());
+        QCOMPARE(readFile(target), original);
+        QCOMPARE(readFile(previous), original);
+        QVERIFY(!QFileInfo::exists(target + ".bak"));
+        QVERIFY(!QFileInfo::exists(target + ".legacy.bak"));
+#ifndef Q_OS_WIN
+        const auto publicPermissions = QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+                                       QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+        QVERIFY(!(QFile::permissions(target) & publicPermissions));
+        QVERIFY(!(QFile::permissions(QFileInfo(target).absolutePath()) & publicPermissions));
+        QVERIFY(QFile::permissions(target).testFlag(QFileDevice::ReadOwner));
+        QVERIFY(QFile::permissions(target).testFlag(QFileDevice::WriteOwner));
+        QVERIFY(!QFile::permissions(target).testFlag(QFileDevice::ExeOwner));
+        QVERIFY(QFile::permissions(QFileInfo(target).absolutePath()).testFlag(QFileDevice::ExeOwner));
+        QVERIFY(QFile::permissions(QFileInfo(target).absolutePath()).testFlag(QFileDevice::ReadOwner));
+        QVERIFY(QFile::permissions(QFileInfo(target).absolutePath()).testFlag(QFileDevice::WriteOwner));
+#endif
+    }
+    void existingNewSettingsWinOverPreviousAndLegacy()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString previous = dir.filePath("previous.json"), target = dir.filePath("new.json"), legacy = dir.filePath("legacy.json");
+        const QByteArray current = R"({"schemaVersion":1,"connectionMode":"local","interval":120})";
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local","interval":90})"));
+        QVERIFY(writeFile(target, current));
+        QVERIFY(writeFile(legacy, R"({"RefreshIntervalSeconds":150})"));
+        SettingsService service({}, true, SettingsService::Platform::Windows, legacy, target, previous);
+        QCOMPARE(service.value().interval, 120);
+        QCOMPARE(readFile(target), current);
+        QVERIFY(!service.importedLegacy());
+    }
+    void concurrentNewSettingsAreNotOverwritten()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString previous = dir.filePath("previous.json"), target = dir.filePath("headroom/settings.json");
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local","interval":90})"));
+        const QByteArray concurrent = R"({"schemaVersion":1,"connectionMode":"local","interval":120})";
+        SettingsService service({}, true, SettingsService::Platform::Linux, {}, target, previous,
+                                [&] { QVERIFY(writeFile(target, concurrent)); });
+        QCOMPARE(service.path(), target);
+        QCOMPARE(service.value().interval, 120);
+        QCOMPARE(readFile(target), concurrent);
+        QCOMPARE(QDir(QFileInfo(target).absolutePath()).entryList({".settings-*"}, QDir::Files | QDir::Hidden).size(), 0);
+    }
+    void copyFailureUsesPreviousSettingsForSaving()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString previous = dir.filePath("previous.json"), blocker = dir.filePath("blocker");
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local","interval":90})"));
+        QVERIFY(writeFile(blocker, "not a directory"));
+        SettingsService service({}, true, SettingsService::Platform::Linux, {}, blocker + "/settings.json", previous);
+        QCOMPARE(service.path(), previous);
+        QCOMPARE(service.legacyBackupPath(), previous + ".legacy.bak");
+        QVERIFY(service.loadError().isEmpty());
+        QVERIFY(!service.migrationNotice().isEmpty());
+        auto updated = service.value(); updated.interval = 120;
+        QVERIFY(service.save(updated).isEmpty());
+        QCOMPARE(readObject(previous).value("interval").toInt(), 120);
+    }
+    void previousSettingsPreventWindowsLegacyImport()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString previous = dir.filePath("previous.json"), target = dir.filePath("headroom/settings.json"), legacy = dir.filePath("legacy.json");
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local","interval":90})"));
+        QVERIFY(writeFile(legacy, R"({"RefreshIntervalSeconds":150})"));
+        SettingsService service({}, true, SettingsService::Platform::Windows, legacy, target, previous);
+        QCOMPARE(service.value().interval, 90);
+        QVERIFY(!service.importedLegacy());
     }
     void defaultsToLocalAndPreservesOverrides()
     {
@@ -74,13 +219,13 @@ private slots:
     {
         QFETCH(int, schema);
         QTemporaryDir dir; QVERIFY(dir.isValid());
-        const QString target = dir.filePath("Headroom/Headroom/settings.json");
+        const QString target = dir.filePath("Headroom/settings.json");
         const QString legacy = dir.filePath("ClaudeUsageWidget/settings.json");
         const QByteArray original = QString(
             "{\"SchemaVersion\":%1,\"ApiUrl\":\"https://example.test/base\",\"ApiToken\":\"fixture-token\",\"RefreshIntervalSeconds\":120,\"StartWithWindows\":true,\"NotificationsEnabled\":false,\"DebugMode\":true,\"PrimaryProvider\":\"Cursor\",\"ProviderOrder\":[\"Codex\",\"Cursor\",\"Claude\"],\"Unknown\":{\"nested\":1}}")
             .arg(schema).toUtf8();
         QVERIFY(writeFile(legacy, original));
-        SettingsService service({}, true, SettingsService::Platform::Windows, legacy, target);
+        SettingsService service({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QVERIFY2(service.loadError().isEmpty(), qPrintable(service.loadError()));
         QVERIFY(service.importedLegacy());
         QCOMPARE(service.value().connectionMode, QString("remote"));
@@ -105,7 +250,7 @@ private slots:
         QTemporaryDir dir;
         const QString legacy = dir.filePath("old.json"), target = dir.filePath("new/settings.json");
         QVERIFY(writeFile(legacy, QByteArrayLiteral("{\"ApiUrl\":\"\",\"ApiToken\":\"keep\",\"PrimaryProvider\":\"Grok\"}")));
-        SettingsService windows({}, true, SettingsService::Platform::Windows, legacy, target);
+        SettingsService windows({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QCOMPARE(windows.value().connectionMode, QString("local"));
         QCOMPARE(windows.value().token, QString("keep"));
         QCOMPARE(windows.value().order.first(), QString("Grok"));
@@ -222,7 +367,9 @@ private slots:
         const QString defaultPath = dir.filePath("default/settings.json");
         const QString legacy = dir.filePath("old.json");
         QVERIFY(writeFile(legacy, QByteArrayLiteral("{\"ApiUrl\":\"https://legacy.test\"}")));
-        SettingsService service(explicitPath, true, SettingsService::Platform::Windows, legacy, defaultPath);
+        const QString previous = dir.filePath("previous.json");
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local"})"));
+        SettingsService service(explicitPath, true, SettingsService::Platform::Windows, legacy, defaultPath, previous);
         QVERIFY(!service.importedLegacy());
         QVERIFY(!QFileInfo::exists(explicitPath));
         QVERIFY(!QFileInfo::exists(defaultPath));
@@ -234,7 +381,9 @@ private slots:
         QTemporaryDir dir;
         const QString target = dir.filePath("default/settings.json"), legacy = dir.filePath("old.json");
         QVERIFY(writeFile(legacy, QByteArrayLiteral("{\"ApiUrl\":\"https://legacy.test\"}")));
-        SettingsService absent({}, false, SettingsService::Platform::Windows, legacy, target);
+        const QString previous = dir.filePath("previous.json");
+        QVERIFY(writeFile(previous, R"({"schemaVersion":1,"connectionMode":"local"})"));
+        SettingsService absent({}, false, SettingsService::Platform::Windows, legacy, target, previous);
         QVERIFY(!absent.importedLegacy());
         QVERIFY(!QFileInfo::exists(target));
         QVERIFY(!QFileInfo::exists(target + ".legacy.bak"));
@@ -273,17 +422,17 @@ private slots:
         QTemporaryDir dir;
         const QString target = dir.filePath("new/settings.json"), legacy = dir.filePath("old.json");
         const QByteArray malformed = "{bad"; QVERIFY(writeFile(legacy, malformed));
-        SettingsService failed({}, true, SettingsService::Platform::Windows, legacy, target);
+        SettingsService failed({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QVERIFY(!failed.loadError().isEmpty());
         QVERIFY(!failed.saveOrder({"Grok"}, "Grok").isEmpty());
         QVERIFY(!QFileInfo::exists(target));
         QVERIFY(writeFile(legacy, QByteArrayLiteral("{\"ApiUrl\":\"\",\"ApiToken\":\"token\"}")));
-        SettingsService imported({}, true, SettingsService::Platform::Windows, legacy, target);
+        SettingsService imported({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QVERIFY(imported.importedLegacy());
         const QByteArray backup = readFile(imported.legacyBackupPath());
         QVERIFY(writeFile(legacy, QByteArrayLiteral("{\"ApiUrl\":\"https://changed.test\"}")));
         QFile::remove(target);
-        SettingsService retry({}, true, SettingsService::Platform::Windows, legacy, target);
+        SettingsService retry({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QVERIFY(retry.importedLegacy());
         QCOMPARE(readFile(retry.legacyBackupPath()), backup);
     }

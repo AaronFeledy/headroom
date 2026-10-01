@@ -4,6 +4,7 @@
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <functional>
 
 struct DesktopSettings {
     QString connectionMode = "local";
@@ -25,12 +26,14 @@ public:
 
     explicit SettingsService(QString path = {}, bool allowAutomaticMigration = true,
                              Platform platform = Platform::Current, QString legacyPath = {},
-                             QString defaultPathOverride = {});
+                             QString defaultPathOverride = {}, QString previousPathOverride = {},
+                             std::function<void()> beforeMigrationInstall = {});
 
     const DesktopSettings &value() const { return m_value; }
     QString path() const { return m_path; }
     QString legacyBackupPath() const { return m_legacyBackupPath; }
     QString loadError() const { return m_loadError; }
+    QString migrationNotice() const { return m_migrationNotice; }
     bool importedLegacy() const { return m_importedLegacy; }
 
     QString save(const DesktopSettings &settings, bool explicitUserSave = false);
@@ -40,6 +43,8 @@ public:
     QString saveWindowSize(const QSize &size);
 
     static QString defaultPath(Platform platform = Platform::Current);
+    static QString previousDefaultPath(Platform platform = Platform::Current);
+    static QString instanceIdentityPath();
     static QString defaultLegacyPath();
     static QStringList normalizeOrder(const QStringList &order, const QString &legacyPrimary = {});
     static QString normalizeProvider(const QString &provider);
@@ -57,6 +62,7 @@ private:
     QString m_legacyPath;
     QString m_legacyBackupPath;
     QString m_loadError;
+    QString m_migrationNotice;
     QJsonObject m_document;
     DesktopSettings m_value;
     bool m_importedLegacy = false;

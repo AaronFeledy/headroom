@@ -91,7 +91,10 @@ key `Codex`, and snake_case API fields. Default server config locations are
 `%APPDATA%\Headroom\config.yaml` on Windows. Legacy `claude-usage-widget` /
 `ClaudeUsageWidget` config locations migrate automatically and must stay readable:
 Unix leaves a compatibility symlink; Windows keeps the legacy file. Use the
-canonical Headroom repository URL for public acquisition and user-facing links
+same folder for desktop `settings.json`, copying the previous
+`Headroom/Headroom/settings.json` once and keeping it, while instance identity
+stays on the previous path. Use the canonical Headroom repository URL for public
+acquisition and user-facing links
 while accepting the former repository's exact release URLs where updater
 compatibility requires it.
 Headroom displays `Codex` as ChatGPT. On first normal Windows launch it may import
