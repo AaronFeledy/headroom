@@ -3,6 +3,7 @@
 #include <QVariantList>
 #include <QSet>
 #include <QHash>
+#include <QDateTime>
 
 // Session-only attention: no usage details or notification history are persisted.
 class Notifications : public QObject {
@@ -18,6 +19,9 @@ public:
     void observeUpdate(const QString &state, const QString &version, const QString &message, bool enabled);
     void observeBankedResetCount(qint64 count, const QString &accountFingerprint, bool enabled);
     void resetBankedResetBaseline();
+    void observeUsage(const QVariantList &providers, bool enabled,
+                      const QDateTime &now = QDateTime::currentDateTimeUtc());
+    void resetUsageBaseline(const QString &provider = {});
     Q_INVOKABLE void present();
     Q_INVOKABLE void endPresentation();
     Q_INVOKABLE bool claimHighlight(const QString &target);
@@ -26,6 +30,15 @@ signals:
     void presentationChanged();
     void desktopNotification(const QString &title, const QString &message, int severity);
 private:
+    struct UsageSample {
+        double utilization;
+        QDateTime resetsAt;
+    };
+    struct UsageBaseline {
+        QString accountFingerprint, subtitle;
+        QHash<QString, UsageSample> buckets;
+    };
+    QHash<QString, UsageBaseline> m_usageBaselines;
     qint64 m_bankedResetCount = -1;
     QString m_resetAccountFingerprint;
     QVariantList m_pending, m_presented;
