@@ -81,6 +81,9 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	if err := validateTLS(cfg); err != nil {
 		return Config{}, err
 	}
+	if cfg.PollInterval <= 0 {
+		return Config{}, fmt.Errorf("poll interval must be positive: %w", ErrInvalidConfig)
+	}
 	return cfg, nil
 }
 

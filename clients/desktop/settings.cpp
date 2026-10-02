@@ -11,11 +11,6 @@
 #include <QTemporaryFile>
 #include <QUrl>
 #include <QSslCertificate>
-#ifdef Q_OS_WIN
-#include <qt_windows.h>
-#else
-#include <unistd.h>
-#endif
 
 namespace {
 constexpr int CurrentSchemaVersion = 1;
@@ -99,15 +94,13 @@ bool copyPreviousSettings(const QString &source, const QString &target,
     temporary.close();
     if (temporary.error() != QFileDevice::NoError) return false;
     if (beforeInstall) beforeInstall();
-    // Native no-replace installation is atomic, including a concurrent writer.
-#ifdef Q_OS_WIN
-    const bool installed = MoveFileW(reinterpret_cast<LPCWSTR>(temporary.fileName().utf16()),
-                                     reinterpret_cast<LPCWSTR>(target.utf16()));
-#else
-    const bool installed = ::link(QFile::encodeName(temporary.fileName()).constData(),
-                                  QFile::encodeName(target).constData()) == 0;
-#endif
-    return installed || QFileInfo::exists(target);
+    // QTemporaryFile::close() keeps the Windows handle open; rename() releases it
+    // and never replaces an existing target, including a concurrent writer's file.
+    if (temporary.rename(target)) {
+        temporary.setAutoRemove(false);
+        return true;
+    }
+    return QFileInfo::exists(target);
 }
 }
 
