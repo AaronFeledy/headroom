@@ -90,8 +90,8 @@ if(WIN32)
     set(HEADROOM_WINDOWS_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/headroom.manifest")
     configure_file(windows/headroom.manifest "${HEADROOM_WINDOWS_MANIFEST}" @ONLY)
     if(MSVC)
-        # MSVC creates manifest resource ID 1 itself. Supply our settings as a
-        # linker merge input instead of compiling a second ID 1 into the RC.
+        # CMake embeds manifest target sources as resource ID 1 with MSVC.
+        # Keep it out of the RC to avoid a duplicate manifest resource.
         set(HEADROOM_MANIFEST_RESOURCE "")
     else()
         set(HEADROOM_MANIFEST_RESOURCE
@@ -100,7 +100,10 @@ if(WIN32)
     configure_file(windows/headroom.rc.in "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc" @ONLY)
     set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc" APPEND PROPERTY
         OBJECT_DEPENDS "${HEADROOM_WINDOWS_ICON}")
-    list(APPEND headroom_platform_sources "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc")
+    # Qt 6.12 detects a custom manifest only in target sources; linker options
+    # alone cause Qt to generate a second, conflicting application identity.
+    list(APPEND headroom_platform_sources
+        "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc" "${HEADROOM_WINDOWS_MANIFEST}")
 elseif(APPLE)
     set(HEADROOM_MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/macos/headroom.icns")
     set_source_files_properties("${HEADROOM_MACOS_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -114,9 +117,8 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist")
 endif()
 if(MSVC)
-    target_link_options(headroom PRIVATE
-        "/MANIFEST:EMBED"
-        "/MANIFESTINPUT:${HEADROOM_WINDOWS_MANIFEST}")
+    # The custom manifest owns the execution level as well as the identity.
+    target_link_options(headroom PRIVATE "/MANIFESTUAC:NO")
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND HEADROOM_WITH_KDE_TRAY AND KF6StatusNotifierItem_FOUND)
     target_link_libraries(headroom PRIVATE KF6::StatusNotifierItem)
@@ -137,6 +139,15 @@ qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../share
 
 include(CTest)
 if(BUILD_TESTING)
+    if(MSVC)
+        add_test(NAME headroom-windows-manifest
+            COMMAND ${CMAKE_COMMAND}
+                "-DAPPLICATION=$<TARGET_FILE:headroom>"
+                "-DMT=${CMAKE_MT}"
+                "-DEXPECTED_VERSION=${HEADROOM_NUMERIC_VERSION}.0"
+                "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/headroom-embedded.manifest"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_windows_manifest.cmake")
+    endif()
     # Reuse the module's generated imports/resources, but gate only explicit
     # structural categories. Context properties deliberately remain unqualified.
     add_test(NAME headroom-qmllint COMMAND Qt6::qmllint
