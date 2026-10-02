@@ -72,13 +72,16 @@ def relocate_qml_plugins(app):
             if local.is_symlink():
                 if local.resolve(strict=True) != central:
                     raise ValueError("unexpected QML deployment link: " + str(local.relative_to(app)))
-            elif not local.is_file():
-                raise ValueError("expected QML module plugin is missing: " + str(local.relative_to(app)))
+            elif local.exists() and not local.is_file():
+                raise ValueError("unexpected QML module plugin: " + str(local.relative_to(app)))
 
             relative_plugins = Path(os.path.relpath(plugins, qmldir.parent)).as_posix()
             prefix = "optional " if match.group(1) else ""
             lines[index] = f"{prefix}plugin {name} {relative_plugins}"
-            local.unlink()
+            # Qt 6.12's CMake deployment removes the build-tree copy/link
+            # beside qmldir. Older deployment layouts can still leave one.
+            # In either case the exact central binary checked above is required.
+            local.unlink(missing_ok=True)
             changed = True
         if changed:
             qmldir.write_text("\n".join(lines) + "\n")
