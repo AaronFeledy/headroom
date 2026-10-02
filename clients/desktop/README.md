@@ -48,6 +48,17 @@ provider header if there is no weekly meter. Like other notifications,
 several unseen changes to the same counter retain the latest reported change, and
 acknowledged animations do not replay on subsequent openings.
 
+When a previously nonzero meter reports zero more than 15 minutes before its
+previously scheduled reset, Headroom sends an informational usage-reset alert through
+this same path and highlights the affected meter. This includes resets that keep
+the existing window and resets that restart it (or clear its deadline). The old
+deadline controls detection, so normal rollovers and resets within 15 minutes of
+that deadline stay quiet, even if the provider reports a new future window.
+Partial decreases, missing readings, and meters without a known prior reset time
+are not treated as early resets. First readings, reauthentication, observed account
+or plan changes, and connection changes establish new baselines; disabling
+notifications still advances them. Repeated zero readings do not replay alerts.
+
 Notification state is session-only and is never written to disk. Unseen events
 coalesce by target, with at most 128 targets retained; a fresh warning transition
 can notify about the same meter again after acknowledgement.
