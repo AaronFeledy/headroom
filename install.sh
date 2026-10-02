@@ -273,7 +273,7 @@ payload=pathlib.Path(sys.argv[2])/state['version_path']/'Headroom.app'/'Contents
 info={'CFBundleExecutable':'headroom', 'CFBundleIdentifier':'io.headroom.launcher',
       'CFBundleName':'Headroom', 'CFBundleDisplayName':'Headroom',
       'CFBundlePackageType':'APPL', 'CFBundleIconFile':'headroom.icns',
-      'LSUIElement':True, 'LSMinimumSystemVersion':'12.0'}
+      'LSUIElement':True, 'LSMinimumSystemVersion':'14.4'}
 resources.mkdir(exist_ok=True)
 def write_atomic(path, data):
     fd, name=tempfile.mkstemp(prefix='.headroom-', dir=path.parent)

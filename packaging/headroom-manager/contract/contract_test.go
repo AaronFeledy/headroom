@@ -75,7 +75,7 @@ func macOSManifestFixture() PackageManifest {
 		files = append(files, record)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	manifest := PackageManifest{Schema: SchemaVersion, Product: "Headroom", Version: version, Platform: "macos", Architecture: "arm64", AssetName: "Headroom-v2.3.4-macos-arm64.tar.gz", QtVersion: "6.8.3", Baseline: "macOS 12",
+	manifest := PackageManifest{Schema: SchemaVersion, Product: "Headroom", Version: version, Platform: "macos", Architecture: "arm64", AssetName: "Headroom-v2.3.4-macos-arm64.tar.gz", QtVersion: "6.12.0", Baseline: "macOS 14.4",
 		Components: Components{Application: Component{packageApplicationPath("macos"), version}, Server: Component{packageServerPath("macos"), version}, Launcher: Component{"bootstrap/headroom", version}, Manager: Component{"bootstrap/headroom-package", version}}, Files: files}
 	return manifest
 }
@@ -640,7 +640,7 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 	os.WriteFile(filepath.Join(root, "bundle", "share", "licenses", "headroom", "LICENSE"), []byte("synthetic license\n"), 0644)
 	os.MkdirAll(filepath.Join(root, "bundle", "share", "licenses", "qt", "attributions"), 0755)
 	os.WriteFile(filepath.Join(root, "bundle", "share", "licenses", "qt", "attributions", "index.json"), []byte("{}\n"), 0644)
-	manifest, err := BuildManifest(root, version, platform, arch, "6.8.3", "fixture")
+	manifest, err := BuildManifest(root, version, platform, arch, "6.12.0", "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}

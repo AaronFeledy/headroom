@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QDateTime>
 #include <QNetworkProxy>
+#include <QHostInfo>
 #include <QUrl>
 #include <utility>
 
@@ -25,7 +26,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     if (!m_settingsService.migrationNotice().isEmpty()) log("Settings", m_settingsService.migrationNotice());
     m_poll.setSingleShot(true);
     m_poll.setTimerType(Qt::PreciseTimer);
-    connect(&m_poll, &QTimer::timeout, this, &Controller::refresh);
+    connect(&m_poll, &QTimer::timeout, this, [this] { refreshUsage(false); });
     if (m_startPolling) m_poll.start(m_interval * 1000);
     connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledChatGptReset(); updateMeterStates(); emit changed(); });
     if (m_startPolling) m_clock.start(30000);
@@ -154,7 +155,11 @@ void Controller::fail(const QString &message, const QString &kind) {
     emit changed();
 }
 void Controller::refresh() {
+    refreshUsage(true);
+}
+void Controller::refreshUsage(bool userRequested) {
     if (m_loading || m_resetBusy) return;
+    if (userRequested && m_mode == "remote" && m_status == "offline") QHostInfo::clearCache();
     m_poll.stop();
     if (m_mode == "local") {
         m_waitingForUsageRetry = false;
@@ -257,6 +262,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     const QString retainedSshUrl = sshUrl.isEmpty() && mode != "ssh" ? m_sshUrl : sshUrl;
     const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary);
     if (!error.isEmpty()) return error;
+    if (mode == "remote") QHostInfo::clearCache();
     cancel();
     m_waitingForUsageRetry = false;
     if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); cancelScheduledChatGptReset(); }

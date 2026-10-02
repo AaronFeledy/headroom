@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  HEADROOM_QT_VERSION: 6.8.3
+  HEADROOM_QT_VERSION: 6.12.0
   HEADROOM_PACKAGE_VERSION: ${{ inputs.version }}
   HEADROOM_WINDOWS_ARM64_QT_ARCH: win64_msvc2022_arm64
 
@@ -125,6 +125,8 @@ jobs:
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
           arch: linux_gcc_64
+          # aqtinstall 3.3.0 cannot install Qt 6.11+; drop pin once a release supports it.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
       - name: Configure shared desktop client
@@ -185,6 +187,8 @@ jobs:
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
           arch: win64_msvc2022_64
+          # aqtinstall 3.3.0 cannot install Qt 6.11+; drop pin once a release supports it.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
       - name: Configure shared desktop client
@@ -253,7 +257,7 @@ jobs:
         run: python3 packaging/qt_attributions.py fetch --source-cache "$RUNNER_TEMP/qt-sources"
       - uses: actions/upload-artifact@v7
         with:
-          name: qt-attribution-sources-6.8.3
+          name: qt-attribution-sources-6.12.0
           path: ${{ runner.temp }}/qt-sources/*.zip
           if-no-files-found: error
           retention-days: 7
@@ -304,10 +308,12 @@ jobs:
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
           arch: linux_gcc_64
+          # aqtinstall 3.3.0 cannot install Qt 6.11+; drop pin once a release supports it.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
       - uses: actions/download-artifact@v8
-        with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
+        with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build complete package inputs
         run: |
           cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_WITH_KDE_TRAY=OFF -DHEADROOM_WITH_LAYER_SHELL=OFF -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION"
@@ -357,10 +363,12 @@ jobs:
           version: ${{ env.HEADROOM_QT_VERSION }}
           host: ${{ matrix.qt_host }}
           arch: ${{ matrix.qt_arch }}
+          # aqtinstall 3.3.0 cannot install Qt 6.11+; drop pin once a release supports it.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
       - uses: actions/download-artifact@v8
-        with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
+        with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build complete package inputs
         shell: pwsh
         run: |
@@ -421,14 +429,16 @@ jobs:
           version: ${{ env.HEADROOM_QT_VERSION }}
           host: mac
           arch: clang_64
+          # aqtinstall 3.3.0 cannot install Qt 6.11+; drop pin once a release supports it.
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
       - uses: actions/download-artifact@v8
-        with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
+        with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build native macOS desktop
         id: mac-desktop
         run: |
-          cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}
+          cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION" -DCMAKE_OSX_DEPLOYMENT_TARGET=14.4 -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}
           cmake --build "$RUNNER_TEMP/desktop-package" --parallel
       - name: Build and test native macOS server
         id: mac-server

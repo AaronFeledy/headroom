@@ -38,10 +38,11 @@ Rectangle {
     }
     SequentialAnimation {
         id: pulse
-        loops: 2
-        NumberAnimation { target: highlight; property: "opacity"; from: 0; to: 1; duration: 220; easing.type: Easing.InOutSine }
-        PauseAnimation { duration: 120 }
-        NumberAnimation { target: highlight; property: "opacity"; to: 0; duration: 480; easing.type: Easing.InOutSine }
-        PauseAnimation { duration: 140 }
+        objectName: "notificationPulse"
+        loops: Theme.reducedMotion ? 1 : 2
+        NumberAnimation { target: highlight; property: "opacity"; from: 0; to: 1; duration: Theme.reducedMotion ? 0 : 220; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: Theme.reducedMotion ? 500 : 120 }
+        NumberAnimation { target: highlight; property: "opacity"; to: 0; duration: Theme.reducedMotion ? 120 : 480; easing.type: Easing.InOutSine }
+        PauseAnimation { duration: Theme.reducedMotion ? 0 : 140 }
     }
 }

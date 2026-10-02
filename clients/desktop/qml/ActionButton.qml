@@ -24,7 +24,7 @@ Button {
         color: control.accent ? (control.down ? Theme.purple : control.hovered ? Theme.pink : Theme.purple) : control.down ? Theme.selection : control.hovered ? Theme.selection : control.quiet ? "transparent" : Theme.surface
         border.width: control.visualFocus ? 2 : control.quiet || control.accent ? 0 : 1
         border.color: control.visualFocus ? Theme.purple : Theme.selection
-        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on color { objectName: "buttonColorBehavior"; enabled: !captureMode && !Theme.reducedMotion; ColorAnimation { duration: 120 } }
     }
     HoverHandler { cursorShape: Qt.PointingHandCursor }
 }

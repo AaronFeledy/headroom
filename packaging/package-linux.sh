@@ -60,10 +60,10 @@ copy_platform_plugin() {
 }
 copy_platform_plugin libqxcb.so
 copy_platform_plugin libqoffscreen.so
-if [[ -f "$qt_root/plugins/platforms/libqwayland-generic.so" || -f "$qt_root/lib/qt6/plugins/platforms/libqwayland-generic.so" ]]; then
-  copy_platform_plugin libqwayland-generic.so
-else
+if [[ -f "$qt_root/plugins/platforms/libqwayland.so" || -f "$qt_root/lib/qt6/plugins/platforms/libqwayland.so" ]]; then
   copy_platform_plugin libqwayland.so
+else
+  copy_platform_plugin libqwayland-generic.so
 fi
 install -m 0755 "$server" "$package_root/bundle/bin/usage-server"
 install -m 0755 "$launcher" "$package_root/bootstrap/headroom"

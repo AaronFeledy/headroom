@@ -17,6 +17,8 @@
 #include <KStatusNotifierItem>
 #endif
 #include <QApplication>
+#include <QAccessibilityHints>
+#include <QStyleHints>
 #include <QCommandLineParser>
 #include <QFileInfo>
 #include <QMenu>
@@ -203,7 +205,8 @@ int main(int argc, char **argv) {
     QMenu *trayMenu = &fallbackMenu;
     bool nativeTrayUsed = false;
     TrayAttention attention([&] {
-        if (!hasTray || (window->isVisible() && app.applicationState() == Qt::ApplicationActive)
+        if (QGuiApplication::styleHints()->accessibility()->motionPreference() == Qt::MotionPreference::ReducedMotion
+            || !hasTray || (window->isVisible() && app.applicationState() == Qt::ApplicationActive)
             || trayMenu->isVisible()) return true;
         // SNI/Wayland hosts do not expose icon hover or global pointer position.
         // Never guess from stale Wayland coordinates. Windows and X11 can use
@@ -215,6 +218,10 @@ int main(int argc, char **argv) {
         return bounds.isValid() && bounds.contains(QCursor::pos());
     });
     tray.installEventFilter(&attention);
+    QObject::connect(QGuiApplication::styleHints()->accessibility(), &QAccessibilityHints::motionPreferenceChanged,
+        &attention, [&](Qt::MotionPreference preference) {
+            if (preference == Qt::MotionPreference::ReducedMotion) attention.acknowledge();
+        });
     const auto show = [&] { attention.acknowledge(); popup.show(); };
     QObject::connect(&instance, &InstanceService::activationRequested, &app, show);
     if (!capture && !isolated && controller.startupMigrationPending() &&

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "qt_version": "6.12.0",
+  "sources": [
+    {"module": "qtbase", "archive": "qtbase-everywhere-src-6.12.0.zip", "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/qtbase-everywhere-src-6.12.0.zip", "size": 79929386, "sha256": "0529901575c413e34ded504eeda177c4a6dfd0dff1e39ed52c811dc5204b43c7"},
+    {"module": "qtdeclarative", "archive": "qtdeclarative-everywhere-src-6.12.0.zip", "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/qtdeclarative-everywhere-src-6.12.0.zip", "size": 88817492, "sha256": "15b431673d3ce5bb9813736197e4163a8ab9b65d6255293d891613811f4e78dc"},
+    {"module": "qtshadertools", "archive": "qtshadertools-everywhere-src-6.12.0.zip", "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/qtshadertools-everywhere-src-6.12.0.zip", "size": 2073208, "sha256": "d3dbfd833769bb9f341e39352247c3910f8c77f5e64d34b10f65bb40d8da4ce6"},
+    {"module": "qtsvg", "archive": "qtsvg-everywhere-src-6.12.0.zip", "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/qtsvg-everywhere-src-6.12.0.zip", "size": 3043451, "sha256": "a633ce8978543a7c72c1381d3a52bb424e8ba629882dfb39dfd29508cb4f125d"},
+    {"module": "qtwayland", "archive": "qtwayland-everywhere-src-6.12.0.zip", "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/qtwayland-everywhere-src-6.12.0.zip", "size": 1556316, "sha256": "5c6d5de1f83689a541c4e74fd5b7a38b8f87bc830af43b1af4b03f845570ff2b"}
+  ]
+}

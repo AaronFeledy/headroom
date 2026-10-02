@@ -206,13 +206,18 @@ def collect(manifest: dict, cache: pathlib.Path, qt_root: pathlib.Path, payload:
         with zipfile.ZipFile(archive_path) as archive:
             members = safe_members(archive, expected_root)
             attribution_paths = sorted(name for name in members if name.endswith("/qt_attribution.json"))
-            if not attribution_paths:
+            if not attribution_paths and not (module == "qtsvg" and manifest["qt_version"] == "6.12.0"):
                 raise ValueError(f"Qt module has no attribution records: {module}")
+            if not attribution_paths:
+                for metadata in ("REUSE.toml", "licenseRule.json"):
+                    copy_member(archive, members, expected_root + "/" + metadata, expected_root, module_destination)
             license_prefix = expected_root + "/LICENSES/"
             for name, info in members.items():
                 if name.startswith(license_prefix) and not info.is_dir():
                     copy_member(archive, members, name, expected_root, module_destination)
                     copied.add(name)
+            if not copied:
+                raise ValueError(f"Qt module has no license texts: {module}")
             for attribution_path in attribution_paths:
                 raw = archive.read(members[attribution_path])
                 parsed = json.loads(raw.decode("utf-8"), strict=False)
@@ -257,7 +262,7 @@ def collect(manifest: dict, cache: pathlib.Path, qt_root: pathlib.Path, payload:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", default=str(pathlib.Path(__file__).with_name("qt-sources-6.8.3.json")))
+    parser.add_argument("--manifest", default=str(pathlib.Path(__file__).with_name("qt-sources-6.12.0.json")))
     subparsers = parser.add_subparsers(dest="command", required=True)
     fetch = subparsers.add_parser("fetch")
     fetch.add_argument("--source-cache", required=True)

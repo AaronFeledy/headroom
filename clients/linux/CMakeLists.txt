@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.25)
 project(HeadroomLinuxCompatibility LANGUAGES CXX)
 
 # Compatibility entry point for existing source-build commands. New builds

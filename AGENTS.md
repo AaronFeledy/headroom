@@ -14,7 +14,7 @@ branding cleanup.
 
 ## Layout
 
-- `clients/desktop/` — primary Qt 6.6+ Windows/macOS/Linux UI, local-server manager,
+- `clients/desktop/` — primary Qt 6.12+ Windows/macOS/Linux UI, local-server manager,
   Windows credential-helper client, startup, diagnostics, and package updater.
 - `packaging/headroom-manager/` — Go archive validator, stable launcher,
   installer, unified CLI, terminal dashboard, native Windows/WSL pairing,
@@ -132,7 +132,9 @@ metadata is preserved. Numeric components are separately derived for PE and
 .NET assembly versions and may not exceed 65534.
 
 The reusable package workflow builds Windows x64, Windows ARM64, Linux x86_64,
-and macOS x86_64/ARM64 (deployment target 12.0) with Qt 6.8.3. It verifies the exact packages on native runners, runs the
+and macOS x86_64/ARM64 (deployment target 14.4) with Qt 6.12.0 LTS. CI pins
+aqtinstall master at `076e1659807d0b362a3ed684d54c2e9c775eb9c7` until a released
+aqtinstall supports Qt 6.11+. It verifies the exact packages on native runners, runs the
 legacy harness and server Go/race/vet/build/Docker gates, and assembles five
 desktop packages, six CLI packages, legacy/full/CLI release manifests, six standalone servers, both installers,
 and `SHA256SUMS`. PR workflows have read-only contents permission and never
@@ -149,8 +151,8 @@ GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
 users to rerun a current external installer once; builds after v2.0.0 use the
 canonical release endpoint.
 
-Qt notices come from the hash-pinned official 6.8.3 source archives recorded in
-`packaging/qt-sources-6.8.3.json`. Preserve referenced notices and license texts,
+Qt notices come from the hash-pinned official 6.12.0 source archives recorded in
+`packaging/qt-sources-6.12.0.json`. Preserve referenced notices and license texts,
 label the module-source inventory as a conservative superset rather than an
 exact binary SBOM, and record optional installed-kit SPDX SBOMs when present.
 

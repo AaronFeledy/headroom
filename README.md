@@ -21,15 +21,15 @@ Critical.
 | Windows x64 | Windows 10 1809 or newer | Local managed server |
 | Windows ARM64 | Windows 11 ARM64 | Local managed server |
 | Linux x86_64 | Ubuntu 22.04 desktop ABI; X11 and Wayland plugins | Local managed server |
-| macOS Apple Silicon | macOS 12+; native ARM64 | Local managed server |
-| macOS Intel | macOS 12+; native x86_64 | Local managed server |
+| macOS Apple Silicon | macOS 14.4+; native ARM64 | Local managed server |
+| macOS Intel | macOS 14.4+; native x86_64 | Local managed server |
 
-Official packages bundle Qt 6.8.3, the matching `usage-server`, and the stable
+Official packages bundle Qt 6.12.0 LTS, the matching `usage-server`, and the stable
 launcher/package manager. They also include the unified `headroom` CLI. CLI-only
 packages support all five desktop targets plus Linux ARM64 without installing Qt.
 Linux uses baseline system graphics, desktop, C++,
 glibc, D-Bus, and OpenSSL libraries; the exact package list is in the
-[package contract](packaging/README.md). Source builds support Qt 6.6 or newer.
+[package contract](packaging/README.md). Source builds require Qt 6.12 or newer.
 
 ## Install
 

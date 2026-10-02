@@ -52,7 +52,7 @@ ApplicationWindow {
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
     readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
         && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetConfirmation.visible
-        && !notificationPopup.visible
+        && !notificationPopup.visible && !dashboardMenu.visible
     onPresentingNotificationsChanged: if (presentingNotifications) Qt.callLater(presentNotifications)
     onVisibleChanged: {
         if (!visible) {
@@ -125,11 +125,24 @@ ApplicationWindow {
         else if (settings.opened) settings.close()
         else if (diagnostics.opened) diagnostics.close()
         else if (filterMenu.opened) filterMenu.close()
+        else if (dashboardMenu.opened) dashboardMenu.close()
         else if (trayAvailable) window.hide()
     }
-    Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
-    Shortcut { sequence: "Ctrl+,"; onActivated: settings.open() }
-    Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
+    Action { id: refreshAction; objectName: "refreshAction"; text: "Refresh usage"; shortcut: "Ctrl+R"; enabled: !window.state.loading; onTriggered: backend.refresh() }
+    Action { id: settingsAction; objectName: "settingsAction"; text: "Settings"; shortcut: "Ctrl+,"; onTriggered: settings.open() }
+    Action { id: quitAction; objectName: "quitAction"; text: "Quit Headroom"; shortcut: "Ctrl+Q"; onTriggered: Qt.quit() }
+    Menu {
+        id: dashboardMenu; objectName: "dashboardMenu"
+        palette.window: Theme.surface; palette.windowText: Theme.foreground
+        palette.light: Theme.selection; palette.midlight: Theme.selection
+        palette.mid: Theme.selection; palette.dark: Theme.comment
+        separatorsCollapsible: true
+        onClosed: restoreEscapeFocus()
+        MenuItem { action: refreshAction }
+        MenuItem { action: settingsAction }
+        MenuSeparator { }
+        MenuItem { action: quitAction }
+    }
     Item { id: escapeFocus; objectName: "escapeFocus"; width: 0; height: 0; focus: true; activeFocusOnTab: false }
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open(); onClosed: restoreEscapeFocus() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel"; onClosed: restoreEscapeFocus() }
@@ -255,6 +268,7 @@ ApplicationWindow {
         anchors.fill: parent; spacing: 0
         ScrollView {
             id: scroll; objectName: "meterScroll"
+            ContextMenu.menu: dashboardMenu
             Layout.fillWidth: true; Layout.fillHeight: true; contentWidth: availableWidth; clip: true
             // Keep scrolling content inside the rounded top edge without a full-window texture mask.
             Layout.topMargin: Theme.windowRadius
@@ -286,6 +300,14 @@ ApplicationWindow {
                         border.color: window.serverOffline ? Theme.red : Theme.selection
                         ColumnLayout {
                             anchors.centerIn: parent; width: parent.width - 50; spacing: 18
+                            AnimatedImage {
+                                objectName: "connectingIndicator"
+                                visible: window.state.status === "connecting"
+                                Layout.preferredWidth: 28; Layout.preferredHeight: 28; Layout.alignment: Qt.AlignHCenter
+                                source: "loading.svg"; sourceSize: Qt.size(28, 28)
+                                playing: visible && !Theme.reducedMotion && !captureMode
+                                loops: AnimatedImage.Infinite; finishBehavior: AnimatedImage.FinishAtInitialFrame
+                            }
                             Text { text: window.state.status === "ready" ? "No providers enabled" : window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing your local server" : "Connecting to your server") : "Connect your usage server"; color: Theme.foreground; font.pixelSize: 24; font.weight: Font.Medium; Layout.alignment: Qt.AlignHCenter }
                             Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : window.state.status === "connecting" || window.state.status === "offline" ? window.state.message : "Bring Claude, ChatGPT, Cursor, and Grok into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             ActionButton { text: window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing…" : "Connecting…") : window.state.status === "offline" ? "Connection settings →" : "Connect your backend →"; accent: true; Layout.alignment: Qt.AlignHCenter; onClicked: settings.open() }
@@ -437,8 +459,19 @@ ApplicationWindow {
                             }
                         }
                     }
-                    ActionButton { text: "↻"; implicitWidth: 34; implicitHeight: 34; quiet: true; enabled: !window.state.loading; Accessible.name: "Refresh usage"; onClicked: backend.refresh() }
-                    ActionButton { text: "⚙"; implicitWidth: 34; implicitHeight: 34; quiet: true; Accessible.name: "Connection settings"; onClicked: settings.open() }
+                    ActionButton {
+                        objectName: "refreshButton"
+                        action: refreshAction; text: window.state.loading ? "" : "↻"
+                        implicitWidth: 34; implicitHeight: 34; quiet: true; Accessible.name: "Refresh usage"
+                        AnimatedImage {
+                            objectName: "refreshIndicator"
+                            anchors.centerIn: parent; width: 18; height: 18
+                            source: "loading.svg"; sourceSize: Qt.size(18, 18)
+                            visible: window.state.loading; playing: visible && !Theme.reducedMotion && !captureMode
+                            loops: AnimatedImage.Infinite; finishBehavior: AnimatedImage.FinishAtInitialFrame
+                        }
+                    }
+                    ActionButton { objectName: "settingsButton"; action: settingsAction; text: "⚙"; implicitWidth: 34; implicitHeight: 34; quiet: true; Accessible.name: "Connection settings" }
                 }
             }
         }
