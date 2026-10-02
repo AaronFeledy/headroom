@@ -22,6 +22,25 @@ type Bucket struct {
 	Utilization float64    `json:"utilization"`
 	ResetsAt    *time.Time `json:"resets_at"`
 	StatusText  *string    `json:"status_text"`
+	StartsAt    *time.Time `json:"starts_at"`
+}
+
+// Timing metadata is optional; a malformed start must not hide usable meters.
+func (bucket *Bucket) UnmarshalJSON(data []byte) error {
+	type bucketJSON Bucket
+	var decoded struct {
+		bucketJSON
+		StartsAt json.RawMessage `json:"starts_at"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*bucket = Bucket(decoded.bucketJSON)
+	var start time.Time
+	if json.Unmarshal(decoded.StartsAt, &start) == nil && !start.IsZero() {
+		bucket.StartsAt = &start
+	}
+	return nil
 }
 
 type Provider struct {
@@ -197,11 +216,9 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 	id, name := strings.ToLower(bucket.ID), strings.ToLower(provider)
 	var duration time.Duration
 
-	if !contains([]string{"claude", "codex", "cursor", "grok"}, name) {
-		return pace{label: "Pace unavailable"}
-	}
+	knownProvider := contains([]string{"claude", "codex", "cursor", "grok"}, name)
 	switch {
-	case id == "weekly" || strings.HasPrefix(id, "weekly_"):
+	case knownProvider && (id == "weekly" || strings.HasPrefix(id, "weekly_")):
 		duration = 7 * 24 * time.Hour
 	case (name == "claude" || name == "codex") && id == "session":
 		if strings.Contains(strings.ToLower(bucket.Label), "weekly") {
@@ -214,6 +231,12 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 	case name == "grok" && contains([]string{"session", "credits", "plan", "on_demand"}, id):
 		start := previousMonth(*bucket.ResetsAt)
 		duration = bucket.ResetsAt.Sub(start)
+	}
+	if start := bucket.StartsAt; start != nil && !start.IsZero() {
+		reported := bucket.ResetsAt.Sub(*start)
+		if reported > 0 && reported <= 366*24*time.Hour {
+			duration = reported
+		}
 	}
 	remaining := bucket.ResetsAt.Sub(now)
 	if duration <= 0 || remaining > duration {
@@ -236,9 +259,9 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 	timeRemaining, allowanceRemaining := 100-expected, 100-bucket.Utilization
 	pressure := math.Max(0, math.Min(1, (timeRemaining-allowanceRemaining)/math.Max(0.000001, timeRemaining)))
 	step := 7 * 24 * time.Hour
-	if duration == 5*time.Hour {
+	if duration <= 24*time.Hour {
 		step = time.Hour
-	} else if duration == 7*24*time.Hour {
+	} else if duration <= 14*24*time.Hour {
 		step = 24 * time.Hour
 	}
 	return pace{available: true, expected: expected, pressure: pressure, label: label, duration: duration, step: step}

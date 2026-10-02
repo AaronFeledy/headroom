@@ -25,6 +25,8 @@ func TestRunReadyRejectsInvalidStartup(t *testing.T) {
 		{"occupied listener", []string{"--listen-addr", occupied.Addr().String()}, disabledProviderEnv()},
 		{"unsafe bind", []string{"--listen-addr", "0.0.0.0:0", "--auth-token", ""}, disabledProviderEnv()},
 		{"invalid provider", []string{"--listen-addr", "127.0.0.1:0"}, append(disabledProviderEnv(), "USAGE_PROVIDER_UNKNOWN_ENABLED=true")},
+		{"zero poll interval", []string{"--listen-addr", "127.0.0.1:0", "--poll-interval", "0s"}, disabledProviderEnv()},
+		{"negative poll interval", []string{"--listen-addr", "127.0.0.1:0", "--poll-interval", "-1s"}, disabledProviderEnv()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false

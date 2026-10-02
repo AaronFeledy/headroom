@@ -141,9 +141,9 @@ func fetchHTTP(ctx context.Context, options Options, base string) ([]byte, error
 }
 
 func usageURL(base string) (string, error) {
-	parsed, err := url.ParseRequestURI(base)
+	parsed, err := url.Parse(base)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
-		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(base, "#") {
 		return "", errors.New("--url must be an HTTP(S) base URL without credentials, query, or fragment")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/v1/usage"

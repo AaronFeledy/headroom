@@ -18,6 +18,7 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 	active := make(map[string]bool)
 	fmt.Fprintf(&output, "Headroom  %s\n", now.Local().Format("15:04:05"))
 	if len(providers) == 0 {
+		clear(warnings)
 		output.WriteString("No enabled providers.\n")
 		return output.String()
 	}
@@ -32,6 +33,13 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		}
 		output.WriteByte('\n')
 		if provider.Error != nil {
+			// An unavailable provider has not recovered or removed its meters.
+			prefix := strings.ToLower(provider.ProviderName) + "\x00"
+			for key := range warnings {
+				if strings.HasPrefix(key, prefix) {
+					active[key] = true
+				}
+			}
 			fmt.Fprintf(&output, "  Error: %s\n", terminalText(*provider.Error))
 			if provider.NeedsReauth {
 				output.WriteString("  Sign-in required\n")
@@ -49,11 +57,17 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 			if bucket.ResetsAt != nil {
 				window = bucket.ResetsAt.UTC().Format(time.RFC3339Nano)
 			}
-			previous := warnings[key]
+			previous, initialized := warnings[key]
 			if previous.window != window {
 				previous.level = 0
 			}
-			severity := warningLevel(bucket.Utilization, pace, previous.level)
+			severity := previous.level
+			// Keep the last assessment while a known window awaits replacement.
+			// Percentage-only fallback on an expired reading creates false alerts.
+			expired := initialized && previous.window == window && bucket.ResetsAt != nil && !bucket.ResetsAt.After(now)
+			if !expired {
+				severity = warningLevel(bucket.Utilization, pace, previous.level)
+			}
 			warnings[key] = warningState{level: severity, window: window}
 			active[key] = true
 			level := colored(warningNames[severity], severity, color)
