@@ -10,11 +10,9 @@ Critical.
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/headroom)](https://github.com/AaronFeledy/headroom/releases/latest)
 [![License](https://img.shields.io/github/license/AaronFeledy/headroom)](LICENSE)
 
-![Headroom in a platform-neutral system tray with a usage ring and pacing marker](docs/images/headroom-tray.svg)
+<img src="docs/images/headroom-overview.png" width="744" alt="The compact Headroom usage panel for Claude, ChatGPT, Cursor, and Grok, rendered above a platform-neutral system tray">
 
-![Headroom desktop showing Claude, ChatGPT, Cursor, and Grok usage meters with pacing indicators](docs/images/headroom-desktop.png)
-
-*Illustrative readings. Available meters vary by provider and plan.*
+*Illustrative readings and platform-neutral tray. Available meters vary by provider and plan. [Rendering sources and regeneration guide](docs/renderings/README.md).*
 
 ## Supported desktop packages
 

@@ -1,0 +1,106 @@
+{
+  "description": "Synthetic README illustration; never read from a live account.",
+  "now": "2026-10-02T12:00:00Z",
+  "width": 539,
+  "scale": 2,
+  "primary": "Claude",
+  "font_family": "Noto Sans",
+  "composition": {
+    "width": 864,
+    "padding": 24,
+    "tray_scale": 0.625,
+    "gap": 24,
+    "ui_scale": 1.5
+  },
+  "providers": [
+    {
+      "provider_name": "Claude",
+      "subtitle": "Max",
+      "buckets": [
+        {
+          "id": "session",
+          "label": "Current Session",
+          "utilization": 34,
+          "reset_in_seconds": 8400
+        },
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "utilization": 94,
+          "reset_in_seconds": 225000
+        },
+        {
+          "id": "weekly_fable",
+          "label": "Fable",
+          "utilization": 27,
+          "reset_in_seconds": 225000
+        }
+      ]
+    },
+    {
+      "provider_name": "Codex",
+      "subtitle": "Plus",
+      "rate_limit_reset_credits": {
+        "available_count": 3
+      },
+      "buckets": [
+        {
+          "id": "session",
+          "label": "5-Hour",
+          "utilization": 24,
+          "reset_in_seconds": 11640
+        },
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "utilization": 41,
+          "reset_in_seconds": 228000
+        }
+      ]
+    },
+    {
+      "provider_name": "Cursor",
+      "subtitle": "Pro",
+      "buckets": [
+        {
+          "id": "auto",
+          "label": "Cursor Models",
+          "utilization": 38,
+          "reset_in_seconds": 1036800
+        },
+        {
+          "id": "api",
+          "label": "Other Models",
+          "utilization": 76,
+          "reset_in_seconds": 1036800,
+          "status_text": "$38 / $50 this cycle"
+        },
+        {
+          "id": "weekly_grok_bot",
+          "label": "Grok Bot",
+          "utilization": 28,
+          "reset_in_seconds": 231000
+        },
+        {
+          "id": "on_demand",
+          "label": "On-Demand",
+          "utilization": 0,
+          "reset_in_seconds": 1036800,
+          "status_text": "On-demand enabled"
+        }
+      ]
+    },
+    {
+      "provider_name": "Grok",
+      "subtitle": "SuperGrok",
+      "buckets": [
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "utilization": 17,
+          "reset_in_seconds": 234000
+        }
+      ]
+    }
+  ]
+}
