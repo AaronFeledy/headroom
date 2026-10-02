@@ -3,6 +3,7 @@
 #include "serverconnection.h"
 #include "controller.h"
 #include "tls_fixture.h"
+#include "connect_proxy_fixture.h"
 #include "usagefixture.h"
 #include "http_assertions.h"
 #include <QtTest>
@@ -58,7 +59,7 @@ public:
         });
     }
     QString url(const QString &scheme = QStringLiteral("https")) const {
-        return QStringLiteral("%1://127.0.0.2:%2/base").arg(scheme).arg(serverPort());
+        return QStringLiteral("%1://headroom-proxy-fixture.invalid:%2/base").arg(scheme).arg(serverPort());
     }
 };
 }
@@ -92,11 +93,17 @@ private slots:
     void remotePinConfiguration() {
         QNetworkRequest request(QUrl("https://example.test"));
         const auto certificate = TlsFixture::certificate();
-        ServerTransport::secureRequest(request, certificate);
+        ServerTransport::secureRequest(request, certificate, true);
         const auto configuration = request.sslConfiguration();
         QCOMPARE(configuration.caCertificates(), QList<QSslCertificate>{certificate});
         QCOMPARE(configuration.peerVerifyMode(), QSslSocket::VerifyPeer);
         QCOMPARE(configuration.peerVerifyDepth(), 1);
+        QCOMPARE(request.peerVerifyName(), QStringLiteral("localhost"));
+        QNetworkRequest local(QUrl("https://127.0.0.1"));
+        ServerTransport::secureRequest(local, certificate);
+        QVERIFY(local.peerVerifyName().isEmpty());
+        ServerTransport::secureRequest(local, certificate, true);
+        QCOMPARE(local.peerVerifyName(), QStringLiteral("127.0.0.1"));
     }
     void failedUpgradeStaysHttpAndBacksOff() {
         QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
@@ -116,7 +123,7 @@ private slots:
         QTemporaryDir dir; Controller controller(dir.filePath("settings.json"), nullptr, false, {}, {}, {}, false);
         const auto url = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
         QVERIFY(controller.saveSettings("remote", url, "synthetic-token", 60, false, "Claude", false).isEmpty());
-        QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+        QTRY_VERIFY2(controller.state()["status"].toString() == QStringLiteral("ready"), qPrintable(controller.diagnosticText()));
         QCOMPARE(proofs, 1); QCOMPARE(usage, 1); QCOMPARE(controller.backendUrl(), url);
         QVERIFY(!controller.remoteVerificationPending());
         controller.refresh(); QTRY_COMPARE(usage, 2); QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(proofs, 1);
@@ -135,13 +142,13 @@ private slots:
         const auto restore = qScopeGuard([original] { QSslConfiguration::setDefaultConfiguration(original); });
         auto trusted = original; trusted.setCaCertificates({TlsFixture::certificate()});
         QSslConfiguration::setDefaultConfiguration(trusted);
-        ProofServer server; QVERIFY(server.listen(QHostAddress::AnyIPv4));
+        ProofServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
         QUrl url(server.url()); url.setHost(QStringLiteral("127.0.0.1"));
         QTemporaryDir dir; SettingsService settings(dir.filePath("settings.json"), false);
         auto value = settings.value(); value.connectionMode = "remote"; value.url = url.toString(); value.token = QString::fromUtf8(server.token);
         QVERIFY(settings.save(value).isEmpty());
         Controller controller(settings.path(), nullptr, false, {}, {}, {}, false); controller.refresh();
-        QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+        QTRY_VERIFY2(controller.state()["status"].toString() == QStringLiteral("ready"), qPrintable(controller.diagnosticText()));
         QCOMPARE(server.requests.size(), 1); QVERIFY(server.requests.first().startsWith("GET /base/api/v1/usage "));
         QVERIFY(HttpAssertions::hasHeader(server.requests.first(), "Authorization", "Bearer synthetic-token"));
         QVERIFY(controller.backendCertificate().isNull());
@@ -149,14 +156,18 @@ private slots:
     }
     void upgradeAndUntrustedHttps() {
         QFETCH(QString, scheme);
-        ProofServer server; QVERIFY(server.listen(QHostAddress::AnyIPv4));
+        ProofServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        ConnectProxyFixture proxy(server.serverPort()); QVERIFY(proxy.listen(QHostAddress::LocalHost));
+        const auto previousProxy = QNetworkProxy::applicationProxy();
+        const auto restoreProxy = qScopeGuard([previousProxy] { QNetworkProxy::setApplicationProxy(previousProxy); });
+        QNetworkProxy::setApplicationProxy(proxy.proxy());
         QTemporaryDir dir; SettingsService settings(dir.filePath("settings.json"), false);
         auto value = settings.value(); value.connectionMode = "remote"; value.url = server.url(scheme); value.token = QString::fromUtf8(server.token);
         QVERIFY(settings.save(value).isEmpty());
         Controller controller(settings.path(), nullptr, false, {}, {}, {}, false);
         QCOMPARE(controller.remoteVerificationPending(), scheme == QStringLiteral("http"));
         controller.refresh();
-        QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+        QTRY_VERIFY2(controller.state()["status"].toString() == QStringLiteral("ready"), qPrintable(controller.diagnosticText()));
         QVERIFY(!controller.remoteVerificationPending());
         QCOMPARE(server.requests.size(), 2);
         QVERIFY(server.requests[0].startsWith("GET /base/api/v1/tls/proof?nonce="));
@@ -172,13 +183,17 @@ private slots:
     }
     void rotationVerifiedOrFailsClosed() {
         QFETCH(bool, valid);
-        ProofServer server(true); server.invalidProof = !valid; QVERIFY(server.listen(QHostAddress::AnyIPv4));
+        ProofServer server(true); server.invalidProof = !valid; QVERIFY(server.listen(QHostAddress::LocalHost));
+        ConnectProxyFixture proxy(server.serverPort()); QVERIFY(proxy.listen(QHostAddress::LocalHost));
+        const auto previousProxy = QNetworkProxy::applicationProxy();
+        const auto restoreProxy = qScopeGuard([previousProxy] { QNetworkProxy::setApplicationProxy(previousProxy); });
+        QNetworkProxy::setApplicationProxy(proxy.proxy());
         QTemporaryDir dir; SettingsService settings(dir.filePath("settings.json"), false);
         auto value = settings.value(); value.connectionMode = "remote"; value.url = server.url(); value.token = QString::fromUtf8(server.token);
         QVERIFY(settings.save(value).isEmpty()); value.remoteCertificate = QString::fromUtf8(TlsFixture::certificate().toPem());
         QVERIFY(settings.save(value).isEmpty());
         Controller controller(settings.path(), nullptr, false, {}, {}, {}, false); controller.refresh();
-        QTRY_VERIFY(controller.state()["status"].toString() == (valid ? QStringLiteral("ready") : QStringLiteral("offline")));
+        QTRY_VERIFY2(controller.state()["status"].toString() == (valid ? QStringLiteral("ready") : QStringLiteral("offline")), qPrintable(controller.diagnosticText()));
         QCOMPARE(server.requests.size(), valid ? 2 : 1);
         QVERIFY(!HttpAssertions::hasHeader(server.requests.first(), "Authorization"));
         if (valid) {

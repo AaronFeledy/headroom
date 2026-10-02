@@ -243,7 +243,7 @@ void Controller::requestUsage() {
     const ServerConnection transport = m_mode == QStringLiteral("local")
         ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    ServerTransport::secureRequest(request, transport.certificate);
+    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
     QNetworkAccessManager *network = m_mode == QStringLiteral("local") ? &m_localNetwork
         : m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;

@@ -379,7 +379,7 @@ void Controller::submitChatGptReset(bool automatic) {
     const ServerConnection transport = m_mode == "local" ? m_server.connection()
         : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    ServerTransport::secureRequest(request, transport.certificate);
+    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
     const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")},
         {"confirmed", true}, {"account_fingerprint", fingerprint}}).toJson(QJsonDocument::Compact);
     request.setHeader(QNetworkRequest::ContentLengthHeader, qint64(body.size()));

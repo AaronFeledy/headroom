@@ -17,7 +17,7 @@ struct ServerConnection {
 };
 
 namespace ServerTransport {
-inline void secureRequest(QNetworkRequest &request, const QSslCertificate &certificate)
+inline void secureRequest(QNetworkRequest &request, const QSslCertificate &certificate, bool remote = false)
 {
     if (certificate.isNull()) return;
     QSslConfiguration configuration = QSslConfiguration::defaultConfiguration();
@@ -27,6 +27,26 @@ inline void secureRequest(QNetworkRequest &request, const QSslCertificate &certi
     configuration.setCaCertificates({certificate});
     configuration.setAllowedNextProtocols({QByteArrayLiteral("http/1.1")});
     request.setSslConfiguration(configuration);
+    if (remote) {
+        // A token proof authenticates this exact certificate independently of DNS.
+        // Verify a name it actually contains so native TLS backends can validate
+        // its trust policy without ignoring hostname or certificate errors.
+        const auto names = certificate.subjectAlternativeNames();
+        const QString host = request.url().host();
+        QString name;
+        for (const QString &dns : names.values(QSsl::DnsEntry)) {
+            const QString suffix = dns.mid(1);
+            const bool wildcardMatch = dns.startsWith("*.") && host.endsWith(suffix, Qt::CaseInsensitive)
+                && !host.left(host.size() - suffix.size()).contains('.');
+            if (dns.compare(host, Qt::CaseInsensitive) == 0 || wildcardMatch) { name = host; break; }
+        }
+        if (name.isEmpty() && names.values(QSsl::IpAddressEntry).contains(host)) name = host;
+        if (name.isEmpty()) name = names.value(QSsl::DnsEntry);
+        if (name.isEmpty()) name = names.value(QSsl::IpAddressEntry);
+        if (name.isEmpty()) name = certificate.subjectInfo(QSslCertificate::CommonName).value(0);
+        if (name.startsWith("*.")) name = QStringLiteral("headroom") + name.mid(1);
+        if (!name.isEmpty()) request.setPeerVerifyName(name);
+    }
 }
 
 inline void requirePinnedPeer(QNetworkReply *reply, const QSslCertificate &certificate, bool remote = false)
@@ -38,14 +58,10 @@ inline void requirePinnedPeer(QNetworkReply *reply, const QSslCertificate &certi
             reply->setProperty("headroomPinMismatch", true); reply->abort();
         }
     });
-    if (remote) QObject::connect(reply, &QNetworkReply::sslErrors, reply, [reply, expected](const QList<QSslError> &errors) {
+    if (remote) QObject::connect(reply, &QNetworkReply::sslErrors, reply, [reply, expected](const QList<QSslError> &) {
         if (reply->sslConfiguration().peerCertificate().toDer() != expected) {
             reply->setProperty("headroomPinMismatch", true); reply->abort(); return;
         }
-        QList<QSslError> allowed;
-        for (const auto &error : errors)
-            if (error.error() == QSslError::HostNameMismatch && error.certificate().toDer() == expected) allowed.append(error);
-        if (!allowed.isEmpty()) reply->ignoreSslErrors(allowed);
     });
 }
 }

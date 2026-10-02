@@ -1,6 +1,7 @@
 #include "appinfo.h"
 #include "http_assertions.h"
 #include "tls_fixture.h"
+#include "connect_proxy_fixture.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -111,41 +112,24 @@ private slots:
     }
     void remotePinnedHealthUsesConfiguredProxy() {
         HttpsFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
-        QTcpServer proxy; QVERIFY(proxy.listen(QHostAddress::LocalHost));
-        int tunnels = 0;
-        connect(&proxy, &QTcpServer::newConnection, this, [&] {
-            auto socket = proxy.nextPendingConnection();
-            connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
-                if (socket->property("tunneling").toBool()) return;
-                auto bytes = socket->property("request").toByteArray() + socket->readAll();
-                socket->setProperty("request", bytes);
-                if (!bytes.contains("\r\n\r\n")) return;
-                QVERIFY(bytes.startsWith("CONNECT headroom-proxy-fixture.invalid:"));
-                QVERIFY(!bytes.contains("private-fixture-token"));
-                socket->setProperty("tunneling", true); ++tunnels;
-                auto upstream = new QTcpSocket(socket);
-                upstream->setProxy(QNetworkProxy::NoProxy);
-                connect(upstream, &QTcpSocket::connected, socket, [socket] {
-                    socket->write("HTTP/1.1 200 Connection Established\r\n\r\n");
-                });
-                connect(upstream, &QTcpSocket::readyRead, socket, [socket, upstream] { socket->write(upstream->readAll()); });
-                connect(socket, &QTcpSocket::readyRead, upstream, [socket, upstream] { upstream->write(socket->readAll()); });
-                connect(upstream, &QTcpSocket::disconnected, socket, &QTcpSocket::disconnectFromHost);
-                upstream->connectToHost(QHostAddress::LocalHost, fixture.serverPort());
-            });
-        });
+        ConnectProxyFixture proxy(fixture.serverPort()); QVERIFY(proxy.listen(QHostAddress::LocalHost));
         const auto previous = QNetworkProxy::applicationProxy();
         const auto restore = qScopeGuard([previous] { QNetworkProxy::setApplicationProxy(previous); });
-        QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::HttpProxy, "127.0.0.1", proxy.serverPort()));
+        QNetworkProxy::setApplicationProxy(proxy.proxy());
         AppInfo info(nullptr, 2000);
         QUrl url(fixture.url()); url.setHost("headroom-proxy-fixture.invalid");
         info.setBackend(url.toString(), "private-fixture-token", TlsFixture::certificate(), true);
         info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
-        QCOMPARE(tunnels, 1);
-        QCOMPARE(info.serverVersion(), QString("1.7.1"));
+        QCOMPARE(proxy.requests.size(), 1);
+        QVERIFY(!proxy.requests.first().contains("private-fixture-token"));
+        QVERIFY2(info.serverVersion() == QString("1.7.1"), qPrintable(QStringLiteral("%1; proxy tunnels=%2; fixture requests=%3")
+            .arg(info.serverStatus()).arg(proxy.requests.size()).arg(fixture.requests.size())));
         QCOMPARE(fixture.requests.size(), 1);
         QVERIFY(HttpAssertions::hasHeader(fixture.requests.first(), "Authorization", "Bearer private-fixture-token"));
+        fixture.setSslConfiguration(TlsFixture::replacementServerConfiguration());
+        info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
+        QVERIFY(info.serverVersion().isEmpty());
+        QCOMPARE(fixture.requests.size(), 1); // A replacement peer receives no bearer.
     }
     void changingPrivateSessionCancelsPendingVersionRequest() {
         HttpsFixture slow, next;

@@ -362,7 +362,7 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(m_options.requestTimeoutMs);
     if (m_mode != QStringLiteral("ssh") && !m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
-    ServerTransport::secureRequest(request, m_certificate);
+    ServerTransport::secureRequest(request, m_certificate, m_mode == QStringLiteral("remote"));
     QJsonObject payload{{QStringLiteral("cookie"), QString::fromUtf8(cookie)}};
     if (provider == QStringLiteral("Cursor") && m_hasAuth.value(provider) && !source.isEmpty()) payload[QStringLiteral("source_name")] = source;
     const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);

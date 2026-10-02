@@ -82,7 +82,7 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token, const 
     request.setRawHeader("User-Agent", "Headroom/" + applicationVersion().toUtf8());
     request.setRawHeader("Accept", "application/json");
     if (!token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + token);
-    ServerTransport::secureRequest(request, certificate);
+    ServerTransport::secureRequest(request, certificate, m_remote);
     QHostAddress address;
     const bool local = (!m_remote && !certificate.isNull()) || (address.setAddress(url.host()) && address.isLoopback());
     QNetworkAccessManager *network = url.scheme() == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
