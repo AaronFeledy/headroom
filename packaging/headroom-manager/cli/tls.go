@@ -41,7 +41,16 @@ func proofMessage(token, nonce, fingerprint string) []byte {
 	return mac.Sum(nil)
 }
 
-func proveTLS(ctx context.Context, endpoint, token string) ([]byte, error) {
+// Keep the configured proxy and dial policy when adding proof or pin verification.
+func tlsTransport(original *http.Client) *http.Transport {
+	transport, ok := original.Transport.(*http.Transport)
+	if !ok || transport == nil {
+		transport = http.DefaultTransport.(*http.Transport)
+	}
+	return transport.Clone()
+}
+
+func proveTLS(ctx context.Context, original *http.Client, endpoint, token string) ([]byte, error) {
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return nil, fmt.Errorf("TLS nonce: %w", err)
@@ -53,7 +62,11 @@ func proveTLS(ctx context.Context, endpoint, token string) ([]byte, error) {
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/api/v1/usage") + "/api/v1/tls/proof"
 	parsed.RawQuery = "nonce=" + nonce
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, DisableKeepAlives: true, TLSHandshakeTimeout: 2 * time.Second, ResponseHeaderTimeout: 2 * time.Second}
+	transport := tlsTransport(original)
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
+	transport.DisableKeepAlives = true
+	transport.TLSHandshakeTimeout = 2 * time.Second
+	transport.ResponseHeaderTimeout = 2 * time.Second
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errTLSProof }}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
@@ -105,12 +118,14 @@ func pinnedClient(original *http.Client, der []byte) (*http.Client, error) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(certificate)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: name, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error {
+	transport := tlsTransport(original)
+	transport.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: name, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 || !bytes.Equal(state.PeerCertificates[0].Raw, der) {
 			return errTLSPin
 		}
 		return nil
-	}}, TLSHandshakeTimeout: 3 * time.Second}
+	}}
+	transport.TLSHandshakeTimeout = 3 * time.Second
 	client := *original
 	client.Transport = transport
 	return &client, nil
@@ -141,7 +156,7 @@ func authenticatedRequest(ctx context.Context, options Options, request *http.Re
 		if upgrade.Port() == "" {
 			upgrade.Host = net.JoinHostPort(upgrade.Hostname(), "80")
 		}
-		if pin, err := proveTLS(ctx, upgrade.String(), token); err == nil {
+		if pin, err := proveTLS(ctx, options.HTTPClient, upgrade.String(), token); err == nil {
 			client, err := pinnedClient(options.HTTPClient, pin)
 			if err != nil {
 				return nil, err
@@ -167,7 +182,7 @@ func authenticatedRequest(ctx context.Context, options Options, request *http.Re
 	if !errors.As(err, &verification) && !errors.Is(err, errTLSPin) {
 		return nil, err
 	}
-	pin, proofErr := proveTLS(ctx, target.String(), token)
+	pin, proofErr := proveTLS(ctx, options.HTTPClient, target.String(), token)
 	if proofErr != nil {
 		return nil, fmt.Errorf("verify server TLS identity: %w", proofErr)
 	}

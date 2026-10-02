@@ -84,7 +84,7 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token, const 
     if (!token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + token);
     ServerTransport::secureRequest(request, certificate);
     QHostAddress address;
-    const bool local = !certificate.isNull() || (address.setAddress(url.host()) && address.isLoopback());
+    const bool local = (!m_remote && !certificate.isNull()) || (address.setAddress(url.host()) && address.isLoopback());
     QNetworkAccessManager *network = url.scheme() == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
         : local ? &m_localNetwork : &m_network;
     auto reply = network->get(request);

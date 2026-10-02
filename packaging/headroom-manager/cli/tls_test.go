@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -129,5 +131,67 @@ func Test_CLI_render_does_not_repeat_a_command_named_by_the_error(t *testing.T) 
 	// Then
 	if strings.Contains(output, "Run: ") || !strings.Contains(output, "Error: "+message) {
 		t.Fatal(output)
+	}
+}
+
+func Test_CLI_TLS_proof_and_pinned_requests_keep_configured_proxy(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			server, sent := proofServer(t, true)
+			upstreamURL, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tunnels atomic.Int32
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodConnect {
+					t.Errorf("unexpected proxy method %s", r.Method)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				upstream, err := net.Dial("tcp", upstreamURL.Host)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				defer upstream.Close()
+				downstream, buffered, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer downstream.Close()
+				tunnels.Add(1)
+				if _, err := buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+					t.Error(err)
+					return
+				}
+				if err := buffered.Flush(); err != nil {
+					t.Error(err)
+					return
+				}
+				go func() { _, _ = io.Copy(upstream, buffered) }()
+				_, _ = io.Copy(downstream, upstream)
+			}))
+			defer proxy.Close()
+			proxyURL, err := url.Parse(proxy.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := Options{Env: []string{"HEADROOM_AUTH_TOKEN=fixture-token"},
+				HTTPClient: &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}}.defaults()
+			defer options.HTTPClient.CloseIdleConnections()
+			defer func() {
+				for _, entry := range options.tlsSession.entries {
+					entry.client.CloseIdleConnections()
+				}
+			}()
+			endpoint := scheme + "://" + net.JoinHostPort("headroom-proxy-fixture.invalid", upstreamURL.Port())
+			body, err := fetchHTTP(context.Background(), options, endpoint)
+			if err != nil || string(body) != "[]" || sent.Load() != 1 || tunnels.Load() < 2 {
+				t.Fatalf("body=%s sent=%d tunnels=%d err=%v", body, sent.Load(), tunnels.Load(), err)
+			}
+		})
 	}
 }
