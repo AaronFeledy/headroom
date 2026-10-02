@@ -1,4 +1,6 @@
 #include "notifications.h"
+#include "usage.h"
+#include <cmath>
 #include <algorithm>
 #include <utility>
 
@@ -86,4 +88,79 @@ void Notifications::observeBankedResetCount(qint64 count, const QString &account
         .arg(before).arg(count).arg(delta > 0 ? "+" : "").arg(delta);
     post("bankedResets_Codex", title, message, delta < 0 ? 2 : 0,
         {{"delta", delta}, {"previousCount", before}, {"count", count}});
+}
+
+void Notifications::resetUsageBaseline(const QString &provider) {
+    if (provider.isEmpty()) m_usageBaselines.clear();
+    else m_usageBaselines.remove(provider);
+    const auto removeEvents = [&](QVariantList &items) {
+        const auto before = items.size();
+        items.erase(std::remove_if(items.begin(), items.end(), [&](const QVariant &item) {
+            const auto event = item.toMap();
+            if (event.value("kind").toString() != "earlyUsageReset"
+                || (!provider.isEmpty() && event.value("provider").toString() != provider)) return false;
+            m_highlights.remove(event.value("target").toString());
+            return true;
+        }), items.end());
+        return items.size() != before;
+    };
+    const bool pendingChangedValue = removeEvents(m_pending);
+    const bool presentationChangedValue = removeEvents(m_presented);
+    if (pendingChangedValue) emit pendingChanged();
+    if (presentationChangedValue) emit presentationChanged();
+}
+
+void Notifications::observeUsage(const QVariantList &providers, bool enabled, const QDateTime &now) {
+    if (!now.isValid()) return;
+    // Use the OLD deadline: a provider can restart the whole window when it
+    // clears usage. Ignore routine rollovers, clock drift, and resets so close
+    // to the scheduled one that they are not useful to call out.
+    constexpr qint64 resetGraceSeconds = 15 * 60;
+    QSet<QString> present;
+    for (const auto &value : providers) {
+        const auto provider = value.toMap();
+        const auto name = provider.value("provider_name").toString();
+        present.insert(name);
+        if (!provider.value("is_success").toBool()) {
+            // Temporary failures are not zero readings. Reauthentication may
+            // select a different account, so its next reading is a baseline.
+            if (provider.value("needs_reauth").toBool()) resetUsageBaseline(name);
+            continue;
+        }
+        const auto fingerprint = provider.value("rate_limit_reset_credits").toMap()
+            .value("account_fingerprint").toString();
+        const auto subtitle = provider.value("subtitle").toString();
+        const auto prior = m_usageBaselines.constFind(name);
+        if (prior != m_usageBaselines.cend()
+            && (prior->accountFingerprint != fingerprint || prior->subtitle != subtitle))
+            resetUsageBaseline(name);
+        auto &baseline = m_usageBaselines[name];
+        baseline.accountFingerprint = fingerprint;
+        baseline.subtitle = subtitle;
+        QHash<QString, UsageSample> readings;
+        for (const auto &item : provider.value("buckets").toList()) {
+            const auto bucket = item.toMap();
+            const auto id = bucket.value("id").toString();
+            bool valid = false;
+            const double used = bucket.value("utilization").toDouble(&valid);
+            if (id.isEmpty() || !valid || !std::isfinite(used) || used < 0 || used > 100) continue;
+            const auto reset = QDateTime::fromString(bucket.value("resets_at").toString(), Qt::ISODateWithMs);
+            const auto before = baseline.buckets.constFind(id);
+            if (before != baseline.buckets.cend() && before->utilization > 0 && used == 0
+                && before->resetsAt.isValid() && now < before->resetsAt.addSecs(-resetGraceSeconds)
+                && enabled) {
+                const auto label = bucket.value("label").toString();
+                post("meter_" + name + "_" + id, Usage::displayName(name) + " · " + label + " · Usage reset early",
+                    QString("%1 usage dropped from %2% to 0% before its scheduled reset.")
+                        .arg(label).arg(before->utilization, 0, 'f', 1), 0,
+                    {{"kind", "earlyUsageReset"}, {"provider", name}});
+            }
+            // Disabled alerts still advance the baseline; unchanged zeroes do
+            // not re-arm attention. Missing meters are never treated as zero.
+            readings.insert(id, {used, reset});
+        }
+        baseline.buckets = std::move(readings);
+    }
+    for (const auto &name : m_usageBaselines.keys())
+        if (!present.contains(name)) resetUsageBaseline(name);
 }

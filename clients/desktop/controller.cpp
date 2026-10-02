@@ -50,6 +50,8 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
             break;
         }
         if (!replaced) return;
+        m_notificationCenter.resetUsageBaseline(name);
+        m_notificationCenter.observeUsage(m_providers, false);
         updateMeterStates();
         emit providersChanged();
         emit changed();
@@ -291,6 +293,7 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
     m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
     observeResetUsage();
+    m_notificationCenter.observeUsage(m_providers, m_notifications);
     for (const auto &value : m_providers) {
         const auto provider = value.toMap();
         if (provider["provider_name"].toString() != "Codex" || !provider["is_success"].toBool()) continue;
@@ -333,7 +336,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; }
     m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (connectionChanged) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); cancelScheduledChatGptReset(); }
+    if (connectionChanged) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledChatGptReset(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();
