@@ -131,6 +131,94 @@ private slots:
         QCOMPARE(alerts.size(), 3);
         QCOMPARE(controller.notifications()->unreadCount(), 0);
     }
+    void earlyUsageResetNotificationsObserveSnapshotsAndConnectionBaselines() {
+        QTemporaryDir dir;
+        class SnapshotController final : public Controller {
+        public:
+            using Controller::Controller;
+            using Controller::acceptSnapshot;
+            void refresh() override {}
+        };
+        const auto now = QDateTime::currentDateTimeUtc();
+        auto payload = [&](double used, const QDateTime &reset) {
+            auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[0].toObject();
+            provider["buckets"] = QJsonArray{QJsonObject{{"id", "weekly"}, {"label", "Weekly"},
+                {"utilization", used}, {"resets_at", reset.toString(Qt::ISODate)}}};
+            return QJsonDocument(QJsonArray{provider}).toJson();
+        };
+        SnapshotController controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials(), {}, false);
+        auto replaceSnapshot = [&](const QByteArray &snapshot) {
+            QVariantList providers;
+            QVERIFY(Usage::parse(snapshot, providers));
+            controller.acceptSnapshot(providers);
+        };
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        replaceSnapshot(payload(42, now.addDays(1)));
+        QCOMPARE(controller.providers().size(), 1);
+        QCOMPARE(alerts.size(), 0);
+        replaceSnapshot(payload(0, now.addDays(7)));
+        QCOMPARE(alerts.size(), 1);
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        controller.notifications()->present();
+        const auto event = controller.notifications()->presented().first().toMap();
+        QCOMPARE(event["kind"].toString(), "earlyUsageReset");
+        QCOMPARE(event["target"].toString(), "meter_Claude_weekly");
+        controller.notifications()->endPresentation();
+        replaceSnapshot(payload(0, now.addDays(7)));
+        QCOMPARE(alerts.size(), 1);
+        replaceSnapshot(payload(42, now.addDays(1)));
+        replaceSnapshot(payload(0, now.addDays(7)));
+        QCOMPARE(alerts.size(), 2);
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        QVERIFY(controller.saveSettings("remote", "https://different.example.test", "", 60, true,
+            "Claude", false).isEmpty());
+        QCOMPARE(controller.notifications()->unreadCount(), 0);
+        QCOMPARE(alerts.size(), 2);
+        replaceSnapshot(payload(42, now.addDays(1)));
+        QVERIFY(controller.saveSettings("remote", "https://another.example.test", "", 60, true,
+            "Claude", false).isEmpty());
+        replaceSnapshot(payload(0, now.addDays(7)));
+        QCOMPARE(alerts.size(), 2);
+        replaceSnapshot(payload(42, now.addSecs(600)));
+        replaceSnapshot(payload(0, now.addDays(7)));
+        QCOMPARE(alerts.size(), 2); // Scheduled reset was near, despite the new deadline.
+    }
+    void earlyUsageResetAfterCredentialRecovery() {
+        QTemporaryDir dir;
+        const auto reset = QDateTime::currentDateTimeUtc().addDays(2).toString(Qt::ISODate);
+        auto provider = [&](const QString &name, double used, bool failed = false) {
+            return QJsonObject{{"provider_name", name}, {"subtitle", "Sample account"},
+                {"is_success", !failed}, {"needs_reauth", failed},
+                {"error", failed ? QJsonValue("Sign-in expired") : QJsonValue(QJsonValue::Null)},
+                {"buckets", failed ? QJsonArray{} : QJsonArray{QJsonObject{{"id", "weekly"},
+                    {"label", "Weekly"}, {"utilization", used}, {"resets_at", reset}}}}};
+        };
+        const auto failedCursor = provider("Cursor", 0, true);
+        ControllerFixture controller(dir.filePath("settings.json"),
+            QJsonDocument(QJsonArray{failedCursor, provider("Grok", 24)}).toJson());
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(controller.providers().size(), 2);
+        auto credentials = controller.findChild<CredentialService *>();
+        QVERIFY(credentials);
+        QSignalSpy recovered(credentials, &CredentialService::providerRecovered);
+        QVariantList replacement;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider("Cursor", 42)}).toJson(), replacement));
+        credentials->providerRecovered(replacement.first().toMap());
+        QCOMPARE(recovered.size(), 1);
+        const auto cursor = controller.providers().first().toMap();
+        QVERIFY(cursor["is_success"].toBool());
+        QCOMPARE(cursor["buckets"].toList().first().toMap()["utilization"].toDouble(), 42.0);
+        QCOMPARE(alerts.size(), 0);
+        controller.replaceSnapshot(QJsonDocument(QJsonArray{provider("Cursor", 0), provider("Grok", 0)}).toJson());
+        QCOMPARE(alerts.size(), 2);
+        controller.notifications()->present();
+        const auto events = controller.notifications()->presented();
+        QCOMPARE(events.size(), 2);
+        QCOMPARE(events[0].toMap()["target"].toString(), "meter_Cursor_weekly");
+        QCOMPARE(events[1].toMap()["target"].toString(), "meter_Grok_weekly");
+        controller.refresh();
+        QCOMPARE(alerts.size(), 2);
+    }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
         const QString fingerprint(64, QLatin1Char('a'));
@@ -557,13 +645,14 @@ private slots:
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
         httpStatus = 200; used = 0; reset = now.addSecs(18000).toString(Qt::ISODate);
         controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "ready");
-        QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 3);
+        QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 4);
+        QVERIFY(alerts.last()[0].toString().contains("Usage reset early"));
         used = 94; reset = QDateTime::currentDateTimeUtc().addSecs(2).toString(Qt::ISODateWithMs);
         controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 0);
         QTest::qWait(2200); // A cached near-reset reading must not become a new critical alert.
         controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
-        QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 3);
+        QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 4);
         QVERIFY(!concern()["available"].toBool());
         QVERIFY(concern()["detail"].toString().contains("reset time has passed"));
     }
