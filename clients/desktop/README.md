@@ -54,10 +54,12 @@ can notify about the same meter again after acknowledgement.
 
 ## Build and run
 
-Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
+Requires CMake 3.25+, a C++17 compiler, and Qt 6.12+ with Quick, Quick Controls 2,
 Widgets, Network, SVG image support, and Test. On Arch / EndeavourOS these come
 from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
-`qt6-wayland` for a Wayland session). KDE tray anchoring uses the optional
+`qt6-wayland` for a Wayland session), provided the distro supplies Qt 6.12+.
+Otherwise, select an official Qt 6.12.0 kit with `CMAKE_PREFIX_PATH`.
+KDE tray anchoring uses the optional
 `kstatusnotifieritem` and `layer-shell-qt` (6.6+) libraries detected by CMake.
 Building with those optional packages enables native KDE Wayland tray attachment.
 Without LayerShellQt, the client prefers XWayland when available so tray clicks
@@ -65,7 +67,7 @@ can position the popup beside the icon. Pure Wayland sessions without that
 integration leave window placement to the compositor. Explicit Qt platform
 overrides are preserved.
 
-macOS builds require macOS 12 or newer and Qt 6.8.3 or newer. CMake creates a
+macOS builds target macOS 14.4 or newer and require Qt 6.12 or newer. CMake creates a
 menu-bar-only application bundle with the `io.headroom.Headroom` identifier.
 
 ```bash
@@ -87,23 +89,24 @@ clients/desktop/build/headroom.exe
 Use an x64 Qt kit with an x64 developer shell, or the Qt MSVC ARM64 kit with an
 ARM64 shell. Set `CMAKE_PREFIX_PATH` or `Qt6_DIR` to that kit if Qt is not
 already discoverable in the shell, and add the kit's `bin` directory to `PATH`
-when running the source-built app and tests. The exact Qt 6.8.3 native package recipe is in
+when running the source-built app and tests. The exact Qt 6.12.0 native package recipe is in
 [headroom-packages.yml](../../.github/workflows/headroom-packages.yml).
 
-On macOS 12 or newer, configure with the Qt 6.8.3 kit for the host architecture.
+On macOS 14.4 or newer, configure with the Qt 6.12.0 kit for the host architecture.
 Release packages build separate Apple silicon and Intel bundles:
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/Qt/6.12.0/macos"
 cmake --build clients/desktop/build --parallel
 ctest --test-dir clients/desktop/build --output-on-failure
 open clients/desktop/build/headroom.app
 ```
 
-With the official Qt 6.8.3 kit and Xcode/Command Line Tools 26, select an
-installed macOS 15 SDK when configuring. The macOS 26 SDK omits the AGL
-framework referenced by that Qt kit. For example, if this SDK is installed:
+Qt 6.12 requires Xcode 16 and the macOS 15 SDK or newer. Re-validate SDK
+selection on the native runner when upgrading Xcode or Command Line Tools.
+If the default SDK causes a framework lookup failure, select an installed
+compatible SDK explicitly. For example, if this SDK is installed:
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build \
@@ -111,14 +114,15 @@ cmake -S clients/desktop -B clients/desktop/build \
 ```
 
 Use the SDK path available in your Xcode or Command Line Tools installation;
-this does not change Headroom's macOS 12 deployment target.
+this does not change Headroom's macOS 14.4 deployment target.
 
 Mac test builds generate fresh synthetic TLS certificates with the system
-`/usr/bin/openssl`. On macOS 15, local TLS fixture runs need a Qt kit built with
-the macOS 15 SDK or newer. Native CI tests the official Qt 6.8.3 kit in a
-disposable keychain because that kit's older SDK cannot request memory-only
-private-key import on macOS 15. The application uses the Go server's in-memory
-TLS identity and Apple's native client verification.
+`/usr/bin/openssl`. Native CI retains a disposable keychain and
+`QT_SSL_USE_TEMPORARY_KEYCHAIN` for synthetic private-key import. Re-validate
+this workaround with the Qt 6.12.0 kit and the selected SDK on the native
+runner; do not assume older SDK-specific import behavior still applies.
+The application uses the Go server's in-memory TLS identity and Apple's native
+client verification.
 
 On Linux, install the executable, application-menu entry, and icon for your
 user:

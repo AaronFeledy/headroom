@@ -88,7 +88,7 @@ ColumnLayout {
                 width: Math.max(0, parent.width * meter.bucket.utilization / 100)
                 height: parent.height; radius: 3
                 color: meter.usageColor
-                Behavior on width { enabled: !captureMode; NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+                Behavior on width { objectName: "meterFillBehavior_" + meter.providerName + "_" + meter.bucket.id; enabled: !captureMode && !Theme.reducedMotion; NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
             }
             Repeater {
                 objectName: "meterNotches_" + meter.providerName + "_" + meter.bucket.id

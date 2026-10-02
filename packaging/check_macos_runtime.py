@@ -29,8 +29,8 @@ def check(path, architecture):
         else:
             continue
         targets.extend(re.findall(rf"^\s*{field}\s+(\d+)\.(\d+)(?:\.(\d+))?\s*$", block, re.MULTILINE))
-    if len(targets) != 1 or tuple(int(part or 0) for part in targets[0]) > (12, 0, 0):
-        raise ValueError(f"{path.name}: {architecture} slice does not support the macOS 12 baseline")
+    if len(targets) != 1 or tuple(int(part or 0) for part in targets[0]) > (14, 4, 0):
+        raise ValueError(f"{path.name}: {architecture} slice does not support the macOS 14.4 baseline")
 
 
 def check_tree(root, architecture):
@@ -54,4 +54,4 @@ if __name__ == "__main__":
     parser.add_argument("path", type=Path)
     parser.add_argument("architecture", choices=("arm64", "x86_64"))
     args = parser.parse_args()
-    print(f"Verified {check_tree(args.path, args.architecture)} Mach-O payloads for {args.architecture} and macOS 12")
+    print(f"Verified {check_tree(args.path, args.architecture)} Mach-O payloads for {args.architecture} and macOS 14.4")

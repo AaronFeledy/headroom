@@ -12,6 +12,9 @@
 #include <QQmlContext>
 #include <QQmlComponent>
 #include <QQmlProperty>
+#include <QQmlExpression>
+#include <QMovie>
+#include <QContextMenuEvent>
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QQuickItem>
@@ -54,6 +57,175 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void qt612ActionsAndContextMenus() {
+        QTemporaryDir dir;
+        const auto samples = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{samples[0], samples[2]}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        TrayPopup popup(window, true);
+        window->resize(900, 800); popup.show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 2);
+        auto refreshAction = window->findChild<QObject *>("refreshAction"); QVERIFY(refreshAction);
+        auto settingsAction = window->findChild<QObject *>("settingsAction"); QVERIFY(settingsAction);
+        auto quitAction = window->findChild<QObject *>("quitAction"); QVERIFY(quitAction);
+        QCOMPARE(refreshAction->property("shortcut").toString(), QString("Ctrl+R"));
+        QCOMPARE(settingsAction->property("shortcut").toString(), QString("Ctrl+,"));
+        QCOMPARE(quitAction->property("shortcut").toString(), QString("Ctrl+Q"));
+        auto refresh = findItem(window->contentItem(), "refreshButton"); QVERIFY(refresh);
+        auto settings = findItem(window->contentItem(), "settingsButton"); QVERIFY(settings);
+        QCOMPARE(refresh->property("action").value<QObject *>(), refreshAction);
+        QCOMPARE(settings->property("action").value<QObject *>(), settingsAction);
+        auto dashboardMenu = window->findChild<QObject *>("dashboardMenu"); QVERIFY(dashboardMenu);
+        QSignalSpy refreshed(&controller, &Controller::providersChanged);
+        QTest::keyClick(window, Qt::Key_R, Qt::ControlModifier);
+        QTRY_COMPARE(refreshed.size(), 1);
+        QVERIFY(!dashboardMenu->property("opened").toBool());
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        QTest::keyClick(window, Qt::Key_Comma, Qt::ControlModifier);
+        QTRY_VERIFY(panel->property("opened").toBool());
+        auto token = findItem(window->contentItem(), "bearerToken"); QVERIFY(token);
+        // A synthetic string only; never copy or log a real saved bearer token.
+        QVERIFY(token->setProperty("text", "synthetic-token"));
+        QVERIFY(QMetaObject::invokeMethod(token, "selectAll"));
+        const auto tokenMenu = QQmlProperty::read(token, "ContextMenu.menu", qmlContext(token));
+        QVERIFY(tokenMenu.isValid());
+        QVERIFY(!tokenMenu.value<QObject *>());
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QTRY_COMPARE(window->activeFocusItem()->objectName(), QString("escapeFocus"));
+        auto header = findItem(window->contentItem(), "providerHeader_Cursor"); QVERIFY(header);
+        header->forceActiveFocus();
+        QTest::keyClick(window, Qt::Key_Menu);
+        // Offscreen has no native keyboard event translator; deliver the
+        // platform context-menu event that the Menu key normally generates.
+        if (QGuiApplication::platformName() == "offscreen") {
+            const auto point = header->mapToScene(QPointF(header->width() / 2, header->height() / 2)).toPoint();
+            QContextMenuEvent request(QContextMenuEvent::Keyboard, point, window->mapToGlobal(point));
+            QCoreApplication::sendEvent(window, &request);
+        }
+        auto providerMenu = header->findChild<QObject *>("providerMenu_Cursor"); QVERIFY(providerMenu);
+        QTRY_VERIFY(providerMenu->property("opened").toBool());
+        QTest::keyClick(window, Qt::Key_Down); QTest::keyClick(window, Qt::Key_Return);
+        QTRY_COMPARE(controller.primary(), QString("Cursor"));
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, QPoint(5, 80));
+        QTRY_VERIFY(dashboardMenu->property("opened").toBool());
+        QCOMPARE(dashboardMenu->property("separatorsCollapsible").toBool(), true);
+        QCOMPARE(QQmlExpression(qmlContext(window), window, "dashboardMenu.itemAt(0).contentItem.color")
+            .evaluate().value<QColor>(), QColor("#f8f8f2"));
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture); QTest::qWait(100);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath("qt612-dashboard-menu.png")));
+        }
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTRY_VERIFY(!dashboardMenu->property("opened").toBool());
+        QTRY_COMPARE(window->activeFocusItem()->objectName(), QString("escapeFocus"));
+        refreshed.clear(); QTest::keyClick(window, Qt::Key_R, Qt::ControlModifier);
+        QTRY_COMPARE(refreshed.size(), 1);
+        // QML engine emits quit without terminating this Qt Test process.
+        QSignalSpy quit(&engine, &QQmlEngine::quit);
+        QTest::keyClick(window, Qt::Key_Q, Qt::ControlModifier);
+        QTRY_COMPARE(quit.size(), 1);
+    }
+    void qt612MotionAndAnimatedSvg_data() {
+        QTest::addColumn<bool>("reduced");
+        QTest::newRow("normal-motion") << false;
+        QTest::newRow("reduced-motion") << true;
+    }
+    void qt612MotionAndAnimatedSvg() {
+        QFETCH(bool, reduced);
+        QTemporaryDir dir;
+        const auto sample = QJsonDocument::fromJson(TestUsage::snapshot()).array()[0].toObject();
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{sample}).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", false);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        auto theme = QQmlExpression(qmlContext(window), window, "Theme").evaluate().value<QObject *>(); QVERIFY(theme);
+        QVERIFY(theme->setProperty("reducedMotionOverride", reduced));
+        QTRY_COMPARE(theme->property("reducedMotion").toBool(), reduced);
+        window->resize(539, 600); window->show(); window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 1);
+        auto meter = findItem(window->contentItem(), "meter_Claude_session"); QVERIFY(meter);
+        auto fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
+        auto behavior = fill->findChild<QObject *>("meterFillBehavior_Claude_session"); QVERIFY(behavior);
+        QCOMPARE(behavior->property("enabled").toBool(), !reduced);
+        auto refresh = findItem(window->contentItem(), "refreshButton"); QVERIFY(refresh);
+        auto colorBehavior = refresh->findChild<QObject *>("buttonColorBehavior"); QVERIFY(colorBehavior);
+        QCOMPARE(colorBehavior->property("enabled").toBool(), !reduced);
+        auto bucket = meter->property("bucket").toMap(); bucket["utilization"] = 75.0;
+        QVERIFY(meter->setProperty("bucket", bucket));
+        if (reduced) QCOMPARE(fill->width(), fill->parentItem()->width() * 0.75);
+        QTRY_COMPARE(fill->width(), fill->parentItem()->width() * 0.75);
+        auto highlight = findItem(window->contentItem(), "notificationHighlight_meter_Claude_session"); QVERIFY(highlight);
+        auto pulse = highlight->findChild<QObject *>("notificationPulse"); QVERIFY(pulse);
+        QCOMPARE(pulse->property("loops").toInt(), reduced ? 1 : 2);
+        QVERIFY(QMetaObject::invokeMethod(highlight, "flash"));
+        QTRY_VERIFY(highlight->property("flashing").toBool());
+        if (reduced) {
+            QTest::qWait(100); QCOMPARE(highlight->opacity(), 1.0);
+            QTRY_VERIFY_WITH_TIMEOUT(!highlight->property("flashing").toBool(), 800);
+        }
+        QVERIFY(QMovie::supportedFormats().contains("svg"));
+        QMovie svg(QString(SOURCE_DIR) + "/qml/loading.svg");
+        QVERIFY(svg.isValid()); QVERIFY(svg.jumpToFrame(0));
+        const auto firstFrame = svg.currentImage();
+        QVERIFY(svg.jumpToFrame(10)); QVERIFY(svg.currentImage() != firstFrame);
+        auto state = controller.state(); state["loading"] = true;
+        QVERIFY(window->setProperty("state", state));
+        auto indicator = findItem(window->contentItem(), "refreshIndicator"); QVERIFY(indicator);
+        QTRY_VERIFY(indicator->isVisible()); QTRY_COMPARE(indicator->property("status").toInt(), 1); // Image.Ready
+        QCOMPARE(indicator->property("playing").toBool(), !reduced);
+        const int initialFrame = indicator->property("currentFrame").toInt();
+        if (reduced) { QTest::qWait(150); QCOMPARE(indicator->property("currentFrame").toInt(), initialFrame); }
+        else QTRY_VERIFY(indicator->property("currentFrame").toInt() != initialFrame);
+        auto capture = [&](const QString &name) {
+            const auto path = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!path.isEmpty()) { QDir().mkpath(path); QVERIFY(window->grabWindow().save(QDir(path).filePath(name))); }
+        };
+        capture(reduced ? "qt612-loading-reduced.png" : "qt612-loading.png");
+        engine.rootContext()->setContextProperty("captureMode", true);
+        QTRY_VERIFY(!indicator->property("playing").toBool());
+        QCOMPARE(behavior->property("enabled").toBool(), false);
+        QCOMPARE(colorBehavior->property("enabled").toBool(), false);
+        engine.rootContext()->setContextProperty("captureMode", false);
+        // Fixture-only state injection: never start a backend for these captures.
+        QVERIFY(window->setProperty("providers", QVariantList{}));
+        state["status"] = "connecting"; state["message"] = "Preparing the local usage server…";
+        QVERIFY(window->setProperty("state", state));
+        auto connecting = findItem(window->contentItem(), "connectingIndicator"); QVERIFY(connecting);
+        QTRY_VERIFY(connecting->isVisible()); QTRY_COMPARE(connecting->property("status").toInt(), 1);
+        QCOMPARE(connecting->property("playing").toBool(), !reduced);
+        capture(reduced ? "qt612-connecting-reduced.png" : "qt612-connecting.png");
+        engine.rootContext()->setContextProperty("captureMode", true);
+        QTRY_VERIFY(!indicator->property("playing").toBool());
+        QTRY_VERIFY(!connecting->property("playing").toBool());
+    }
     void statusSharesPaceRowWhenItFits_data() {
         QTest::addColumn<int>("width");
         QTest::newRow("compact") << 460;

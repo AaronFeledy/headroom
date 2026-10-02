@@ -16,7 +16,7 @@ SPEC.loader.exec_module(MODULE)
 
 class QtAttributionTests(unittest.TestCase):
     def fixture(self, root: pathlib.Path, missing_reference=False):
-        archive_name = "qtbase-everywhere-src-6.8.3.zip"
+        archive_name = "qtbase-everywhere-src-6.12.0.zip"
         archive = root / archive_name
         prefix = archive_name.removesuffix(".zip")
         attribution = (
@@ -30,11 +30,11 @@ class QtAttributionTests(unittest.TestCase):
                 output.writestr(prefix + "/src/thirdparty/LICENSE.txt", "fixture license\n")
         source = {
             "module": "qtbase", "archive": archive_name,
-            "url": "https://download.qt.io/official_releases/qt/6.8/6.8.3/submodules/" + archive_name,
+            "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/" + archive_name,
             "size": archive.stat().st_size,
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         }
-        return {"schema": 1, "qt_version": "6.8.3", "sources": [source]}
+        return {"schema": 1, "qt_version": "6.12.0", "sources": [source]}
 
     def test_collects_literal_newline_json_references_and_payload_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -63,6 +63,30 @@ class QtAttributionTests(unittest.TestCase):
             (root / "qt").mkdir(); (root / "payload").mkdir()
             with self.assertRaises(ValueError):
                 MODULE.collect(manifest, root, root / "qt", root / "payload", root / "output", ["qtbase"])
+
+    def test_qtsvg_without_third_party_records_preserves_module_licenses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            archive_name = "qtsvg-everywhere-src-6.12.0.zip"
+            archive = root / archive_name
+            prefix = archive_name.removesuffix(".zip")
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr(prefix + "/LICENSES/LGPL-3.0-only.txt", "module license\n")
+                output.writestr(prefix + "/REUSE.toml", "version = 1\n")
+                output.writestr(prefix + "/licenseRule.json", "{}\n")
+            source = {"module": "qtsvg", "archive": archive_name,
+                      "url": "https://download.qt.io/archive/qt/6.12/6.12.0/submodules/" + archive_name,
+                      "size": archive.stat().st_size,
+                      "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+            manifest = {"schema": 1, "qt_version": "6.12.0", "sources": [source]}
+            qt_root, payload, output = root / "qt", root / "payload", root / "output"
+            qt_root.mkdir(); payload.mkdir()
+            MODULE.collect(manifest, root, qt_root, payload, output, ["qtsvg"])
+            self.assertEqual((output / "sources/qtsvg/LICENSES/LGPL-3.0-only.txt").read_text(), "module license\n")
+            self.assertTrue((output / "sources/qtsvg/REUSE.toml").is_file())
+            with self.assertRaises(ValueError):
+                MODULE.collect({**manifest, "qt_version": "6.13.0"}, root, qt_root, payload,
+                               root / "unexpected", ["qtsvg"])
 
     def test_notice_paths_are_not_runtime_payload_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:

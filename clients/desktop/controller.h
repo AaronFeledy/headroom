@@ -87,6 +87,7 @@ private:
     void resetRetry();
     void cancel();
     void requestUsage();
+    void refreshUsage(bool userRequested);
     void syncConnection();
     QVariantMap chatGptWeekly() const;
     bool chatGptResetEligible() const;

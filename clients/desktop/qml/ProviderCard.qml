@@ -108,15 +108,15 @@ Rectangle {
                     }
                     ParallelAnimation {
                         id: floatAway
-                        NumberAnimation { target: resetDelta; property: "rise"; from: 0; to: 32; duration: 1100; easing.type: Easing.OutCubic }
+                        NumberAnimation { target: resetDelta; property: "rise"; from: 0; to: Theme.reducedMotion ? 0 : 32; duration: Theme.reducedMotion ? 0 : 1100; easing.type: Easing.OutCubic }
                         SequentialAnimation {
                             NumberAnimation { target: resetDelta; property: "opacity"; from: 0; to: 1; duration: 80 }
                             PauseAnimation { duration: 250 }
                             NumberAnimation { target: resetDelta; property: "opacity"; to: 0; duration: 770 }
                         }
                         SequentialAnimation {
-                            NumberAnimation { target: resetDelta; property: "scale"; from: 0.7; to: 1.2; duration: 140; easing.type: Easing.OutBack }
-                            NumberAnimation { target: resetDelta; property: "scale"; to: 1; duration: 160 }
+                            NumberAnimation { target: resetDelta; property: "scale"; from: Theme.reducedMotion ? 1 : 0.7; to: Theme.reducedMotion ? 1 : 1.2; duration: Theme.reducedMotion ? 0 : 140; easing.type: Easing.OutBack }
+                            NumberAnimation { target: resetDelta; property: "scale"; to: 1; duration: Theme.reducedMotion ? 0 : 160 }
                         }
                     }
                 }
@@ -200,6 +200,7 @@ Rectangle {
             Layout.maximumWidth: card.stacked ? Infinity : 138
             Layout.alignment: Qt.AlignTop
             spacing: 10
+            activeFocusOnTab: true
             Rectangle {
                 width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
                 Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
@@ -233,12 +234,14 @@ Rectangle {
                     }
                 }
             }
-            TapHandler {
-                acceptedButtons: Qt.RightButton
-                onTapped: orderMenu.popup()
-            }
+            ContextMenu.menu: orderMenu
             Menu {
                 id: orderMenu; objectName: "providerMenu_" + card.name
+                palette.window: Theme.surface; palette.windowText: Theme.foreground
+                palette.light: Theme.selection; palette.midlight: Theme.selection
+                palette.mid: Theme.selection; palette.dark: Theme.comment
+                separatorsCollapsible: true
+                onClosed: card.Window.window.restoreEscapeFocus()
                 MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
             }
         }

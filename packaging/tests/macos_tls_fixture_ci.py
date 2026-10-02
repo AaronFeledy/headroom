@@ -38,8 +38,8 @@ def main():
             security("create-keychain", "-p", password, keychain)
             security("set-keychain-settings", "-lut", "1800", keychain)
             security("unlock-keychain", "-p", password, keychain)
-            # Qt 6.8.3's official SDK-14 build cannot request memory-only key
-            # import on macOS 15, which ignores its temporary-keychain option.
+            # Re-validate native TLS key import on each Qt kit/SDK upgrade;
+            # keep the disposable-keychain fixture for native runner coverage.
             # Only public synthetic fixture keys are imported here. They are
             # not trusted roots, and peer verification/pinning stay enabled.
             for prefix in ("primary", "replacement"):
