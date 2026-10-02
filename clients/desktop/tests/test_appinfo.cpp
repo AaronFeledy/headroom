@@ -1,11 +1,14 @@
 #include "appinfo.h"
 #include "http_assertions.h"
 #include "tls_fixture.h"
+#include "connect_proxy_fixture.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkProxy>
+#include <QScopeGuard>
 
 template<typename Server>
 class ResponseFixture : public Server {
@@ -106,6 +109,27 @@ private slots:
         QCOMPARE(fixture.requests.size(), 2);
         QVERIFY(HttpAssertions::hasHeader(fixture.requests.last(), "Authorization", "Bearer second-session-token"));
         QVERIFY(!fixture.requests.last().contains("first-session-token"));
+    }
+    void remotePinnedHealthUsesConfiguredProxy() {
+        HttpsFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
+        ConnectProxyFixture proxy(fixture.serverPort()); QVERIFY(proxy.listen(QHostAddress::LocalHost));
+        const auto previous = QNetworkProxy::applicationProxy();
+        const auto restore = qScopeGuard([previous] { QNetworkProxy::setApplicationProxy(previous); });
+        QNetworkProxy::setApplicationProxy(proxy.proxy());
+        AppInfo info(nullptr, 2000);
+        QUrl url(fixture.url()); url.setHost("headroom-proxy-fixture.invalid");
+        info.setBackend(url.toString(), "private-fixture-token", TlsFixture::certificate(), true);
+        info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
+        QCOMPARE(proxy.requests.size(), 1);
+        QVERIFY(!proxy.requests.first().contains("private-fixture-token"));
+        QVERIFY2(info.serverVersion() == QString("1.7.1"), qPrintable(QStringLiteral("%1; proxy tunnels=%2; fixture requests=%3")
+            .arg(info.serverStatus()).arg(proxy.requests.size()).arg(fixture.requests.size())));
+        QCOMPARE(fixture.requests.size(), 1);
+        QVERIFY(HttpAssertions::hasHeader(fixture.requests.first(), "Authorization", "Bearer private-fixture-token"));
+        fixture.setSslConfiguration(TlsFixture::replacementServerConfiguration());
+        info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
+        QVERIFY(info.serverVersion().isEmpty());
+        QCOMPARE(fixture.requests.size(), 1); // A replacement peer receives no bearer.
     }
     void changingPrivateSessionCancelsPendingVersionRequest() {
         HttpsFixture slow, next;

@@ -11,6 +11,8 @@ struct DesktopSettings {
     QString url;
     QString token;
     QString sshUrl;
+    QString remoteCertificate;
+    bool shareBrowserSignIns = true;
     int interval = 60;
     bool notifications = true;
     QString primary = "Claude";

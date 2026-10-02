@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -25,6 +27,8 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
+	authToken           string
+	tlsFingerprint      string
 	cache               Cache
 	cursor              CursorCredentials
 	grok                GrokCredentials
@@ -40,6 +44,10 @@ type handler struct {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	if path == "/api/v1/tls/proof" {
+		h.route(w, r, http.MethodGet, h.tlsProof)
+		return
+	}
 	if path == "/api/v1/usage" {
 		h.route(w, r, http.MethodGet, h.usageCollection)
 		return
@@ -278,7 +286,7 @@ func (h *handler) cursorCredentials(w http.ResponseWriter, r *http.Request) {
 	h.credentialMu.Lock()
 	defer h.credentialMu.Unlock()
 	if request.cookie != "" {
-		h.cursor.SetCookieHeader(request.cookie)
+		h.cursor.SetDesktopCookie(request.cookie, request.sourceName)
 	} else if err := h.cursor.SetAccessToken(request.accessToken); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid access token")
 		return
@@ -322,14 +330,16 @@ func (h *handler) writeRefetchedProvider(w http.ResponseWriter, r *http.Request,
 type credentialRequest struct {
 	cookie      string
 	accessToken string
+	sourceName  string
 }
 
 func decodeCredentialRequest(w http.ResponseWriter, r *http.Request) (credentialRequest, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCredentialBodyBytes)
 	defer r.Body.Close()
 	var raw struct {
-		Cookie      *string `json:"cookie"`
-		AccessToken *string `json:"access_token"`
+		Cookie      *string         `json:"cookie"`
+		AccessToken *string         `json:"access_token"`
+		SourceName  json.RawMessage `json:"source_name"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -339,12 +349,26 @@ func decodeCredentialRequest(w http.ResponseWriter, r *http.Request) (credential
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return credentialRequest{}, fmt.Errorf("invalid JSON")
 	}
+	if r.URL.Path == "/api/v1/providers/grok/credentials" && raw.SourceName != nil {
+		return credentialRequest{}, fmt.Errorf("invalid JSON")
+	}
 	cookieSet := raw.Cookie != nil && strings.TrimSpace(*raw.Cookie) != ""
 	accessTokenSet := raw.AccessToken != nil && strings.TrimSpace(*raw.AccessToken) != ""
 	if cookieSet == accessTokenSet {
 		return credentialRequest{}, fmt.Errorf("provide exactly one credential")
 	}
 	request := credentialRequest{}
+	if raw.SourceName != nil {
+		var sourceName string
+		if err := json.Unmarshal(raw.SourceName, &sourceName); err != nil {
+			return credentialRequest{}, fmt.Errorf("invalid source_name")
+		}
+		name := strings.TrimSpace(sourceName)
+		if !cookieSet || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 40 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+			return credentialRequest{}, fmt.Errorf("invalid source_name")
+		}
+		request.sourceName = name
+	}
 	if cookieSet {
 		request.cookie = strings.TrimSpace(*raw.Cookie)
 	} else {

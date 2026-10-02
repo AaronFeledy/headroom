@@ -11,10 +11,11 @@ import (
 )
 
 type RunOptions struct {
-	Listener net.Listener
-	Handler  http.Handler
-	Logger   *slog.Logger
-	Ready    chan<- net.Addr
+	Listener             net.Listener
+	Handler              http.Handler
+	Logger               *slog.Logger
+	Ready                chan<- net.Addr
+	TLSCertificateSHA256 string
 }
 
 func Run(ctx context.Context, opts RunOptions) error {
@@ -38,7 +39,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 		if opts.Ready != nil {
 			opts.Ready <- opts.Listener.Addr()
 		}
-		logger.InfoContext(ctx, "server listening", slog.String("addr", opts.Listener.Addr().String()))
+		attrs := []slog.Attr{slog.String("addr", opts.Listener.Addr().String())}
+		if opts.TLSCertificateSHA256 != "" {
+			attrs = append(attrs, slog.Bool("tls", true), slog.String("tls_certificate_sha256", opts.TLSCertificateSHA256))
+		}
+		logger.LogAttrs(ctx, slog.LevelInfo, "server listening", attrs...)
 		done <- srv.Serve(opts.Listener)
 	}()
 

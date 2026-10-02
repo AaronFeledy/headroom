@@ -4,6 +4,12 @@ SSH mode connects the Windows, macOS, or Linux Headroom app to a usage server on
 or WSL. It encrypts usage requests, server version checks, and supported browser
 credential recovery. Local mode and direct HTTP(S) connections remain available.
 
+HTTPS with a certificate verified by Headroom using the saved access token is an
+alternative to SSH for Windows browser sign-in sharing. Headroom can upgrade a
+direct HTTP connection on the same port automatically and pin that certificate;
+plain HTTP never carries shared browser sign-ins. The browser-sharing setting
+must remain enabled.
+
 The client uses the system OpenSSH executable and your existing SSH configuration,
 keys, and authentication agent. Headroom does not store an SSH password. The
 server must already have SSH access configured; Headroom does not create accounts

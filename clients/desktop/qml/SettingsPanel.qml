@@ -27,7 +27,7 @@ Popup {
     function saveAndConnect() {
         error.text = backend.saveSettings(localMode.checked ? "local" : (sshMode.checked ? "ssh" : "remote"), url.text, token.text,
                                           panel.selectedInterval, notifications.checked,
-                                          backend.settings.primary, forget.checked, sshUrl.text)
+                                          backend.settings.primary, forget.checked, sshUrl.text, shareBrowser.checked)
         if (!error.text) { token.text = ""; panel.close() }
     }
     signal diagnosticsRequested()
@@ -51,6 +51,7 @@ Popup {
         if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
         interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
+        shareBrowser.checked = backend.settings.shareBrowserSignIns
         if (updatesRequested) {
             updatesRequested = false
             Qt.callLater(focusUpdates)
@@ -134,6 +135,7 @@ Popup {
                 Caption { text: "BACKEND ADDRESS" }
                 Entry { id: url; objectName: "backendUrl"; placeholderText: "http://localhost:7823"; Accessible.name: "Backend address" }
                 Text { text: "The base address of your existing usage API."; color: Theme.muted; font.pixelSize: 11 }
+                Text { objectName: "connectionEncryptionStatus"; text: backend.settings.connectionStatus; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: remoteMode.checked
@@ -167,6 +169,7 @@ Popup {
                 }
             }
             Check { id: notifications; text: "Notify about usage, banked resets, and updates"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
+            Check { id: shareBrowser; objectName: "shareBrowserSignIns"; visible: Qt.platform.os === "windows"; text: "Share browser sign-ins with the server"; Accessible.name: text }
             Text {
                 text: Qt.platform.os === "osx"
                       ? "Closing the window keeps Headroom in your menu bar.\nRight-click its icon to quit."

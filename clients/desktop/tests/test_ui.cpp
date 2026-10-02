@@ -8,6 +8,7 @@
 #include "remoteupdate.h"
 #include "palette.h"
 #include <QApplication>
+#include <QClipboard>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlComponent>
@@ -1096,6 +1097,35 @@ private slots:
         card->setProperty("provider", provider.toVariantMap());
         QVERIFY(!card->property("cursorLoginRequired").toBool());
         QVERIFY(!findItem(card, "providerErrorLink_Grok"));
+        provider["provider_name"] = "Cursor";
+        provider["auth"] = QJsonObject{{"state", "signed_out"}, {"source", QJsonValue::Null},
+            {"sign_in_command", "cursor-agent login"}, {"sign_in_url", "https://cursor.com/login"},
+            {"accepts_browser_credentials", true}, {"checked", QJsonArray{}}};
+        card->setProperty("provider", provider.toVariantMap());
+        QTRY_COMPARE(findItem(card, "providerErrorTitle_Cursor")->property("text").toString(), QStringLiteral("Not signed in"));
+        QVERIFY(!findItem(card, "providerErrorLink_Cursor")); QVERIFY(!message->isVisible());
+        auto firstLine = findItem(card, "providerLoginLine_Cursor_0"); QVERIFY(firstLine);
+        QCOMPARE(firstLine->property("text").toString(), QStringLiteral("Headroom couldn't find a Cursor sign-in."));
+        auto command = findItem(card, "providerCopyCommand_Cursor"); QVERIFY(command); QVERIFY(command->isVisible());
+        command->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("cursor-agent login"));
+        auto open = findItem(card, "providerOpenLogin_Cursor"); QVERIFY(open); QVERIFY(open->isVisible());
+        QDesktopServices::setUrlHandler("https", &capture, "capture");
+        open->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+        QDesktopServices::unsetUrlHandler("https"); QCOMPARE(capture.urls.last(), QUrl("https://cursor.com/login"));
+        const auto loginCapture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!loginCapture.isEmpty()) {
+            QSignalSpy frame(window, &QQuickWindow::frameSwapped); window->update(); QTRY_VERIFY(!frame.isEmpty());
+            QVERIFY(window->grabWindow().save(QDir(loginCapture).filePath(QStringLiteral("login-sources-card.png"))));
+        }
+        auto auth = provider["auth"].toObject(); auth["state"] = "expired";
+        auth["source"] = QJsonObject{{"kind", "cli"}, {"name", "cursor-agent"}}; auth["sign_in_url"] = QJsonValue::Null;
+        provider["auth"] = auth; card->setProperty("provider", provider.toVariantMap());
+        QTRY_COMPARE(findItem(card, "providerErrorTitle_Cursor")->property("text").toString(), QStringLiteral("Sign-in expired"));
+        QVERIFY(!open->isVisible());
+        auth["state"] = "signed_in"; provider["auth"] = auth; card->setProperty("provider", provider.toVariantMap());
+        QTRY_COMPARE(findItem(card, "providerErrorTitle_Cursor")->property("text").toString(), QStringLiteral("Usage is unavailable"));
+        QVERIFY(!command->isVisible());
     }
     void updateIndicatorsNavigateWithoutApplying_data() {
         QTest::addColumn<QSize>("size");

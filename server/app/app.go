@@ -114,11 +114,16 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return err
 	}
+	listener, fingerprint, err := prepareTLS(listener, cfg, logger, desktopOptions)
+	if err != nil {
+		return errors.Join(err, listener.Close())
+	}
+	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint})
 	defer listener.Close()
 	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
 		return err
 	}
-	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger}}
+	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger, TLSCertificateSHA256: fingerprint}}
 	if sshListener != nil {
 		servers = append(servers, server.RunOptions{Listener: sshListener, Handler: sshaccess.InjectAuthorization(cfg.AuthToken, handler), Logger: logger})
 	}
@@ -179,10 +184,10 @@ type appRuntime struct {
 }
 
 func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *cursor.Client, *grok.Provider, []string, error) {
-	allowLocalDiscovery, err := api.IsLoopbackListenAddr(cfg.ListenAddr)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
+	return buildPollerWithCursorDiscovery(cfg, nil)
+}
+
+func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *cursor.Client, *grok.Provider, []string, error) {
 	providerPoller := poller.New(poller.Options{})
 	var cursorClient *cursor.Client
 	var codexClient *codex.Client
@@ -192,11 +197,15 @@ func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *cursor.Clie
 		if !providerCfg.Enabled {
 			continue
 		}
-		provider, err := buildProvider(name, providerCfg, allowLocalDiscovery)
+		provider, err := buildProvider(name, providerCfg)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
 		if c, ok := provider.(*cursor.Client); ok {
+			if discovery != nil {
+				c = cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, Discovery: discovery})
+				provider = c
+			}
 			cursorClient = c
 		}
 		if c, ok := provider.(*codex.Client); ok {
@@ -213,14 +222,14 @@ func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *cursor.Clie
 	return providerPoller, codexClient, cursorClient, grokProvider, names, nil
 }
 
-func buildProvider(name string, providerCfg config.ProviderConfig, allowLocalDiscovery bool) (usage.Provider, error) {
+func buildProvider(name string, providerCfg config.ProviderConfig) (usage.Provider, error) {
 	switch strings.ToLower(name) {
 	case "claude":
 		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "codex":
 		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "cursor":
-		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, AllowLocalDiscovery: allowLocalDiscovery}), nil
+		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, BrowserCredentials: &providerCfg.BrowserCredentials}), nil
 	case "grok":
 		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath})
 	default:

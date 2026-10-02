@@ -44,10 +44,16 @@ type Options struct {
 	FetchLocal            LocalFetchFunc
 	Serve                 ServeFunc
 	Update, Desktop, Pair CommandFunc
+	tlsSession            *tlsSession
 }
 
 func Run(ctx context.Context, options Options) error {
 	options = options.defaults()
+	defer func() {
+		for _, entry := range options.tlsSession.entries {
+			entry.client.CloseIdleConnections()
+		}
+	}()
 	if len(options.Args) > 0 {
 		// Older Linux desktop autostart entries invoked the public command with
 		// --background. Keep that exact leading argument on the desktop path now
@@ -97,6 +103,9 @@ func Run(ctx context.Context, options Options) error {
 }
 
 func (options Options) defaults() Options {
+	if options.tlsSession == nil {
+		options.tlsSession = &tlsSession{entries: map[string]*tlsEntry{}}
+	}
 	if options.Env == nil {
 		options.Env = os.Environ()
 	}

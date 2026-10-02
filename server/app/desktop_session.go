@@ -4,21 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"strconv"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/tlsidentity"
 )
 
 const (
@@ -223,50 +219,7 @@ func validateDesktopListenAddress(address string) error {
 }
 
 func generateDesktopCertificate(random io.Reader, now time.Time, boundIP net.IP) ([]byte, tls.Certificate, error) {
-	privateKey, err := rsa.GenerateKey(random, 2048)
-	if err != nil {
-		return nil, tls.Certificate{}, err
-	}
-	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(random, serialLimit)
-	if err != nil {
-		return nil, tls.Certificate{}, err
-	}
-	if serial.Sign() == 0 {
-		serial.SetInt64(1)
-	}
-	publicKey := x509.MarshalPKCS1PublicKey(&privateKey.PublicKey)
-	keyID := sha256.Sum256(publicKey)
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "Headroom Desktop Session"},
-		NotBefore:    now.Add(-5 * time.Minute),
-		// Apple limits app-anchored TLS leaf certificates to 825 days.
-		NotAfter:              now.AddDate(0, 0, 365),
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           desktopCertificateIPs(boundIP),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		SubjectKeyId:          keyID[:],
-	}
-	certificateDER, err := x509.CreateCertificate(random, template, template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return nil, tls.Certificate{}, err
-	}
-	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER})
-	return certificatePEM, tls.Certificate{Certificate: [][]byte{certificateDER}, PrivateKey: privateKey}, nil
-}
-
-func desktopCertificateIPs(boundIP net.IP) []net.IP {
-	result := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
-	for _, existing := range result {
-		if existing.Equal(boundIP) {
-			return result
-		}
-	}
-	return append(result, append(net.IP(nil), boundIP...))
+	return tlsidentity.Generate(tlsidentity.CertificateOptions{Random: random, Now: now, BoundIP: boundIP, CommonName: "Headroom Desktop Session", Days: 365})
 }
 
 func (session *preparedDesktopSession) publishIdentity() error {

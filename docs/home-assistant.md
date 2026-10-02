@@ -25,6 +25,14 @@ order is `Claude`, `Codex`, `Cursor`, then `Grok`. `Codex` is the compatible API
 name for the provider Headroom displays as ChatGPT, so existing sensor names and
 indexes do not change.
 
+The additive `auth` object describes sign-in state, source, and recovery hints;
+existing sensor fields and plain HTTP keep working. Current servers can also
+serve HTTPS on the same port. A self-signed HTTPS certificate requires
+`verify_ssl: false` in a Home Assistant REST sensor (which disables certificate
+verification), or a client/proxy implementing Headroom's token-based proof and
+certificate pinning. Prefer a system-trusted certificate for direct Home
+Assistant HTTPS connections.
+
 The `current` and `weekly` sensors below are unchanged and remain valid: keep any existing configuration exactly as it is. `buckets` is a new, additive array field added alongside them, described in [Returned Fields](#returned-fields).
 
 Copy this into `configuration.yaml` and replace `http://usage-server.local:7823` with your server URL:

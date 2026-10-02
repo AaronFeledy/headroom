@@ -25,6 +25,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		}
 	}
 	return usage.UsageData{
+		Auth:                  copyAuth(data.Auth),
 		ProviderName:          data.ProviderName,
 		PrimaryLabel:          data.PrimaryLabel,
 		SecondaryLabel:        data.SecondaryLabel,
@@ -41,6 +42,17 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
 		ProviderAccountID:     data.ProviderAccountID,
 	}
+}
+
+func copyAuth(auth usage.Auth) usage.Auth {
+	if auth.Source != nil {
+		source := *auth.Source
+		auth.Source = &source
+	}
+	auth.SignInCommand = copyString(auth.SignInCommand)
+	auth.SignInURL = copyString(auth.SignInURL)
+	auth.Checked = append([]usage.AuthChecked{}, auth.Checked...)
+	return auth
 }
 
 func copyResetCredits(value *usage.RateLimitResetCredits) *usage.RateLimitResetCredits {

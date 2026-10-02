@@ -113,16 +113,19 @@ func fetchHTTP(ctx context.Context, options Options, base string) ([]byte, error
 	request.Header.Set("User-Agent", "Headroom/"+options.Version)
 	// Automatic localhost discovery never sends a saved token. An address the
 	// user selected explicitly may be a token-protected loopback server.
+	token := ""
 	if !usingDefault {
-		token, err := readToken(options.Env)
+		token, err = readToken(options.Env)
 		if err != nil {
 			return nil, err
 		}
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
-		}
 	}
-	response, err := options.HTTPClient.Do(request)
+	var response *http.Response
+	if token != "" {
+		response, err = authenticatedRequest(ctx, options, request, token)
+	} else {
+		response, err = options.HTTPClient.Do(request)
+	}
 	if err != nil {
 		if usingDefault {
 			return nil, fmt.Errorf("local Headroom usage is unavailable; start 'headroom serve' or use --url/--ssh: %w", err)

@@ -12,6 +12,7 @@ func NewHandler(opts Options) http.Handler {
 		version = DefaultVersion
 	}
 	h := &handler{cache: opts.Cache, cursor: opts.Cursor, grok: opts.Grok, codex: opts.Codex, poller: opts.Poller, version: version, providerNames: normalizedNames(opts.ProviderNames)}
+	h.authToken, h.tlsFingerprint = opts.AuthToken, opts.TLSCertificateSHA256
 	return chain(opts, h)
 }
 

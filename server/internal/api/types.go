@@ -16,7 +16,7 @@ type Cache interface {
 }
 
 type CursorCredentials interface {
-	SetCookieHeader(string)
+	SetDesktopCookie(string, string)
 	SetAccessToken(string) error
 }
 
@@ -34,15 +34,16 @@ type ProviderPoller interface {
 }
 
 type Options struct {
-	Cache         Cache
-	Cursor        CursorCredentials
-	Grok          GrokCredentials
-	Codex         CodexResetter
-	Poller        ProviderPoller
-	Logger        Logger
-	AuthToken     string
-	Version       string
-	ProviderNames []string
+	Cache                Cache
+	Cursor               CursorCredentials
+	Grok                 GrokCredentials
+	Codex                CodexResetter
+	Poller               ProviderPoller
+	Logger               Logger
+	AuthToken            string
+	TLSCertificateSHA256 string
+	Version              string
+	ProviderNames        []string
 }
 
 type Logger interface {

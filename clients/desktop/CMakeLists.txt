@@ -24,6 +24,7 @@ project(Headroom LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(HEADROOM_WITH_KDE_TRAY "Use KDE StatusNotifierItem integration when available" ON)
 option(HEADROOM_WITH_LAYER_SHELL "Use LayerShellQt popup placement when available" ON)
@@ -71,7 +72,7 @@ endif()
 
 qt_add_library(headroom-core STATIC
     controller.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp
-    settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp)
+    settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(headroom-core PUBLIC HEADROOM_VERSION="${HEADROOM_VERSION}")
@@ -198,7 +199,7 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
     set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
-    foreach(feature notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance)
+    foreach(feature notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance login)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)
@@ -278,7 +279,7 @@ if(BUILD_TESTING)
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-credential-tests.xml,junitxml")
     set_tests_properties(headroom-credential-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(APPLE)
-        foreach(tls_target IN ITEMS headroom-managed-server-fixture headroom-appinfo-tests
+        foreach(tls_target IN ITEMS headroom-managed-server-fixture headroom-appinfo-tests headroom-settings-tests headroom-login-tests
                 headroom-tests headroom-managedserver-tests headroom-credential-tests)
             add_dependencies(${tls_target} headroom-macos-tls-fixture)
             target_include_directories(${tls_target} PRIVATE "${HEADROOM_MACOS_TLS_FIXTURE_DIR}")

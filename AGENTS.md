@@ -43,7 +43,13 @@ establish per-launch TLS trust for health, usage, version, and credential reques
 Do not replace certificate verification with PID checks or ignored TLS errors.
 Headroom owns, stops, or hands off only a server process it started. Remote mode
 accepts a normalized HTTP(S) base URL; nonempty bearer tokens are sent as
-`Authorization: Bearer <token>`.
+`Authorization: Bearer <token>`. Off-loopback servers also answer TLS on the same
+port (`tls: auto`) with a generated identity under `<config base>/headroom/tls`.
+A desktop or CLI with a token verifies that certificate through the
+unauthenticated `GET /api/v1/tls/proof` HMAC challenge, pins it, upgrades a saved
+`http://` URL to `https://`, and never downgrades. Never send the bearer token
+before the peer is system-trusted or pinned, and never replace a pin without a
+new proof.
 
 The public `headroom` command displays usage, `headroom serve` runs the server,
 and `headroom update` updates the managed installation. Bare CLI output refreshes
@@ -83,6 +89,11 @@ explicit-config, and system-managed desktop sessions cannot invoke it.
 
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
+Cursor credentials come, in order, from cursor-agent's auth file, the Cursor
+app's `state.vscdb`, Firefox profiles on the server machine (Chromium profiles
+are detected, never decrypted), then credentials pushed by a desktop or the API
+(memory only). WSL servers also check the Windows side. Discovery does not depend
+on a loopback bind.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider
@@ -103,7 +114,11 @@ the default packaged UI.
 
 The API contract is frozen in `server/internal/usage`: optional strings and
 reset timestamps are explicit `null`; `is_success` is derived from
-`error == null`; `buckets` is always present and empty on error. Providers exit
+`error == null`; `buckets` is always present and empty on error; `auth` is
+always present with `state`, `source`, `sign_in_command`, `sign_in_url`,
+`accepts_browser_credentials`, and `checked`, and desktop sign-in copy is composed
+from it. Cursor keeps `needs_reauth` true while signed out or expired so older
+desktops still forward browser sign-ins. Providers exit
 through `usage.FromBuckets` / `WithBuckets`, which normalize order, remove
 duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
 `credits`, `weekly`, `weekly_<slug>`, `extra`, and `on_demand`. Cursor Grok Bot

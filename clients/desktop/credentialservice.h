@@ -33,13 +33,16 @@ public:
     ~CredentialService() override;
 
     void configure(const QString &mode, const QString &baseUrl, const QString &token,
-                   const QSslCertificate &certificate = QSslCertificate());
+                   const QSslCertificate &certificate = QSslCertificate(), bool shareBrowserSignIns = true);
     void consider(const QVariantList &providers);
+    QString sharingStatus() const;
+    QVariantList checked(const QString &provider) const { return m_checked.value(provider); }
     bool busy() const { return m_process || m_reply || !m_retiringProcesses.isEmpty(); }
 
 signals:
     void providerRecovered(const QVariantMap &provider);
     void event(const QString &message);
+    void checkedChanged();
 
 private:
     struct AttemptState {
@@ -53,7 +56,7 @@ private:
     void resolvePolicy(const QString &provider);
     void startHelper(const QString &provider, bool localNoProxy);
     void finishHelper(bool success);
-    void submit(const QString &provider, QByteArray cookie, const QByteArray &fingerprint, bool localNoProxy);
+    void submit(const QString &provider, QByteArray cookie, const QByteArray &fingerprint, bool localNoProxy, const QString &source);
     void finishRequest(const QString &provider, const QByteArray &fingerprint, QNetworkReply *reply);
     void continueQueue();
     QUrl credentialEndpoint(const QString &provider) const;
@@ -76,6 +79,9 @@ private:
     QByteArray m_helperOutput;
     QStringList m_queue;
     QHash<QString, AttemptState> m_attempts;
+    QHash<QString, bool> m_hasAuth;
+    QHash<QString, QVariantList> m_checked;
+    bool m_shareBrowserSignIns = true;
     quint64 m_operation = 0;
     bool m_activeLocalNoProxy = false;
     bool m_helperFailed = false;

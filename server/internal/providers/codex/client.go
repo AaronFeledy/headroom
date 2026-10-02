@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,7 +56,29 @@ func New(opts Options) *Client {
 
 func (c *Client) Name() string { return providerName }
 
-func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
+func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
+	defer func() {
+		c.store.mu.RLock()
+		loaded, sourceKind, path := c.store.loaded, c.store.source, c.store.path
+		c.store.mu.RUnlock()
+		state := "signed_out"
+		var source *usage.AuthSource
+		if loaded {
+			name := "Codex"
+			if sourceKind == CredentialSourceOpenCode {
+				name = "OpenCode"
+			}
+			if strings.HasPrefix(path, `\\wsl.`) {
+				name += " (WSL)"
+			}
+			source = &usage.AuthSource{Kind: "cli", Name: name}
+			state = "signed_in"
+			if result.NeedsReauth {
+				state = "expired"
+			}
+		}
+		result.Auth = usage.NewAuth(providerName, state, source)
+	}()
 	fetchStartedAt := time.Now()
 	data := baseUsage()
 	if err := ctx.Err(); err != nil {

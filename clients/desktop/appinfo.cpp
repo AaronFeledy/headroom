@@ -82,13 +82,13 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token, const 
     request.setRawHeader("User-Agent", "Headroom/" + applicationVersion().toUtf8());
     request.setRawHeader("Accept", "application/json");
     if (!token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + token);
-    ServerTransport::secureRequest(request, certificate);
+    ServerTransport::secureRequest(request, certificate, m_remote);
     QHostAddress address;
-    const bool local = !certificate.isNull() || (address.setAddress(url.host()) && address.isLoopback());
+    const bool local = (!m_remote && !certificate.isNull()) || (address.setAddress(url.host()) && address.isLoopback());
     QNetworkAccessManager *network = url.scheme() == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
         : local ? &m_localNetwork : &m_network;
     auto reply = network->get(request);
-    ServerTransport::requirePinnedPeer(reply, certificate);
+    ServerTransport::requirePinnedPeer(reply, certificate, m_remote);
     reply->setReadBufferSize(1024 * 1024 + 1);
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > 1024 * 1024) reply->abort();
@@ -115,6 +115,7 @@ void AppInfo::setBackend(const QString &baseUrl, const QString &token, const QSs
         previous->disconnect(this); previous->abort(); previous->deleteLater();
     }
     m_localNetwork.clearConnectionCache();
+    m_network.clearConnectionCache();
     m_healthUrl = endpoint; m_token = effectiveToken; m_certificate = certificate; m_serverVersion.clear();
     m_serverStatus = endpoint.isEmpty() ? "Connect a backend to see its version." : "Server version has not been checked.";
     emit changed();

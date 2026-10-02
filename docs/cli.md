@@ -51,6 +51,17 @@ one of those variables. Windows currently supports the environment variable.
 Tokens are not command-line arguments. Localhost discovery never sends either
 token, and HTTP redirects are rejected. Use HTTPS for a direct remote connection.
 
+HTTPS URLs first use system certificate trust. If verification fails and a token
+is configured, the CLI requests a token-keyed nonce proof without sending the
+token, verifies that it binds the exact peer certificate, and pins that
+certificate for the process lifetime. A changed certificate requires another
+successful proof; failure never downgrades HTTPS to HTTP. Explicit HTTP URLs
+with a token first try HTTPS on the same host and port, silently retaining HTTP
+for older servers when the proof is unavailable. Failed upgrade attempts are
+limited to once per six hours per connection during the process lifetime.
+Providers needing sign-in show `Run: <command>` or `Sign in: <url>` hints from
+the server's `auth` metadata.
+
 ## Install without a desktop
 
 CLI-only packages contain the usage client, server, and package manager without

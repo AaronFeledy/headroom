@@ -6,13 +6,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/api"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/winprofile"
 )
 
 func Test_Run_rejects_conflicting_private_modes_before_provider_construction(t *testing.T) {
@@ -89,7 +92,7 @@ func Test_Run_allows_authenticated_off_loopback_until_later_startup_error(t *tes
 	}
 }
 
-func Test_BuildPoller_allows_cursor_local_discovery_only_for_loopback_listen_addresses(t *testing.T) {
+func Test_BuildPoller_discovers_cursor_credentials_for_every_bind(t *testing.T) {
 	// Given
 	tests := []struct {
 		name          string
@@ -107,14 +110,23 @@ func Test_BuildPoller_allows_cursor_local_discovery_only_for_loopback_listen_add
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", home)
+			t.Setenv("WSL_DISTRO_NAME", "")
+			path := filepath.Join(home, "auth.json")
+			if err := os.WriteFile(path, []byte(`{"accessToken":"header.eyJzdWIiOiJmaXh0dXJlIiwiZXhwIjoxfQ.sig"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			cfg := config.Defaults()
 			cfg.ListenAddr = tt.listenAddr
 			cfg.Providers = map[string]config.ProviderConfig{
-				"cursor": {Enabled: true, CredentialsPath: filepath.Join(t.TempDir(), "auth.json")},
+				"cursor": {Enabled: true, CredentialsPath: path},
 			}
 
 			// When
-			_, _, cursorClient, _, _, err := buildPoller(cfg)
+			discovery := &cursor.Discovery{Environment: winprofile.Environment{GOOS: "linux", Home: home, Root: t.TempDir(), Env: func(string) string { return "" }}, Now: time.Now}
+			_, _, cursorClient, _, _, err := buildPollerWithCursorDiscovery(cfg, discovery)
 			if err != nil {
 				t.Fatalf("buildPoller error = %v", err)
 			}
@@ -123,9 +135,9 @@ func Test_BuildPoller_allows_cursor_local_discovery_only_for_loopback_listen_add
 			if cursorClient == nil {
 				t.Fatal("cursor client = nil")
 			}
-			gotDiscovery := reflect.ValueOf(cursorClient).Elem().FieldByName("allowLocalDiscovery").Bool()
-			if gotDiscovery != tt.wantDiscovery {
-				t.Fatalf("AllowLocalDiscovery = %v for %q, want %v", gotDiscovery, tt.listenAddr, tt.wantDiscovery)
+			data, err := cursorClient.Fetch(context.Background())
+			if err != nil || data.Auth.State != "expired" || data.Auth.Source == nil || data.Auth.Source.Kind != "cli" {
+				t.Fatalf("discovery failed on %s: %#v %v", tt.listenAddr, data.Auth, err)
 			}
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,18 +29,28 @@ var (
 )
 
 type Options struct {
-	BaseURL             string
-	AuthPath            string
-	HTTPClient          *http.Client
-	AllowLocalDiscovery bool
+	BaseURL            string
+	AuthPath           string
+	HTTPClient         *http.Client
+	Discovery          *Discovery
+	Logger             *slog.Logger
+	BrowserCredentials *bool
 }
 
 type Client struct {
-	baseURL             string
-	authPath            string
-	httpClient          *http.Client
-	allowLocalDiscovery bool
-	secret              secretStore
+	baseURL        string
+	authPath       string
+	httpClient     *http.Client
+	secret         secretStore
+	mu             sync.Mutex
+	discovery      Discovery
+	logger         *slog.Logger
+	active         credential
+	pushed         credential
+	rejected       [][32]byte
+	browsers       []credential
+	browserScanned time.Time
+	stamps         map[string]fileStamp
 }
 
 type secretStore struct {
@@ -56,18 +67,50 @@ func NewClient(opts Options) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
+	discovery := defaultDiscovery()
+	if opts.Discovery != nil {
+		discovery = *opts.Discovery
+	}
+	if opts.BrowserCredentials != nil {
+		discovery.BrowserCredentials = *opts.BrowserCredentials
+	}
+	if discovery.Now == nil {
+		discovery.Now = time.Now
+	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Client{
-		baseURL:             baseURL,
-		authPath:            opts.AuthPath,
-		httpClient:          httpClient,
-		allowLocalDiscovery: opts.AllowLocalDiscovery,
+		discovery: discovery, logger: logger, stamps: map[string]fileStamp{},
+		baseURL:    baseURL,
+		authPath:   opts.AuthPath,
+		httpClient: httpClient,
 	}
 }
 
 func (c *Client) Name() string { return providerName }
 
 func (c *Client) SetCookieHeader(cookieHeader string) {
-	c.secret.set(strings.TrimSpace(cookieHeader))
+	c.SetDesktopCookie(cookieHeader, "browser")
+}
+
+func (c *Client) SetDesktopCookie(cookieHeader, name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if name == "" {
+		name = "browser"
+	}
+	cookie := strings.TrimSpace(cookieHeader)
+	if cookieExpired(cookie, c.discovery.Now()) {
+		c.reject(cookie)
+		return
+	}
+	if c.isRejected(cookie) {
+		return
+	}
+	c.pushed = credential{source: usage.AuthSource{Kind: "desktop", Name: name}, cookie: cookie, status: "signed_in"}
+	c.secret.set(cookie)
 }
 
 func (c *Client) SetAccessToken(accessToken string) error {
@@ -75,69 +118,18 @@ func (c *Client) SetAccessToken(accessToken string) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cookieExpired(cookieHeader, c.discovery.Now()) {
+		c.reject(cookieHeader)
+		return nil
+	}
+	if c.isRejected(cookieHeader) {
+		return nil
+	}
+	c.pushed = credential{source: usage.AuthSource{Kind: "api", Name: "API"}, cookie: cookieHeader, status: "signed_in"}
 	c.secret.set(cookieHeader)
 	return nil
-}
-
-func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
-	data := baseUsageData()
-	cookieHeader, err := c.cookieHeader(ctx)
-	if err != nil {
-		message := "Log in to cursor.com, or push Cursor credentials from the tray."
-		data.Error = &message
-		return data, nil
-	}
-	summary, status, err := c.fetchUsageSummary(ctx, cookieHeader)
-	if err != nil {
-		data = c.dataForFetchError(data, err)
-		if ctx.Err() != nil {
-			return data, err
-		}
-		return data, nil
-	}
-	if status == http.StatusUnauthorized {
-		c.secret.clear()
-		message := "Cursor session expired. Log in to cursor.com again."
-		data.Error = &message
-		data.NeedsReauth = true
-		return data, nil
-	}
-	if status != http.StatusOK {
-		message := fmt.Sprintf("Cursor usage request failed with HTTP %d.", status)
-		data.Error = &message
-		return data, nil
-	}
-	userInfo := c.fetchUserInfo(ctx, cookieHeader)
-	legacyUsage := c.fetchLegacyUsage(ctx, cookieHeader, userInfo.Sub)
-	sand := c.fetchSandUsage(ctx, cookieHeader)
-	populateUsageData(&data, summary, legacyUsage, sand)
-	data.Subtitle = summary.MembershipType
-	return data, nil
-}
-
-func (c *Client) dataForFetchError(data usage.UsageData, err error) usage.UsageData {
-	message := err.Error()
-	data.Error = &message
-	if errors.Is(err, ErrUnauthorized) {
-		data.NeedsReauth = true
-		c.secret.clear()
-	}
-	return data
-}
-
-func (c *Client) cookieHeader(ctx context.Context) (string, error) {
-	if cookieHeader := c.secret.get(); cookieHeader != "" {
-		return cookieHeader, nil
-	}
-	if !c.allowLocalDiscovery {
-		return "", ErrUnauthorized
-	}
-	cookieHeader, err := readLocalCookieHeader(ctx, c.authPath)
-	if err != nil {
-		return "", err
-	}
-	c.secret.set(cookieHeader)
-	return cookieHeader, nil
 }
 
 func (c *Client) fetchUsageSummary(ctx context.Context, cookieHeader string) (cursorUsageSummary, int, error) {

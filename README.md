@@ -118,8 +118,10 @@ secrets stay in memory and travel between parent and child through private pipes
 An existing plain HTTP server can supply usage without receiving a saved token
 or browser cookies. To connect to an independently managed server that requires
 a token, configure it explicitly in HTTP(S) settings; direct browser recovery
-requires HTTPS. The SSH connection described below provides another encrypted
-transport for Linux/WSL servers.
+requires HTTPS. Off-loopback servers answer HTTPS on the same port with a
+generated certificate. Headroom verifies it with your access token, pins it, and
+switches a saved `http://` address to `https://` automatically. The SSH connection
+described below provides another encrypted transport for Linux/WSL servers.
 
 Headroom stops or hands off only a server process it started; attached and remote
 servers remain independently owned. The standalone server binds to
@@ -221,7 +223,10 @@ enabled by default and can be disabled in server YAML or environment settings.
   auth fallback.
 - ChatGPT (`Codex` on the API): `CODEX_HOME/auth.json`, `~/.codex/auth.json`,
   Windows WSL discovery, or the OpenCode auth fallback.
-- Cursor: local auth-file discovery, or an in-memory cookie/access-token push.
+- Cursor: cursor-agent login, the Cursor app's login, then Firefox sign-ins on
+  the server machine (a WSL server also checks Windows), then browser sign-ins
+  shared by the desktop. Chrome, Edge, and Brave profiles on the server are
+  detected but not decrypted.
 - Grok: `~/.grok/auth.json` or Windows WSL auth for the CLI billing endpoint;
   an in-memory browser `sso` cookie is a fallback.
 
@@ -231,9 +236,11 @@ profiles. It uses the current Windows user's browser encryption context and
 returns only the requested cookie over a bounded private child-process channel.
 It cannot read another user's profile or bypass unsupported newer encrypted
 values. Headroom forwards a result only to its verified bundled server session,
-a configured HTTPS server, or the SSH receiver and never persists it. Linux and macOS do
-not include this helper; use server-side credential files or the documented
-[WSL credential sync](server/deploy/wsl/README.md).
+an HTTPS server whose certificate is system-trusted or verified with your token,
+or the SSH receiver, and never persists it. Turn sharing off with **Share browser
+sign-ins with the server** in Settings. Linux and macOS do not include this
+helper; their servers read cursor-agent, Cursor app, and Firefox sign-ins
+directly.
 
 ## Interface behavior
 

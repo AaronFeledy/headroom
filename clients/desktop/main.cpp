@@ -159,9 +159,11 @@ int main(int argc, char **argv) {
         updateService.setPublicTrafficAllowed(!capture && !isolated);
         remoteUpdate.setBackend(capture || isolated ? QString() : controller.backendUrl());
         remoteUpdate.setEnabled(updateService.publicUpdatesAllowed() && !updateService.busy());
-        appInfo.setBackend(capture ? QString() : controller.backendUrl(),
-                           capture ? QString() : controller.backendToken(),
-                           capture ? QSslCertificate() : controller.backendCertificate(),
+        // Never send the bearer before a pending HTTPS upgrade has been decided.
+        const bool deferBackend = capture || controller.remoteVerificationPending();
+        appInfo.setBackend(deferBackend ? QString() : controller.backendUrl(),
+                           deferBackend ? QString() : controller.backendToken(),
+                           deferBackend ? QSslCertificate() : controller.backendCertificate(),
                            controller.settings().value(QStringLiteral("mode")).toString() != QStringLiteral("local"));
     };
     QObject::connect(&controller, &Controller::settingsChanged, &app, syncServices);

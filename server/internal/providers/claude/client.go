@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,7 +77,30 @@ func New(opts Options) *Client {
 
 func (c *Client) Name() string { return providerName }
 
-func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
+func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
+	authExpired := false
+	defer func() {
+		c.stateMu.Lock()
+		creds := c.loaded
+		c.stateMu.Unlock()
+		state := "signed_out"
+		var source *usage.AuthSource
+		if creds != nil {
+			name := "Claude Code"
+			if creds.source == credentialSourceOpenCode {
+				name = "OpenCode"
+			}
+			if strings.HasPrefix(creds.path, `\\wsl.`) {
+				name += " (WSL)"
+			}
+			source = &usage.AuthSource{Kind: "cli", Name: name}
+			state = "signed_in"
+			if result.NeedsReauth || authExpired {
+				state = "expired"
+			}
+		}
+		result.Auth = usage.NewAuth(providerName, state, source)
+	}()
 	creds, err := c.currentCredentials(ctx)
 	if err != nil {
 		return reauthUsageData(formatCredentialError(err)), err
@@ -95,9 +119,11 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 			return errorUsageData(formatFetchError(err)), nil
 		}
 		if statusErr == nil {
+			authExpired = false
 			return data, nil
 		}
 		if statusErr.statusCode == http.StatusUnauthorized {
+			authExpired = true
 			if attempt > 0 {
 				return errorUsageData("Authentication failed. Will retry."), nil
 			}

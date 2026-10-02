@@ -575,7 +575,9 @@ private slots:
             auto socket = server.nextPendingConnection();
             connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
             connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
-                const QByteArray request = socket->readAll(); received += request;
+                const QByteArray request = socket->readAll();
+                if (!request.isEmpty() && request[0] == char(0x16)) { socket->disconnectFromHost(); return; }
+                received += request;
                 if (!received.endsWith("\r\n\r\n")) return;
                 socket->write("HTTP/1.1 " + QByteArray::number(status) + " Test\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
                 socket->disconnectFromHost();
@@ -813,6 +815,7 @@ private slots:
             while (auto socket = origin.nextPendingConnection()) {
                 connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                     const auto request = socket->readAll();
+                    if (!request.isEmpty() && request[0] == char(0x16)) { socket->disconnectFromHost(); return; }
                     if (!request.contains("\r\n\r\n")) return;
                     const QByteArray location = "http://127.0.0.1:" + QByteArray::number(destination.serverPort()) + "/target";
                     socket->write("HTTP/1.1 302 Found\r\nLocation: " + location + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -833,6 +836,7 @@ private slots:
         connect(&origin, &QTcpServer::newConnection, this, [&] {
             while (auto socket = origin.nextPendingConnection()) connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
                 const auto request = socket->property("request").toByteArray() + socket->readAll();
+                if (!request.isEmpty() && request[0] == char(0x16)) { socket->disconnectFromHost(); return; }
                 socket->setProperty("request", request); if (!request.contains("\r\n\r\n")) return;
                 if (request.startsWith("GET /target ")) { ++redirectedRequests; socket->write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n[]"); }
                 else socket->write("HTTP/1.1 302 Found\r\nLocation: /target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -851,7 +855,12 @@ private slots:
         QPointer<QTcpSocket> held; QByteArray oldRequest, newRequest;
         connect(&oldServer, &QTcpServer::newConnection, this, [&] {
             held = oldServer.nextPendingConnection();
-            connect(held, &QTcpSocket::readyRead, held, [&] { oldRequest += held->readAll(); });
+            auto socket = held.data();
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                const auto bytes = socket->readAll();
+                if (!bytes.isEmpty() && bytes[0] == char(0x16)) { socket->disconnectFromHost(); return; }
+                oldRequest += bytes;
+            });
         });
         auto fresh = QJsonDocument::fromJson(TestUsage::snapshot()).array().at(1).toObject();
         fresh["provider_name"] = "Codex";
@@ -859,7 +868,9 @@ private slots:
         connect(&newServer, &QTcpServer::newConnection, this, [&] {
             auto socket = newServer.nextPendingConnection();
             connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
-                newRequest += socket->readAll(); if (!newRequest.contains("\r\n\r\n")) return;
+                const auto bytes = socket->readAll();
+                if (!bytes.isEmpty() && bytes[0] == char(0x16)) { socket->disconnectFromHost(); return; }
+                newRequest += bytes; if (!newRequest.contains("\r\n\r\n")) return;
                 socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
                     QByteArray::number(freshBody.size()) + "\r\nConnection: close\r\n\r\n" + freshBody);
                 socket->disconnectFromHost();

@@ -14,6 +14,7 @@
 #include "managedserver.h"
 #include "credentialservice.h"
 #include "sshnetwork.h"
+#include "tlsproof.h"
 
 class Controller : public QObject {
     Q_OBJECT
@@ -23,6 +24,7 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QVariantMap resetAction READ resetAction NOTIFY changed)
+    Q_PROPERTY(QVariantMap browserChecked READ browserChecked NOTIFY providersChanged)
 public:
     explicit Controller(const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
@@ -32,6 +34,10 @@ public:
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
+    QVariantMap browserChecked() const;
+    // True while a saved http:// remote should first try token-verified HTTPS.
+    // Other authenticated requests wait so the bearer is not sent in plain text.
+    bool remoteVerificationPending() const;
     QVariantList diagnostics() const { return m_diagnostics; }
     Q_INVOKABLE void clearDiagnostics();
     Q_INVOKABLE QString diagnosticText() const;
@@ -63,7 +69,8 @@ public:
     Q_INVOKABLE void cancelScheduledChatGptReset();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
-    Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {});
+    Q_INVOKABLE QVariantMap loginCopy(const QVariantMap &provider) const;
+    Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {}, bool shareBrowserSignIns = true);
     Q_INVOKABLE QVariantMap concern(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantMap pacing(const QString &provider, const QVariantMap &bucket) const;
@@ -89,6 +96,7 @@ private:
     void requestUsage();
     void refreshUsage(bool userRequested);
     void syncConnection();
+    void verifyRemote(bool upgrade);
     QVariantMap chatGptWeekly() const;
     bool chatGptResetEligible() const;
     bool chatGptResetAwaitingUsage() const;
@@ -101,7 +109,7 @@ private:
     void clearScheduledChatGptReset();
     void submitChatGptReset(bool automatic);
     void cancelResetRequest();
-    QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);
+    QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
@@ -122,6 +130,10 @@ private:
     SshNetworkAccessManager m_sshNetwork;
     ManagedServer m_server;
     CredentialService m_credentials;
+    TlsProofService m_tlsProof;
+    qint64 m_nextUpgradeAttempt = 0;
+    bool m_proving = false;
+    bool m_proofAttempted = false;
     QPointer<QNetworkReply> m_reply;
     QPointer<QNetworkReply> m_resetReply;
     QString m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;

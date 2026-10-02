@@ -20,11 +20,15 @@ type rawConfig struct {
 	PollInterval *string                      `yaml:"poll_interval"`
 	SSHAccess    *bool                        `yaml:"ssh_access"`
 	Providers    map[string]rawProviderConfig `yaml:"providers"`
+	TLS          *string                      `yaml:"tls"`
+	TLSCertFile  *string                      `yaml:"tls_cert_file"`
+	TLSKeyFile   *string                      `yaml:"tls_key_file"`
 }
 
 type rawProviderConfig struct {
-	Enabled         *bool   `yaml:"enabled"`
-	CredentialsPath *string `yaml:"credentials_path"`
+	Enabled            *bool   `yaml:"enabled"`
+	CredentialsPath    *string `yaml:"credentials_path"`
+	BrowserCredentials *bool   `yaml:"browser_credentials"`
 }
 
 type flagValues struct {
@@ -35,6 +39,9 @@ type flagValues struct {
 	DesktopSession bool
 	SSHAccess      bool
 	Set            map[string]bool
+	TLS            string
+	TLSCertFile    string
+	TLSKeyFile     string
 }
 
 func Load(ctx context.Context, opts LoadOptions) (Config, error) {
@@ -68,6 +75,12 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	if err := applyFlags(flags, &cfg); err != nil {
 		return Config{}, err
 	}
+	if defaultPath, err := DefaultPath(goos, opts.Env); err == nil {
+		cfg.TLSDir = tlsDirectory(defaultPath)
+	}
+	if err := validateTLS(cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.PollInterval <= 0 {
 		return Config{}, fmt.Errorf("poll interval must be positive: %w", ErrInvalidConfig)
 	}
@@ -80,6 +93,9 @@ func parseFlags(args []string) (flagValues, error) {
 	fs.StringVar(&values.ConfigPath, "config", "", "path to config.yaml")
 	fs.StringVar(&values.ListenAddr, "listen-addr", "", "address for the HTTP server")
 	fs.StringVar(&values.AuthToken, "auth-token", "", "optional bearer token")
+	fs.StringVar(&values.TLS, "tls", "", "TLS mode: auto, on, off")
+	fs.StringVar(&values.TLSCertFile, "tls-cert-file", "", "TLS certificate PEM file")
+	fs.StringVar(&values.TLSKeyFile, "tls-key-file", "", "TLS private key PEM file")
 	fs.StringVar(&values.PollInterval, "poll-interval", "", "provider poll interval")
 	fs.BoolVar(&values.DesktopSession, "desktop-session", false, "start a private desktop TLS session")
 	fs.BoolVar(&values.SSHAccess, "ssh-access", false, "enable access through the private SSH Unix socket")
@@ -106,6 +122,15 @@ func applyYAML(path string, cfg *Config) error {
 }
 
 func applyRaw(raw rawConfig, cfg *Config) error {
+	if raw.TLS != nil {
+		cfg.TLS = *raw.TLS
+	}
+	if raw.TLSCertFile != nil {
+		cfg.TLSCertFile = *raw.TLSCertFile
+	}
+	if raw.TLSKeyFile != nil {
+		cfg.TLSKeyFile = *raw.TLSKeyFile
+	}
 	if raw.ListenAddr != nil {
 		cfg.ListenAddr = *raw.ListenAddr
 	}
@@ -130,6 +155,9 @@ func applyRaw(raw rawConfig, cfg *Config) error {
 
 func applyProvider(name string, raw rawProviderConfig, cfg *Config) {
 	current := cfg.Providers[name]
+	if raw.BrowserCredentials != nil {
+		current.BrowserCredentials = *raw.BrowserCredentials
+	}
 	if raw.Enabled != nil {
 		current.Enabled = *raw.Enabled
 	}
@@ -140,6 +168,15 @@ func applyProvider(name string, raw rawProviderConfig, cfg *Config) {
 }
 
 func applyEnv(env map[string]string, cfg *Config) error {
+	if value := env["USAGE_TLS"]; value != "" {
+		cfg.TLS = value
+	}
+	if value := env["USAGE_TLS_CERT_FILE"]; value != "" {
+		cfg.TLSCertFile = value
+	}
+	if value := env["USAGE_TLS_KEY_FILE"]; value != "" {
+		cfg.TLSKeyFile = value
+	}
 	if value := env["USAGE_LISTEN_ADDR"]; value != "" {
 		cfg.ListenAddr = value
 	}
@@ -165,6 +202,16 @@ func applyEnv(env map[string]string, cfg *Config) error {
 
 func applyProviderEnv(env map[string]string, cfg *Config) error {
 	for key, value := range env {
+		if strings.HasPrefix(key, "USAGE_PROVIDER_") && strings.HasSuffix(key, "_BROWSER_CREDENTIALS") {
+			name := providerNameFromEnv(key, "USAGE_PROVIDER_", "_BROWSER_CREDENTIALS")
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", key, errors.Join(ErrInvalidConfig, err))
+			}
+			current := cfg.Providers[name]
+			current.BrowserCredentials = enabled
+			cfg.Providers[name] = current
+		}
 		if strings.HasPrefix(key, "USAGE_PROVIDER_") && strings.HasSuffix(key, "_ENABLED") {
 			name := providerNameFromEnv(key, "USAGE_PROVIDER_", "_ENABLED")
 			enabled, err := strconv.ParseBool(value)
@@ -186,6 +233,15 @@ func applyProviderEnv(env map[string]string, cfg *Config) error {
 }
 
 func applyFlags(flags flagValues, cfg *Config) error {
+	if flags.Set["tls"] {
+		cfg.TLS = flags.TLS
+	}
+	if flags.Set["tls-cert-file"] {
+		cfg.TLSCertFile = flags.TLSCertFile
+	}
+	if flags.Set["tls-key-file"] {
+		cfg.TLSKeyFile = flags.TLSKeyFile
+	}
 	if flags.Set["desktop-session"] {
 		cfg.DesktopSession = flags.DesktopSession
 	}
@@ -214,20 +270,4 @@ func parseDuration(name string, value string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s %q: %w", name, value, errors.Join(ErrInvalidConfig, err))
 	}
 	return duration, nil
-}
-
-func parseEnv(env []string) map[string]string {
-	vars := make(map[string]string, len(env))
-	for _, entry := range env {
-		key, value, found := strings.Cut(entry, "=")
-		if found {
-			vars[key] = value
-		}
-	}
-	return vars
-}
-
-func providerNameFromEnv(key string, prefix string, suffix string) string {
-	name := strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix)
-	return strings.ToLower(name)
 }
