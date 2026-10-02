@@ -140,7 +140,7 @@ Popup {
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: remoteMode.checked
                 Caption { text: "BEARER TOKEN" }
-                Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; placeholderText: backend.settings.hasToken && (localMode.checked ? backend.settings.mode === "local" : backend.settings.mode === "remote" && url.text.trim() === backend.settings.url) ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
+                Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; ContextMenu.menu: null; placeholderText: backend.settings.hasToken && (localMode.checked ? backend.settings.mode === "local" : backend.settings.mode === "remote" && url.text.trim() === backend.settings.url) ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
                 Text { text: "Stored locally in your current-user settings file."; color: Theme.muted; font.pixelSize: 11 }
                 Check { id: forget; visible: backend.settings.hasToken; text: "Remove saved token"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
             }

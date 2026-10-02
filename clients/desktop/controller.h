@@ -94,6 +94,7 @@ private:
     void resetRetry();
     void cancel();
     void requestUsage();
+    void refreshUsage(bool userRequested);
     void syncConnection();
     void verifyRemote(bool upgrade);
     QVariantMap chatGptWeekly() const;

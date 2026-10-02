@@ -2,6 +2,10 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    // Tests can request less motion without changing the platform preference.
+    property bool reducedMotionOverride: false
+    readonly property bool reducedMotion: reducedMotionOverride
+        || Application.styleHints.accessibility.motionPreference === Qt.MotionPreference.ReducedMotion
     readonly property int windowRadius: 16
     // Dracula palette: https://draculatheme.com/contribute
     readonly property color background: "#282a36"

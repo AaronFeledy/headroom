@@ -5,7 +5,7 @@ source trees: LGPL 3.0, LGPL 2.1, GPL 3.0, GPL 2.0, and the Qt GPL exception.
 They are kept in the repository because Qt's official prebuilt SDK archives do
 not consistently include their `LICENSES` source directory. Official package
 assembly also verifies the pinned Qt source archives in
-`packaging/qt-sources-6.8.3.json`, copies their module attribution metadata and
+`packaging/qt-sources-6.12.0.json`, copies their module attribution metadata and
 referenced notices, and writes a deterministic `attributions/index.json`.
 That index distinguishes payload matches from source or build provenance and
 records whether the selected Qt kit supplied SPDX SBOM files.

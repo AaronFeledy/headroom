@@ -330,7 +330,7 @@ func createPackage(args []string) (any, error) {
 	version := set.String("version", buildVersion, "version")
 	platform := set.String("platform", runtime.GOOS, "platform")
 	arch := set.String("arch", nativeArch(), "architecture")
-	qt := set.String("qt-version", "6.8.3", "Qt version")
+	qt := set.String("qt-version", "6.12.0", "Qt version")
 	baseline := set.String("baseline", "", "runtime baseline")
 	kind := set.String("kind", "", "package kind: cli, or empty for desktop")
 	if err := set.Parse(args); err != nil {

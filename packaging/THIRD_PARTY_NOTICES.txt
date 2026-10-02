@@ -5,8 +5,8 @@ Each packaged build includes its collected runtime and source-attribution
 license material under share/licenses. The package manifest hashes those files
 along with the executable payload.
 
-Qt 6.8.3
---------
+Qt 6.12.0
+---------
 Headroom uses Qt Core, GUI, Widgets, Network, QML, Quick, Quick Controls 2 and
 SVG, plus Qt platform, image, icon and TLS plugins. Qt is available under its
 applicable commercial and open-source licenses. See share/licenses/qt and

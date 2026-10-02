@@ -192,7 +192,7 @@ def main():
     archive = args.output_dir / (stem + ".tar.gz")
     run(args.manager, "create-package", "--root", root, "--output", archive,
         "--version", args.version, "--platform", "macos", "--arch", args.architecture,
-        "--qt-version", metadata["qt_version"], "--baseline", "macos-12.0")
+        "--qt-version", metadata["qt_version"], "--baseline", "macos-14.4")
     run(args.manager, "verify", "--archive", archive, "--version", args.version,
         "--platform", "macos", "--arch", args.architecture, "--asset", archive.name)
 

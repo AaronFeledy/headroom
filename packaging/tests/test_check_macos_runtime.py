@@ -13,7 +13,7 @@ MODERN = """Load command 8
       cmd LC_BUILD_VERSION
   cmdsize 32
  platform 1
-    minos 12.0
+    minos 14.4
       sdk 15.2
    ntools 1
      tool 3
@@ -36,9 +36,9 @@ class MacRuntimeTests(unittest.TestCase):
         self.check_headers("Load command 1\n cmd LC_VERSION_MIN_MACOSX\n version 11.0\n sdk 15.2\n")
 
     def test_rejects_newer_missing_duplicate_and_non_macos_targets(self):
-        for headers in (MODERN.replace("minos 12.0", "minos 12.1"),
-                        MODERN.replace("minos 12.0", "minos 13.0"),
-                        MODERN.replace("minos 12.0", ""), MODERN + MODERN,
+        for headers in (MODERN.replace("minos 14.4", "minos 14.5"),
+                        MODERN.replace("minos 14.4", "minos 15.0"),
+                        MODERN.replace("minos 14.4", ""), MODERN + MODERN,
                         MODERN.replace("platform 1", "platform 2")):
             with self.subTest(headers=headers), self.assertRaises(ValueError):
                 self.check_headers(headers)

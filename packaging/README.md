@@ -53,11 +53,13 @@ runtime manager remains at `bundle/bin/headroom-package`; notices remain under
 `codesign --verify --deep --strict`; Developer ID signing and Apple notarization
 are not configured. Official packages also include
 `bundle/share/licenses/qt/attributions/index.json`, generated from the five
-hash-pinned Qt 6.8.3 source archives in `qt-sources-6.8.3.json`. The index is a
+hash-pinned Qt 6.12.0 source archives in `qt-sources-6.12.0.json`. The index is a
 conservative module-source attribution inventory, records payload matches and
 optional kit SPDX SBOMs, and does not present source or build-only records as
 an exact binary SBOM. Missing archives, digest mismatches, malformed records or
-missing referenced notices fail package assembly.
+missing referenced notices fail package assembly. Qt SVG 6.12.0 has no
+third-party attribution records; its shipped `REUSE.toml`, `licenseRule.json`,
+and module license texts are preserved instead.
 
 The bootstrap directory contains the shared Go package tool and the stable
 launcher. Windows builds compile the launcher as a GUI-subsystem executable.
@@ -250,7 +252,13 @@ allows only GitHub API, repository, and documented release-asset hosts on port
 443. Every response is streamed into private bounded storage, and the release
 manifest's exact size and digest are checked before the Go validator runs.
 
-The portable Linux x86_64 archive is built on Ubuntu 22.04. It bundles Qt but
+Official desktop builds use Qt 6.12.0 LTS and CMake 3.25+. macOS packages target
+macOS 14.4+ and require Xcode 16 / macOS 15 SDK or newer to build. CI pins
+aqtinstall master at `076e1659807d0b362a3ed684d54c2e9c775eb9c7` because released
+aqtinstall 3.3.0 cannot install Qt 6.11+; remove that pin when a release supports it.
+
+The portable Linux x86_64 archive is built on Ubuntu 22.04. Qt 6.12 Linux
+prebuilts require glibc 2.34; Ubuntu 22.04 supplies glibc 2.35. It bundles Qt but
 uses the baseline desktop's glibc, libstdc++, graphics, font, X11/XCB, Wayland,
 D-Bus and OpenSSL 3 ABI libraries. The generic bundle uses X11, including
 XWayland in a Wayland session, so the popup can be positioned beside the tray.
@@ -258,7 +266,7 @@ It falls back to native Wayland rendering when XWayland is unavailable; in that
 case the compositor controls window placement. Explicit `QT_QPA_PLATFORM` and
 Qt `-platform` overrides are preserved. On Ubuntu 22.04, install the runtime packages `libegl1`,
 `libgl1`, `libglx0`, `libopengl0`, `libdrm2`, `libgbm1`, `libfontconfig1`,
-`libfreetype6`, `libglib2.0-0`, `libgssapi-krb5-2`, `libssl3`,
+`libfreetype6`, `libglib2.0-0`, `libgssapi-krb5-2`, `libssl3`, `libbrotli1`,
 `libwayland-client0`, `libwayland-cursor0`, `libwayland-egl1`, `libx11-6`,
 `libx11-xcb1`, `libxkbcommon0`, `libxkbcommon-x11-0`, `libxcb1`,
 `libxcb-cursor0`, `libxcb-glx0`, `libxcb-icccm4`, `libxcb-image0`,

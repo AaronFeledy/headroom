@@ -45,7 +45,7 @@ func TestMacOSFrameworkArchiveRoundTrip(t *testing.T) {
 			}
 		}
 	}
-	manifest, err := BuildManifest(root, fixture.Version, "macos", "arm64", "6.8.3", "macOS 12")
+	manifest, err := BuildManifest(root, fixture.Version, "macos", "arm64", "6.12.0", "macOS 14.4")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21.1)
+cmake_minimum_required(VERSION 3.25)
 set(HEADROOM_VERSION "0.1.0" CACHE STRING "Headroom application version")
 if(NOT HEADROOM_VERSION MATCHES "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")
     message(FATAL_ERROR "HEADROOM_VERSION must be stable SemVer (build metadata is allowed)")
@@ -13,11 +13,11 @@ foreach(component IN ITEMS HEADROOM_VERSION_MAJOR HEADROOM_VERSION_MINOR HEADROO
 endforeach()
 set(HEADROOM_NUMERIC_VERSION "${HEADROOM_VERSION_MAJOR}.${HEADROOM_VERSION_MINOR}.${HEADROOM_VERSION_PATCH}")
 if(CMAKE_HOST_APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "12.0")
-        message(FATAL_ERROR "Headroom requires macOS 12.0 or newer")
+    if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "14.4")
+        message(FATAL_ERROR "Headroom requires macOS 14.4 or newer")
     endif()
     if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version" FORCE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "14.4" CACHE STRING "Minimum macOS version" FORCE)
     endif()
 endif()
 project(Headroom LANGUAGES CXX)
@@ -46,14 +46,10 @@ if(HEADROOM_PACKAGE_BUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
 endif()
 
-if(APPLE)
-    set(HEADROOM_QT_MINIMUM 6.8.3)
-else()
-    set(HEADROOM_QT_MINIMUM 6.6)
-endif()
+set(HEADROOM_QT_MINIMUM 6.12)
 find_package(Qt6 ${HEADROOM_QT_MINIMUM} REQUIRED COMPONENTS Quick QuickControls2 Widgets Network Svg Test)
 if(HEADROOM_PACKAGE_BUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(Qt6 6.6 REQUIRED COMPONENTS WaylandClient)
+    find_package(Qt6 ${HEADROOM_QT_MINIMUM} REQUIRED COMPONENTS WaylandClient)
 endif()
 configure_file(build-metadata.json.in "${CMAKE_CURRENT_BINARY_DIR}/headroom-build-metadata.json" @ONLY)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -135,13 +131,22 @@ endif()
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
     qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/MeterToolTip.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
-    RESOURCES headroom.svg)
+    RESOURCES headroom.svg qml/loading.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
     ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
     ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)
 
 include(CTest)
 if(BUILD_TESTING)
+    # Reuse the module's generated imports/resources, but gate only explicit
+    # structural categories. Context properties deliberately remain unqualified.
+    add_test(NAME headroom-qmllint COMMAND Qt6::qmllint
+        "@${CMAKE_CURRENT_BINARY_DIR}/.rcc/qmllint/headroom.rsp"
+        --ignore-settings --only-explicit-categories
+        --syntax error --required error --import error --unresolved-type error
+        --incompatible-type error --inheritance-cycle error --alias-cycle error
+        --recursion-depth-errors error --type-instantiated-recursively error)
+    set_tests_properties(headroom-qmllint PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     if(APPLE)
         set(HEADROOM_MACOS_TLS_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/headroom-tls-fixture")
         set(HEADROOM_MACOS_TLS_FIXTURE_HEADER
