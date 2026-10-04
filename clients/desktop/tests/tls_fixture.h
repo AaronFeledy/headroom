@@ -12,7 +12,8 @@ inline bool selectNativeTestBackend()
 {
 #ifdef Q_OS_MACOS
     static const bool selected = [] {
-        qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
+        if (qEnvironmentVariable("HEADROOM_TLS_FIXTURE_EMPTY_KEYCHAIN_PROBE") != "1")
+            qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
         const QString requested = QStringLiteral("securetransport");
         const bool activated = QSslSocket::setActiveBackend(requested);
         const QString active = QSslSocket::activeBackend();

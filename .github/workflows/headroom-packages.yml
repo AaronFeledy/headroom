@@ -120,7 +120,7 @@ jobs:
       - name: Test installer streaming download bounds without network
         run: bash packaging/tests/test-install-download.sh
       - name: Install Qt runtime build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0 openssh-server
+        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0 openssh-server python3-dbus python3-gi
       - uses: jurplel/install-qt-action@v4.3.0
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
@@ -129,6 +129,8 @@ jobs:
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
+      - name: Verify required Qt kit TLS and SVG plugins
+        run: bash packaging/check-qt-kit.sh linux
       - name: Configure shared desktop client
         run: >-
           cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja
@@ -159,6 +161,12 @@ jobs:
           timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software
           clients/desktop/build-ci/headroom-ui-tests
           dragReordersAndDrivesTray preservesAndDisplaysCustomInterval
+      - name: Verify native reduced motion through the GNOME settings portal
+        timeout-minutes: 2
+        run: >-
+          timeout 90s xvfb-run -a dbus-run-session -- /usr/bin/python3
+          packaging/tests/reduced_motion_portal.py
+          clients/desktop/build-ci/headroom-platformmotion-tests platformReducedMotion
       - name: Verify tray-positioning backend selection
         timeout-minutes: 1
         run: |
@@ -191,6 +199,9 @@ jobs:
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
+      - name: Verify required Qt kit TLS and SVG plugins
+        shell: bash
+        run: bash packaging/check-qt-kit.sh windows
       - name: Configure shared desktop client
         run: cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -235,6 +246,10 @@ jobs:
           if (Test-Path $result) { Get-Content -Raw $result }
           if ($timedOut) { throw 'Native QML UI test timed out.' }
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+      - name: Verify native Windows reduced motion
+        timeout-minutes: 2
+        shell: pwsh
+        run: ./packaging/tests/windows_reduced_motion.ps1 -TestExecutable "clients/desktop/build-ci/headroom-platformmotion-tests.exe"
       - name: Load QML and capture disconnected setup
         if: ${{ always() && steps.windows-build.outcome == 'success' }}
         shell: pwsh
@@ -312,6 +327,8 @@ jobs:
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
+      - name: Verify required Qt kit TLS and SVG plugins
+        run: bash packaging/check-qt-kit.sh linux
       - uses: actions/download-artifact@v8
         with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build complete package inputs
@@ -367,6 +384,9 @@ jobs:
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
+      - name: Verify required Qt kit TLS and SVG plugins
+        shell: bash
+        run: bash packaging/check-qt-kit.sh windows
       - uses: actions/download-artifact@v8
         with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build complete package inputs
@@ -433,6 +453,8 @@ jobs:
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
           modules: qtshadertools
           cache: true
+      - name: Verify required Qt kit TLS and SVG plugins
+        run: bash packaging/check-qt-kit.sh macos
       - uses: actions/download-artifact@v8
         with: {name: qt-attribution-sources-6.12.0, path: '${{ runner.temp }}/qt-sources'}
       - name: Build native macOS desktop
@@ -478,10 +500,26 @@ jobs:
         timeout-minutes: 15
         run: |
           python3 packaging/tests/macos_tls_fixture_ci.py "$RUNNER_TEMP/desktop-package/headroom-tls-fixture" ctest --test-dir "$RUNNER_TEMP/desktop-package" -E '^headroom-reset-prohibited-tests$' --timeout 180 --output-on-failure
+      - name: Probe TLS fixtures without keychain workarounds (informational)
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 12
+        run: python3 packaging/tests/macos_tls_probe_ci.py "$RUNNER_TEMP/desktop-package"
+      - name: Preserve empty-keychain TLS probe log
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: headroom-macos-${{ matrix.architecture }}-empty-keychain-probe
+          path: ${{ runner.temp }}/mac-tls-empty-keychain.log
+          if-no-files-found: warn
       - name: Exercise menus and focus using native Cocoa
         if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
         timeout-minutes: 2
         run: '"$RUNNER_TEMP/desktop-package/headroom-ui-tests" dragReordersAndDrivesTray preservesAndDisplaysCustomInterval'
+      - name: Verify native Cocoa reduced motion when permitted by TCC
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
+        timeout-minutes: 3
+        run: bash packaging/tests/macos_reduced_motion.sh "$RUNNER_TEMP/desktop-package/headroom-platformmotion-tests"
       - name: Assemble and ad-hoc sign macOS package
         id: mac-package
         if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' && steps.mac-server.outcome == 'success' && steps.mac-manager.outcome == 'success' }}
@@ -566,6 +604,7 @@ jobs:
           assert os.path.realpath(value['executable']) == os.path.realpath(sys.argv[2])
           PY
           python3 packaging/tests/package_server_smoke.py --server "$RUNNER_TEMP/install with spaces/$version_path/bin/usage-server"
+          python3 packaging/tests/package_desktop_tls_smoke.py "$RUNNER_TEMP/install with spaces/$version_path/bin/headroom"
           find "$RUNNER_TEMP/install with spaces/$version_path" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
       - uses: actions/upload-artifact@v7
         with:
@@ -653,6 +692,8 @@ jobs:
           $env:HEADROOM_PACKAGE_VERSION = '9.9.9'
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
           python packaging/tests/package_server_smoke.py --server "$install/$versionPath/bin/usage-server.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python packaging/tests/package_desktop_tls_smoke.py "$install/$versionPath/bin/headroom.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
             throw 'Browser-profile quarantine is permitted only on a disposable GitHub-hosted runner.'

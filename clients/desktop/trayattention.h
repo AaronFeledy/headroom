@@ -28,6 +28,7 @@ class TrayAttention : public QObject {
     Q_OBJECT
 public:
     explicit TrayAttention(std::function<bool()> engaged = {}, QObject *parent = nullptr);
+    static bool platformReducedMotion();
     void update(const TrayVisual::Model &model);
     void acknowledge();
     TrayVisual::AttentionFrame frame() const { return m_frame; }

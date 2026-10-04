@@ -71,7 +71,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp
+    controller.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -244,6 +244,15 @@ if(BUILD_TESTING)
     add_test(NAME headroom-ui-tests COMMAND headroom-ui-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-ui-tests.xml,junitxml")
     set_tests_properties(headroom-ui-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    qt_add_executable(headroom-platformmotion-tests tests/test_platformmotion.cpp)
+    set_target_properties(headroom-platformmotion-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-platformmotion-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets Qt6::QuickControls2)
+    target_compile_definitions(headroom-platformmotion-tests PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    qt_add_resources(headroom-platformmotion-tests provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
+        ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
+        ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)
+    add_test(NAME headroom-platformmotion-tests COMMAND headroom-platformmotion-tests)
+    set_tests_properties(headroom-platformmotion-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
     # DO NOT enable/implement reset action tests: they can burn a valuable reset.
     qt_add_executable(headroom-reset-prohibited-tests tests/test_reset_prohibited.cpp)
     set_target_properties(headroom-reset-prohibited-tests PROPERTIES WIN32_EXECUTABLE FALSE)

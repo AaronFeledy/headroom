@@ -79,6 +79,7 @@ def main():
         assert value["nonce"] == nonce and value["version"] == args.version and value["pid"] > 0
         assert Path(value["executable"]).resolve() == (app / "Contents/MacOS/headroom").resolve()
     run(sys.executable, "packaging/tests/package_server_smoke.py", "--server", app / "Contents/MacOS/usage-server")
+    run(sys.executable, "packaging/tests/package_desktop_tls_smoke.py", app / "Contents/MacOS/headroom", env=environment)
     (args.work / "macos-package-inventory.txt").write_text(
         "\n".join(sorted(str(path.relative_to(generation)) for path in generation.rglob("*") if path.is_file())) + "\n")
 
