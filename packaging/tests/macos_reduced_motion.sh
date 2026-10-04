@@ -6,7 +6,9 @@ if [[ ${GITHUB_ACTIONS:-} != true || ${RUNNER_ENVIRONMENT:-} != github-hosted ]]
 fi
 previous=$(defaults read com.apple.universalaccess reduceMotion 2>/dev/null || true)
 restore() {
+  # `defaults read` prints booleans as 1/0, which `-bool` does not accept.
   if [[ -n "$previous" ]]; then
+    case "$previous" in 1|true|YES|yes) previous=true ;; *) previous=false ;; esac
     defaults write com.apple.universalaccess reduceMotion -bool "$previous"
   else
     defaults delete com.apple.universalaccess reduceMotion
