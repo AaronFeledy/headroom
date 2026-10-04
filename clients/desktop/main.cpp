@@ -2,6 +2,7 @@
 #include "usage.h"
 #include "trayvisual.h"
 #include "trayattention.h"
+#include "tlssmoke.h"
 #include "stabletray.h"
 #include "startup.h"
 #include "appinfo.h"
@@ -78,9 +79,13 @@ int main(int argc, char **argv) {
     parser.addOption({"headroom-ready-file", "Private update readiness endpoint.", "path"});
     parser.addOption({"headroom-update-restart", "Open the popup after a verified update restart."});
     parser.addOption({"headroom-installed-restart", "Open the popup after an installer restart."});
+    QCommandLineOption tlsSmoke("headroom-tls-smoke-file", "Private package TLS diagnostic.", "path");
+    tlsSmoke.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(tlsSmoke);
     parser.process(app);
     const bool capture = parser.isSet("screenshot");
     const bool isolated = parser.isSet("config");
+    if (parser.isSet(tlsSmoke) && (!isolated || capture || !QDir::isAbsolutePath(parser.value(tlsSmoke)))) return 2;
     if (isolated && parser.value("config").trimmed().isEmpty()) {
         QMessageBox::critical(nullptr, "Headroom", "The --config option requires a settings file path.");
         return 2;
@@ -182,6 +187,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("captureMode", capture);
     engine.loadFromModule("Headroom", "Main");
     if (engine.rootObjects().isEmpty()) return 1;
+    if (parser.isSet(tlsSmoke)) startPackagedTlsSmoke(controller, parser.value(tlsSmoke));
     if (parser.isSet("headroom-ready-file")) {
         const QString readyPath = parser.value("headroom-ready-file");
         const QByteArray nonce = qgetenv("HEADROOM_READY_NONCE");
@@ -207,7 +213,7 @@ int main(int argc, char **argv) {
     QMenu *trayMenu = &fallbackMenu;
     bool nativeTrayUsed = false;
     TrayAttention attention([&] {
-        if (QGuiApplication::styleHints()->accessibility()->motionPreference() == Qt::MotionPreference::ReducedMotion
+        if (TrayAttention::platformReducedMotion()
             || !hasTray || (window->isVisible() && app.applicationState() == Qt::ApplicationActive)
             || trayMenu->isVisible()) return true;
         // SNI/Wayland hosts do not expose icon hover or global pointer position.
