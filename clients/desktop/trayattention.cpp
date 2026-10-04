@@ -1,5 +1,8 @@
 #include "trayattention.h"
 #include <QEvent>
+#include <QGuiApplication>
+#include <QStyleHints>
+#include <QAccessibilityHints>
 #include <utility>
 
 void TrayAttentionState::update(const TrayVisual::Model &model, qint64 now, bool engaged) {
@@ -50,6 +53,10 @@ TrayAttention::TrayAttention(std::function<bool()> engaged, QObject *parent)
     : QObject(parent), m_engaged(std::move(engaged)) {
     m_clock.start();
     connect(&m_timer, &QTimer::timeout, this, &TrayAttention::tick);
+}
+
+bool TrayAttention::platformReducedMotion() {
+    return QGuiApplication::styleHints()->accessibility()->motionPreference() == Qt::MotionPreference::ReducedMotion;
 }
 
 void TrayAttention::update(const TrayVisual::Model &model) {

@@ -15,7 +15,8 @@
 int main(int argc, char **argv)
 {
 #ifdef Q_OS_MACOS
-    qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
+    if (qEnvironmentVariable("HEADROOM_TLS_FIXTURE_EMPTY_KEYCHAIN_PROBE") != "1")
+        qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
 #endif
     QCoreApplication app(argc, argv);
     if (!TlsFixture::selectNativeTestBackend()) return 13;
