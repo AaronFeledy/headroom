@@ -22,10 +22,11 @@ type Discovery struct {
 }
 
 type credential struct {
-	source usage.AuthSource
-	path   string
-	cookie string
-	status string
+	failure *usage.FetchFailure
+	source  usage.AuthSource
+	path    string
+	cookie  string
+	status  string
 }
 
 func defaultDiscovery() Discovery {
@@ -93,6 +94,7 @@ func readCredential(ctx context.Context, candidate credential) credential {
 	}
 	if err != nil {
 		candidate.status = "unreadable"
+		candidate.failure = &usage.FetchFailure{Kind: usage.FailureOther}
 		return candidate
 	}
 	if candidate.cookie != "" {

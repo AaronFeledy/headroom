@@ -79,7 +79,11 @@ func (c *Client) Name() string { return providerName }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
 	authExpired := false
+	var epoch *string
+	var failure *usage.FetchFailure
 	defer func() {
+		result.CredentialEpoch = epoch
+		result.FetchFailure = failure
 		c.stateMu.Lock()
 		creds := c.loaded
 		c.stateMu.Unlock()
@@ -114,20 +118,27 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			return errorUsageData("Token refresh failed. Will retry."), nil
 		}
 		creds = ready
+		epoch = usage.CredentialEpoch(providerName, creds.path, fmt.Sprint(creds.source), creds.accessToken)
 		data, statusErr, err := c.fetchUsage(ctx, creds)
 		if err != nil {
+			var typed *usage.FetchFailure
+			if errors.As(err, &typed) {
+				failure = typed
+			}
 			return errorUsageData(formatFetchError(err)), nil
 		}
 		if statusErr == nil {
 			authExpired = false
 			return data, nil
 		}
+		failure = statusErr.failure
 		if statusErr.statusCode == http.StatusUnauthorized {
 			authExpired = true
 			if attempt > 0 {
 				return errorUsageData("Authentication failed. Will retry."), nil
 			}
 			if refreshErr := c.refreshCredentials(ctx, creds, refreshModeForced); refreshErr != nil {
+				failure = nil
 				if errors.Is(refreshErr, ErrInvalidGrant) {
 					return reauthUsageData("AUTH_EXPIRED"), nil
 				}

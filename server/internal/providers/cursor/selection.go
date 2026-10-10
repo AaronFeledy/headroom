@@ -60,6 +60,10 @@ func (c *Client) candidates(ctx context.Context) []credential {
 			}
 			read := browsercookie.Read(ctx, candidate.path, strings.HasPrefix(candidate.source.Name, "Firefox"), c.discovery.Now())
 			candidate.cookie, candidate.status = read.Cookie, read.Status
+			switch read.Status {
+			case "unreadable", "locked", "encrypted":
+				candidate.failure = &usage.FetchFailure{Kind: usage.FailureOther}
+			}
 			c.browsers = append(c.browsers, candidate)
 			c.stamps[candidate.path] = stamp(candidate.path)
 			c.stamps[candidate.path+"-wal"] = stamp(candidate.path + "-wal")

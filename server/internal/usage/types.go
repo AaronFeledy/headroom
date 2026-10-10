@@ -63,6 +63,9 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 }
 
 type UsageData struct {
+	FetchStatus           *FetchStatus
+	FetchFailure          *FetchFailure `json:"-"`
+	CredentialEpoch       *string       `json:"-"`
 	Auth                  Auth
 	ProviderName          string
 	PrimaryLabel          string
@@ -145,6 +148,7 @@ func (d UsageData) WithBuckets(buckets []Bucket) UsageData {
 
 func (d UsageData) MarshalJSON() ([]byte, error) {
 	type usageJSON struct {
+		FetchStatus           *FetchStatus           `json:"fetch_status,omitempty"`
 		ProviderName          string                 `json:"provider_name"`
 		PrimaryLabel          string                 `json:"primary_label"`
 		SecondaryLabel        string                 `json:"secondary_label"`
@@ -175,6 +179,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		auth = NewAuth(d.ProviderName, "signed_out", nil)
 	}
 	return json.Marshal(usageJSON{
+		FetchStatus:           d.FetchStatus,
 		Auth:                  auth,
 		ProviderName:          d.ProviderName,
 		PrimaryLabel:          d.PrimaryLabel,
