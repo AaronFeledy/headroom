@@ -27,13 +27,17 @@ ApplicationWindow {
         }
     }
     property bool serverOffline: state.status === "offline"
-    property var providers: backend.providers
+    // Cards may show a clearly labelled stale reading; health, attention, and
+    // the tray only ever use the raw server model.
+    property var providers: backend.displayProviders
+    property var liveProviders: backend.providers
     property var shownProviders: providers.filter(p => filter === "All providers" || p.provider_name === filter)
-    property int healthy: providers.filter(p => p.is_success).length
+    property int healthy: liveProviders.filter(p => p.is_success).length
     property int concernLevel: {
         window.state // Update severity as time advances, even between polls.
         let level = 0
         for (const p of providers) {
+            if (p.stale) continue
             if (!p.is_success) level = 3
             else for (const b of p.buckets) level = Math.max(level, backend.concern(p.provider_name, b).severity)
         }
@@ -41,13 +45,14 @@ ApplicationWindow {
     }
     property int attention: {
         window.state
-        return providers.filter(p => !p.is_success || p.buckets.some(b => backend.concern(p.provider_name, b).severity > 0)).length
+        return providers.filter(p => !p.stale && (!p.is_success || p.buckets.some(b => backend.concern(p.provider_name, b).severity > 0))).length
     }
     property string nextReset: {
         let values = []
-        for (const p of providers) for (const b of p.buckets) if (b.resets_at && new Date(b.resets_at).getTime() > Date.now()) values.push(b.resets_at)
+        for (const p of liveProviders) for (const b of p.buckets) if (b.resets_at && new Date(b.resets_at).getTime() > Date.now()) values.push(b.resets_at)
         values.sort(); return values.length ? backend.countdown(values[0]).replace("Resets in ", "") : "—"
     }
+    property var refreshStatus: backend.refreshStatus
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
     readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
@@ -128,7 +133,7 @@ ApplicationWindow {
         else if (dashboardMenu.opened) dashboardMenu.close()
         else if (trayAvailable) window.hide()
     }
-    Action { id: refreshAction; objectName: "refreshAction"; text: "Refresh usage"; shortcut: "Ctrl+R"; enabled: !window.state.loading; onTriggered: backend.refresh() }
+    Action { id: refreshAction; objectName: "refreshAction"; text: "Refresh usage"; shortcut: "Ctrl+R"; enabled: !window.state.loading && window.refreshStatus.retrySeconds === 0; onTriggered: backend.requestRefresh() }
     Action { id: settingsAction; objectName: "settingsAction"; text: "Settings"; shortcut: "Ctrl+,"; onTriggered: settings.open() }
     Action { id: quitAction; objectName: "quitAction"; text: "Quit Headroom"; shortcut: "Ctrl+Q"; onTriggered: Qt.quit() }
     Menu {
@@ -382,9 +387,9 @@ ApplicationWindow {
                                 text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground
                             }
                             Text {
-                                id: footerStatus
+                                id: footerStatus; objectName: "footerStatus"
                                 Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
-                                text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
+                                text: window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.refreshStatus.notice ? window.refreshStatus.notice : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
                                 color: window.state.status === "offline" ? Theme.red : Theme.muted
                                 HoverHandler { id: statusHover }
                                 ToolTip.visible: statusHover.hovered

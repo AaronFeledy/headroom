@@ -8,6 +8,8 @@ ColumnLayout {
     required property var bucket
     required property string providerName
     property bool compact: false
+    // A stale meter shows the last successful reading muted, without live pacing or actions.
+    property bool stale: false
     property var notificationViewport: null
     property bool presentingNotifications: false
     property color accent: Theme.purple
@@ -20,7 +22,9 @@ ColumnLayout {
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
     property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
     readonly property string providerDetails: bucket.detail_text || ""
-    readonly property string usageDetails: concern.detail + (providerDetails ? "\n\n" + providerDetails : "")
+    readonly property string usageDetails: (meter.stale
+        ? "Shown from the last successful reading. Pacing and warning colors resume when a fresh reading arrives."
+        : concern.detail) + (providerDetails ? "\n\n" + providerDetails : "")
     readonly property string billingDetails: {
         meter.clock
         const reset = backend.resetTimeLabel(bucket.resets_at || "")
@@ -54,7 +58,7 @@ ColumnLayout {
             Text {
                 id: severityLabel
                 objectName: "meterSeverity_" + meter.providerName + "_" + meter.bucket.id
-                visible: meter.warning && !meter.statusOnly
+                visible: meter.warning && !meter.statusOnly && !meter.stale
                 text: meter.concern.level || ""
                 color: meter.usageColor; font.pixelSize: 10; font.weight: Font.Medium
             }
@@ -65,7 +69,7 @@ ColumnLayout {
             visible: !meter.statusOnly
             Layout.alignment: meterHeader.inlineValue ? Qt.AlignRight : Qt.AlignLeft
             spacing: 5
-            Text { text: Math.round(meter.bucket.utilization) + "%"; color: meter.warning ? meter.usageColor : Theme.foreground; font.pixelSize: meter.compact ? 20 : 24; font.weight: Font.Medium; font.letterSpacing: -0.7 }
+            Text { objectName: "meterPercent_" + meter.providerName + "_" + meter.bucket.id; text: Math.round(meter.bucket.utilization) + "%"; color: meter.stale ? Theme.muted : meter.warning ? meter.usageColor : Theme.foreground; font.pixelSize: meter.compact ? 20 : 24; font.weight: Font.Medium; font.letterSpacing: -0.7 }
             Text { text: "used"; color: Theme.muted; font.pixelSize: 11; Layout.alignment: Qt.AlignBottom; Layout.bottomMargin: 4 }
         }
     }
@@ -87,7 +91,7 @@ ColumnLayout {
                 objectName: "meterFill_" + meter.providerName + "_" + meter.bucket.id
                 width: Math.max(0, parent.width * meter.bucket.utilization / 100)
                 height: parent.height; radius: 3
-                color: meter.usageColor
+                color: meter.stale ? Theme.comment : meter.usageColor
                 Behavior on width { objectName: "meterFillBehavior_" + meter.providerName + "_" + meter.bucket.id; enabled: !captureMode && !Theme.reducedMotion; NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
             }
             Repeater {
@@ -112,7 +116,7 @@ ColumnLayout {
         }
         Rectangle {
             objectName: "paceMarker_" + meter.providerName + "_" + meter.bucket.id
-            visible: meter.pace.available
+            visible: meter.pace.available && !meter.stale
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
             color: Theme.foreground; border.width: 1; border.color: Theme.background
@@ -133,14 +137,14 @@ ColumnLayout {
         id: meterFooter
         Layout.fillWidth: true
         // Keep countdowns or status beside pace when the complete footer fits, including accessories.
-        readonly property bool inlineReset: !meter.statusOnly && (resetLabel.visible || statusLabel.visible)
+        readonly property bool inlineReset: !meter.statusOnly && !meter.stale && (resetLabel.visible || statusLabel.visible)
             && width >= Math.ceil(paceLabel.implicitWidth) + Math.ceil(resetDetails.implicitWidth) + columnSpacing
         columns: inlineReset ? 2 : 1
         columnSpacing: 12; rowSpacing: 5
         Text {
             id: paceLabel
             objectName: "paceLabel_" + meter.providerName + "_" + meter.bucket.id
-            visible: !meter.statusOnly
+            visible: !meter.statusOnly && !meter.stale
             text: meter.pace.label
             Layout.fillWidth: true; elide: Text.ElideRight
             color: !meter.pace.available ? Theme.muted : meter.warning ? meter.usageColor
@@ -165,7 +169,14 @@ ColumnLayout {
                     id: resetLabel
                     objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
                     visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
-                    text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
+                    text: {
+                        meter.clock
+                        if (!meter.stale) return backend.countdown(meter.bucket.resets_at || "")
+                        // Historical reading: name the scheduled time without implying the allowance has refilled.
+                        const when = backend.resetTimeLabel(meter.bucket.resets_at || "")
+                        if (!when) return "No scheduled reset"
+                        return (new Date(meter.bucket.resets_at).getTime() > Date.now() ? "Resets " : "Reset was due ") + when
+                    }
                     color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
                     HoverHandler { id: resetHover }
                     MeterToolTip {

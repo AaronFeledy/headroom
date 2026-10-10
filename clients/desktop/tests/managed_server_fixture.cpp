@@ -116,6 +116,9 @@ int main(int argc, char **argv)
                         QTimer::singleShot(75, qApp, [] { QCoreApplication::exit(8); });
                 } else if (mode == QStringLiteral("controller-recovery") && request.startsWith("GET /api/v1/usage ")) {
                     body = R"([{"provider_name":"Claude","subtitle":null,"error":null,"needs_reauth":false,"is_success":true,"buckets":[{"id":"session","label":"Current","utilization":12,"resets_at":null,"status_text":null}]},{"provider_name":"Cursor","subtitle":null,"error":"Cursor session expired. Log in to cursor.com again.","needs_reauth":true,"is_success":false,"buckets":[]}])";
+                } else if (mode == QStringLiteral("controller-restart") && request.startsWith("GET /api/v1/usage ")) {
+                    // Live meters plus inert banked-reset metadata: the test only reads them.
+                    body = R"([{"provider_name":"Claude","subtitle":null,"error":null,"needs_reauth":false,"is_success":true,"buckets":[{"id":"session","label":"Current","utilization":12,"resets_at":null,"status_text":null}]},{"provider_name":"Codex","subtitle":null,"error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":{"available_count":2,"account_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"buckets":[{"id":"weekly","label":"Weekly","utilization":96,"resets_at":null,"status_text":null}]}])";
                 } else if (mode == QStringLiteral("controller-recovery") && request.startsWith("PUT /api/v1/providers/cursor/credentials ")) {
                     body = R"({"provider":"Cursor","refetched":true,"usage":{"provider_name":"Cursor","subtitle":null,"error":null,"needs_reauth":false,"is_success":true,"buckets":[{"id":"weekly","label":"Weekly","utilization":22,"resets_at":null,"status_text":null}]}})";
                 } else if (request.startsWith("GET /api/v1/usage ")) {

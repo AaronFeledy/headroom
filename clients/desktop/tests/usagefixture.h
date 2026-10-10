@@ -2,12 +2,17 @@
 // Synthetic readings are linked into tests only, never into the desktop app.
 #include "controller.h"
 #include "usage.h"
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <utility>
 
 namespace TestUsage {
+inline CredentialServiceOptions disabledCredentials() {
+    CredentialServiceOptions options; options.enabled = false; return options;
+}
+
 inline QByteArray snapshot() {
     // Synthetic readings, using the real API's labels and variable bucket shapes.
     // Actual accounts may expose other model-specific or billable buckets.
@@ -33,6 +38,34 @@ inline QByteArray snapshot() {
         providers.append(provider);
     }
     return QJsonDocument(providers).toJson();
+}
+
+// Synthetic fetch metadata following the server's optional fetch_status contract.
+// failures maps provider name -> failure_kind; authStates overrides auth.state.
+inline QByteArray snapshotWithFetchStatus(const QString &fetchedAt, const QString &epoch,
+                                          const QHash<QString, QString> &failures = {},
+                                          const QHash<QString, QString> &authStates = {},
+                                          const QString &error = QStringLiteral("Request timed out")) {
+    auto providers = QJsonDocument::fromJson(snapshot()).array();
+    for (int i = 0; i < providers.size(); ++i) {
+        auto provider = providers[i].toObject();
+        const QString name = provider["provider_name"].toString();
+        const bool failed = failures.contains(name);
+        provider["auth"] = QJsonObject{{"state", authStates.value(name, QStringLiteral("signed_in"))},
+            {"source", QJsonObject{{"kind", "cli"}, {"name", "Sample CLI"}}},
+            {"sign_in_command", QJsonValue::Null}, {"sign_in_url", QJsonValue::Null},
+            {"accepts_browser_credentials", false}, {"checked", QJsonArray{}}};
+        provider["fetch_status"] = QJsonObject{{"fetched_at", fetchedAt},
+            {"failure_kind", failed ? QJsonValue(failures.value(name)) : QJsonValue(QJsonValue::Null)},
+            {"credential_epoch", epoch.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(epoch)}};
+        if (failed) {
+            provider["error"] = error; provider["is_success"] = false; provider["buckets"] = QJsonArray{};
+            provider["rate_limit_reset_credits"] = QJsonValue::Null;
+            provider["needs_reauth"] = failures.value(name) == QStringLiteral("auth");
+        }
+        providers[i] = provider;
+    }
+    return QJsonDocument(providers).toJson(QJsonDocument::Compact);
 }
 
 inline QByteArray snapshotWithCodex(double sessionUsed, double weeklyUsed, int resetCount, const QString &weeklyReset) {
@@ -62,7 +95,7 @@ inline QByteArray snapshotWithCodex(double sessionUsed, double weeklyUsed, int r
 class ControllerFixture final : public Controller {
 public:
     explicit ControllerFixture(const QString &settingsPath, QByteArray payload = TestUsage::snapshot())
-        : Controller(settingsPath, nullptr, false, {}, disabledCredentials(), {}, false), m_payload(std::move(payload)) {
+        : Controller(settingsPath, nullptr, false, {}, TestUsage::disabledCredentials(), {}, false), m_payload(std::move(payload)) {
         QTimer::singleShot(0, this, &ControllerFixture::refresh);
     }
     void refresh() override {
@@ -70,13 +103,12 @@ public:
         if (!Usage::parse(m_payload, providers)) qFatal("Invalid test usage fixture");
         acceptSnapshot(providers);
     }
+    // The explicit action stays synthetic too: UI fixtures never POST anywhere.
+    void requestRefresh() override { refresh(); }
     void replaceSnapshot(QByteArray payload) {
         m_payload = std::move(payload);
         refresh();
     }
 private:
-    static CredentialServiceOptions disabledCredentials() {
-        CredentialServiceOptions options; options.enabled = false; return options;
-    }
     QByteArray m_payload;
 };

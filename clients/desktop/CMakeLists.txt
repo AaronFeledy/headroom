@@ -71,7 +71,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
+    controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -234,6 +234,22 @@ if(BUILD_TESTING)
         CREDENTIAL_FIXTURE_PATH="$<TARGET_FILE:headroom-credential-helper-fixture>"
         SSH_FIXTURE_PATH="$<TARGET_FILE:headroom-ssh-fixture>")
     add_dependencies(headroom-tests headroom-managed-server-fixture headroom-credential-helper-fixture headroom-ssh-fixture)
+    set(outage_test_targets)
+    foreach(subject IN ITEMS connectionrecovery providerreadings readingidentity refreshschedule refreshtransport)
+        set(target headroom-${subject}-tests)
+        list(APPEND outage_test_targets ${target})
+        qt_add_executable(${target} tests/test_${subject}.cpp)
+        set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE FALSE)
+        target_link_libraries(${target} PRIVATE headroom-core Qt6::Test)
+        target_compile_definitions(${target} PRIVATE
+            MANAGED_FIXTURE_PATH="$<TARGET_FILE:headroom-managed-server-fixture>"
+            CREDENTIAL_FIXTURE_PATH="$<TARGET_FILE:headroom-credential-helper-fixture>"
+            SSH_FIXTURE_PATH="$<TARGET_FILE:headroom-ssh-fixture>")
+        add_dependencies(${target} headroom-managed-server-fixture headroom-credential-helper-fixture headroom-ssh-fixture)
+        add_test(NAME ${target} COMMAND ${target}
+            -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/${target}.xml,junitxml")
+        set_tests_properties(${target} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
     qt_add_executable(headroom-ui-tests tests/test_ui.cpp)
     set_target_properties(headroom-ui-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-ui-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets Qt6::QuickControls2)
@@ -289,13 +305,13 @@ if(BUILD_TESTING)
     set_tests_properties(headroom-credential-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(APPLE)
         foreach(tls_target IN ITEMS headroom-managed-server-fixture headroom-appinfo-tests headroom-settings-tests headroom-login-tests
-                headroom-tests headroom-managedserver-tests headroom-credential-tests)
+                headroom-tests ${outage_test_targets} headroom-managedserver-tests headroom-credential-tests)
             add_dependencies(${tls_target} headroom-macos-tls-fixture)
             target_include_directories(${tls_target} PRIVATE "${HEADROOM_MACOS_TLS_FIXTURE_DIR}")
         endforeach()
         # SecureTransport otherwise imports fixture server identities into the
         # login keychain, which can block unattended native test runners.
-        set_property(TEST headroom-appinfo-tests headroom-tests headroom-managedserver-tests
+        set_property(TEST headroom-appinfo-tests headroom-tests ${outage_test_targets} headroom-managedserver-tests
             headroom-credential-tests APPEND PROPERTY ENVIRONMENT
             "QT_SSL_USE_TEMPORARY_KEYCHAIN=1")
     endif()
