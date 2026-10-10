@@ -67,6 +67,14 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 ## Endpoints
 
 - `GET /api/v1/usage` - array of cached provider usage entries.
+- `POST /api/v1/usage/refresh` - asynchronously request an enabled-provider refresh
+  with an empty body and no query. Returns `202` with `status: "accepted"` and
+  `retry_after_seconds: 15`, or `status: "coalesced"` and a positive retry delay
+  while a round is outstanding. Admissions have a process-wide 15-second cooldown:
+  once the outstanding round completes, early requests return `429`,
+  `error: "refresh rate limited"`, a positive `retry_after_seconds`, and
+  `Retry-After`. Unavailable/stopping pollers or no enabled providers return `503`.
+  Browser-origin headers are rejected; normal bearer/SSH authorization applies.
 - `GET /api/v1/usage/{provider}` - one cached provider entry, for example `Claude` or `codex`.
 - `GET /api/v1/health` - server status, version, and provider health.
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one of `cookie` or `access_token`. Cookies may include `source_name` (trimmed, 1–40 characters, no controls); access tokens may not.
@@ -116,6 +124,26 @@ browser credentials and populates `checked`. A signed-in credential can coexist
 with a network or upstream error. Existing fields remain unchanged; Cursor's
 `needs_reauth` is true when signed out or expired, and `reauth_command` mirrors
 its sign-in command.
+
+Usage reads remain cache-only. Providers run independently, with at most one
+fetch per provider and a 30-second service deadline for background attempts.
+Read-only usage network failures and HTTP 408/5xx retry after 10, 20, and 40
+seconds (capped by the configured polling interval), then resume normal cadence.
+A successful attempt resets that recovery episode; requesting refresh does not.
+HTTP 429 deadlines apply to scheduled, explicit, and synchronous fetches. Valid
+`Retry-After` seconds/dates are never shortened; otherwise backoff starts at the
+larger of the configured interval or 60 seconds and doubles up to the larger of
+that interval or five minutes. OAuth refresh, credential, parsing, and trust
+failures do not receive accelerated retries.
+
+Polled entries optionally include `fetch_status`: `fetched_at` is the actual
+attempt-completion UTC RFC3339Nano timestamp; `failure_kind` is `null` on success
+or `transient`, `rate_limited`, `auth`, or `other` on failure. `credential_epoch`
+is a nullable, opaque process-secret HMAC identity for the credential/account/source
+used by that attempt, changing on credential rotation or server restart. Unknown
+or mixed credential contexts use `null`; clients must not associate older meters
+with them. Failure responses still have `is_success: false`, empty `buckets`, and
+null `rate_limit_reset_credits`.
 
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, public HTTP endpoints other than
 the TLS proof endpoint require

@@ -52,6 +52,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.route(w, r, http.MethodGet, h.usageCollection)
 		return
 	}
+	if path == "/api/v1/usage/refresh" {
+		h.route(w, r, http.MethodPost, h.refreshUsage)
+		return
+	}
 	if strings.HasPrefix(path, "/api/v1/usage/") && strings.TrimPrefix(path, "/api/v1/usage/") != "" {
 		h.route(w, r, http.MethodGet, h.providerUsage)
 		return
@@ -285,13 +289,13 @@ func (h *handler) cursorCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	h.credentialMu.Lock()
 	defer h.credentialMu.Unlock()
-	if request.cookie != "" {
-		h.cursor.SetDesktopCookie(request.cookie, request.sourceName)
-	} else if err := h.cursor.SetAccessToken(request.accessToken); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid access token")
-		return
-	}
-	h.writeRefetchedProvider(w, r, "cursor")
+	h.writeRefetchedProvider(w, r, "cursor", func() error {
+		if request.cookie != "" {
+			h.cursor.SetDesktopCookie(request.cookie, request.sourceName)
+			return nil
+		}
+		return h.cursor.SetAccessToken(request.accessToken)
+	})
 }
 
 func (h *handler) grokCredentials(w http.ResponseWriter, r *http.Request) {
@@ -310,12 +314,22 @@ func (h *handler) grokCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	h.credentialMu.Lock()
 	defer h.credentialMu.Unlock()
-	h.grok.SetCookieHeader(request.cookie)
-	h.writeRefetchedProvider(w, r, "grok")
+	h.writeRefetchedProvider(w, r, "grok", func() error {
+		h.grok.SetCookieHeader(request.cookie)
+		return nil
+	})
 }
 
-func (h *handler) writeRefetchedProvider(w http.ResponseWriter, r *http.Request, providerName string) {
-	entry, ok, err := h.poller.PollProvider(r.Context(), providerName)
+func (h *handler) writeRefetchedProvider(w http.ResponseWriter, r *http.Request, providerName string, update func() error) {
+	var setterErr error
+	entry, ok, err := h.poller.UpdateCredentials(r.Context(), providerName, func() error {
+		setterErr = update()
+		return setterErr
+	})
+	if setterErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid access token")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, providerName+" refetch failed")
 		return
@@ -324,7 +338,7 @@ func (h *handler) writeRefetchedProvider(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, credentialResponse{Provider: entry.Data.ProviderName, Refetched: true, Usage: entry.Data})
+	writeJSON(w, http.StatusOK, credentialResponse{Provider: entry.Data.ProviderName, Refetched: !entry.FetchedAt.IsZero(), Usage: entry.Data})
 }
 
 type credentialRequest struct {

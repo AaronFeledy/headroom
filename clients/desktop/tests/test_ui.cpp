@@ -7,6 +7,8 @@
 #include "updateservice.h"
 #include "remoteupdate.h"
 #include "palette.h"
+#include "scripted_backend.h"
+#include "http_assertions.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QQmlApplicationEngine>
@@ -1435,6 +1437,179 @@ private slots:
                 }
             }
         }
+    }
+    static void loadDashboard(QQmlApplicationEngine &engine, Controller &controller, StartupService &startup, AppInfo &appInfo,
+                              UpdateService &updateService, RemoteUpdateService &remoteUpdate, bool trayAvailable) {
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", trayAvailable);
+        engine.rootContext()->setContextProperty("startHidden", trayAvailable);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+    }
+    static QString capturePath(const QTemporaryDir &dir, const QString &name) {
+        const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!requested.isEmpty()) { QDir().mkpath(requested); return QDir(requested).filePath(name); }
+        return dir.filePath(name);
+    }
+    static void settleFrame(QQuickWindow *window) {
+        QSignalSpy frame(window, &QQuickWindow::frameSwapped); window->update(); QTRY_VERIFY(!frame.isEmpty());
+    }
+    void staleMetersStayVisibleDuringTransientProviderFailure() {
+        QTemporaryDir dir;
+        const auto stamp = [](int offset) { return QDateTime::currentDateTimeUtc().addSecs(offset).toString(Qt::ISODateWithMs); };
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithFetchStatus(stamp(0), "epoch-a"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto marker = findItem(window->contentItem(), "paceMarker_Claude_session"); QVERIFY(marker); QVERIFY(marker->isVisible());
+        auto fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
+        QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
+        const int liveAttention = window->property("attention").toInt();
+        // Claude and ChatGPT fail transiently with the same credential epoch while the server stays reachable.
+        controller.replaceSnapshot(TestUsage::snapshotWithFetchStatus(stamp(1), "epoch-a", {{"Claude", "transient"}, {"Codex", "transient"}}));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto meter = findItem(window->contentItem(), "meter_Claude_session");
+        QVERIFY2(meter, "a transiently failed provider must keep its last successful meters on screen");
+        QTRY_VERIFY(meter->isVisible());
+        auto age = findItem(window->contentItem(), "providerStaleAge_Claude"); QVERIFY(age); QTRY_VERIFY(age->isVisible());
+        QVERIFY2(age->property("text").toString().startsWith("Last successful reading just now"), qPrintable(age->property("text").toString()));
+        auto error = findItem(window->contentItem(), "providerStaleError_Claude"); QVERIFY(error); QVERIFY(error->isVisible());
+        QCOMPARE(error->property("text").toString(), QString("Request timed out"));
+        auto failedTitle = findItem(window->contentItem(), "providerErrorTitle_Claude"); QVERIFY(failedTitle); QVERIFY(!failedTitle->isVisible());
+        // Historical percentages are muted; live pacing, warnings, and actions wait for fresh data.
+        marker = findItem(window->contentItem(), "paceMarker_Claude_session"); QVERIFY(marker); QVERIFY(!marker->isVisible());
+        auto pace = findItem(window->contentItem(), "paceLabel_Claude_session"); QVERIFY(pace); QVERIFY(!pace->isVisible());
+        auto percent = findItem(window->contentItem(), "meterPercent_Claude_session"); QVERIFY(percent);
+        QCOMPARE(percent->property("color").value<QColor>(), QColor("#b6b9d2"));
+        fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
+        QCOMPARE(fill->property("color").value<QColor>(), QColor("#6272a4"));
+        QVERIFY(fill->width() > 0);
+        auto reset = findItem(window->contentItem(), "meterReset_Claude_session"); QVERIFY(reset);
+        QVERIFY2(reset->property("text").toString().startsWith("Resets "), qPrintable(reset->property("text").toString()));
+        auto banked = findItem(window->contentItem(), "bankedResets_Codex");
+        QVERIFY(!banked || !banked->isVisible());
+        auto useReset = findItem(window->contentItem(), "useBankedReset_Codex");
+        QVERIFY(!useReset || !useReset->isVisible());
+        // Stale cards never count as attention or health; only the raw model does.
+        QCOMPARE(window->property("healthy").toInt(), 2);
+        QCOMPARE(window->property("attention").toInt(), liveAttention);
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-stale-wide.png")));
+        window->resize(460, 860); QTRY_COMPARE(window->width(), 460); QTest::qWait(100);
+        meter = findItem(window->contentItem(), "meter_Claude_session"); QVERIFY(meter);
+        QTRY_COMPARE(meter->width(), meter->parentItem()->width());
+        age = findItem(window->contentItem(), "providerStaleAge_Claude"); QVERIFY(age); QVERIFY(age->isVisible());
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-stale-compact.png")));
+        window->resize(900, 860); QTRY_COMPARE(window->width(), 900);
+        // An expired sign-in is not a temporary outage: the usual sign-in card returns.
+        controller.replaceSnapshot(TestUsage::snapshotWithFetchStatus(stamp(2), "epoch-a", {{"Claude", "auth"}}, {{"Claude", "expired"}}, "Sign-in expired"));
+        QTRY_VERIFY(!findItem(window->contentItem(), "meter_Claude_session"));
+        failedTitle = findItem(window->contentItem(), "providerErrorTitle_Claude"); QVERIFY(failedTitle); QVERIFY(failedTitle->isVisible());
+        QCOMPARE(failedTitle->property("text").toString(), QString("Sign-in expired"));
+        // Recovery restores live meters and clears the stale notice.
+        controller.replaceSnapshot(TestUsage::snapshotWithFetchStatus(stamp(3), "epoch-a"));
+        QTRY_VERIFY(findItem(window->contentItem(), "paceMarker_Claude_session") && findItem(window->contentItem(), "paceMarker_Claude_session")->isVisible());
+        age = findItem(window->contentItem(), "providerStaleAge_Claude"); QVERIFY(age); QVERIFY(!age->isVisible());
+        percent = findItem(window->contentItem(), "meterPercent_Claude_session"); QVERIFY(percent);
+        QCOMPARE(percent->property("color").value<QColor>(), QColor("#f8f8f2"));
+    }
+    void refreshActionRequestsProviderRefreshThenReadsCache() {
+        QTemporaryDir dir; ScriptedBackend backend; QVERIFY(backend.listen());
+        QString fetchedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        backend.respond = [&](const QByteArray &request) {
+            if (request.startsWith("POST /api/v1/usage/refresh ")) return httpResponse(202, R"({"status":"accepted","retry_after_seconds":15})");
+            return httpResponse(200, TestUsage::snapshotWithFetchStatus(fetchedAt, "epoch-a"));
+        };
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(dir.filePath("settings.json"), nullptr, false, {}, credentials);
+        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, true);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        TrayPopup popup(window, true);
+        window->resize(900, 800); popup.show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(backend.count("POST "), 0);
+        const int readsBefore = backend.count("GET /api/v1/usage ");
+        QTest::keyClick(window, Qt::Key_R, Qt::ControlModifier);
+        // Refresh asks the server to refetch providers instead of rereading its cache.
+        QTRY_COMPARE(backend.count("POST /api/v1/usage/refresh "), 1);
+        const QByteArray post = backend.requests.last();
+        QVERIFY(post.startsWith("POST /api/v1/usage/refresh HTTP/1.1\r\n"));
+        QVERIFY(HttpAssertions::hasHeader(post, "Content-Length", "0"));
+        QVERIFY(HttpAssertions::hasHeader(post, "Accept", "application/json"));
+        QVERIFY(!HttpAssertions::hasHeader(post, "Authorization"));
+        QTRY_VERIFY(!controller.state()["loading"].toBool());
+        auto refreshAction = window->findChild<QObject *>("refreshAction"); QVERIFY(refreshAction);
+        QTRY_VERIFY(!refreshAction->property("enabled").toBool());
+        auto status = findItem(window->contentItem(), "footerStatus"); QVERIFY(status);
+        QTRY_VERIFY2(status->property("text").toString().contains("Refresh requested"), qPrintable(status->property("text").toString()));
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-refresh-requested.png")));
+        QTest::keyClick(window, Qt::Key_R, Qt::ControlModifier);
+        QTest::qWait(100);
+        QCOMPARE(backend.count("POST /api/v1/usage/refresh "), 1);
+        // The first bounded cache read follows about two seconds after acceptance.
+        QTRY_VERIFY_WITH_TIMEOUT(backend.count("GET /api/v1/usage ") > readsBefore, 3500);
+        QCOMPARE(backend.count("POST /api/v1/usage/refresh "), 1);
+    }
+    void backendOutageShowsStaleMetersWithOfflineChrome() {
+        QTemporaryDir dir; ScriptedBackend backend; QVERIFY(backend.listen());
+        bool reachable = true;
+        backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(200, TestUsage::snapshot()) : QByteArray(); };
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(dir.filePath("settings.json"), nullptr, false, {}, credentials);
+        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QTRY_VERIFY(marker->isVisible());
+        reachable = false; controller.refresh();
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
+        QTRY_VERIFY(!controller.state()["loading"].toBool());
+        // Every card keeps this connection's last reading, labelled, under the offline chrome.
+        for (const QString name : {"Claude", "Codex", "Cursor", "Grok"}) {
+            auto age = findItem(window->contentItem(), "providerStaleAge_" + name); QVERIFY2(age, qPrintable(name)); QTRY_VERIFY(age->isVisible());
+            auto error = findItem(window->contentItem(), "providerStaleError_" + name); QVERIFY(error);
+            QCOMPARE(error->property("text").toString(), QString("The usage server could not be reached."));
+            auto card = findItem(window->contentItem(), "providerCard_" + name); QVERIFY(card);
+            QTRY_COMPARE(QQmlProperty(card, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        }
+        auto meter = findItem(window->contentItem(), "meter_Grok_weekly"); QVERIFY(meter); QVERIFY(meter->isVisible());
+        marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QVERIFY(!marker->isVisible());
+        QCOMPARE(window->property("healthy").toInt(), 0);
+        auto footerBorder = findItem(window->contentItem(), "footerBorder"); QVERIFY(footerBorder);
+        QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#ff5555"));
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-stale-outage.png")));
+        reachable = true; controller.refresh();
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
+        auto age = findItem(window->contentItem(), "providerStaleAge_Grok"); QVERIFY(age); QTRY_VERIFY(!age->isVisible());
+        marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QTRY_VERIFY(marker->isVisible());
+        QCOMPARE(window->property("healthy").toInt(), 4);
     }
 };
 int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QQuickWindow::setDefaultAlphaBuffer(true); QApplication app(argc, argv); app.setPalette(headroomPalette()); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }

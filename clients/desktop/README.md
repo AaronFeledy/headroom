@@ -194,14 +194,45 @@ browser, or shared sign-in, show where to sign in, and offer **Copy command** or
 encrypted, locked, expired, or unreadable sources. Older servers retain the
 existing error message and Cursor sign-in link.
 
-The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,
-not a forced provider refresh. Polling defaults to 60 seconds and can be adjusted
-in settings. Requests time out, refuse redirects, and retain last
-readings on failure with a visible offline banner. Empty and malformed responses,
-expired provider authentication, and rejected bearer tokens have separate states.
-Failures back off exponentially up to five minutes (or the configured interval
-if longer), with normal polling restored after success. Manual Refresh bypasses
-the wait.
+The client polls `GET /api/v1/usage`, the server's current cache. Polling
+defaults to 60 seconds and can be adjusted in settings. Requests time out, refuse
+redirects, and retain last readings on failure with a visible offline banner.
+Empty and malformed responses, expired provider authentication, and rejected
+bearer tokens have separate states. Plain network failures retry after 5, 10, 20,
+40, 60, 120, 240, and then 300 seconds; rejected tokens, HTTP errors, and
+certificate failures keep the slower exponential backoff up to five minutes (or
+the configured interval if longer). Normal polling resumes after success. While
+the server reports a provider as transiently failed, the cache is reread every
+15 seconds (or the configured interval if shorter) for up to five minutes.
+
+**Refresh** (the footer button, Ctrl+R, and the tray menu) asks the server to
+refetch every provider with an empty-body `POST /api/v1/usage/refresh` over the
+selected Local, HTTP(S), or SSH connection, using the same address, token, and
+certificate trust as usage reads. A `202` acceptance is not a fresh reading:
+Headroom then rereads the cache at 2, 5, 10, 20, 35, and 45 seconds, one request
+at a time, and stops early once every provider reports a newer fetch. The server
+rate-limits refreshes (normally 15 seconds, longer while every provider is rate
+limited); the Refresh control stays disabled for the full returned deadline, and
+a `429` answer still reads the cache once.
+Servers without the endpoint (HTTP `404`/`405`, or the fixed SSH receiver's
+`400 invalid request`) simply reread the cache and show a short notice. The
+request is never retried automatically, and SSH never falls back to HTTP.
+Startup, reconnection, settings changes, and update checks keep using plain
+cache reads.
+
+When a provider fails only temporarily, its card keeps the last successful
+meters as a clearly labelled stale reading: muted percentages and bars, no pace
+marker, pacing text, warning labels, or banked-reset controls, scheduled reset
+times instead of live countdowns, and a **Last successful reading …** line with
+the current error. A reading is reused only while the server reports the failure
+as transient or rate limited for the same credential epoch and the provider is
+still signed in, or during a backend outage for the connection that produced it.
+Sign-in changes, account or source changes, a rejected token or certificate,
+provider removal, and connection changes discard it, as does a reading older
+than a day. Servers that omit `fetch_status` metadata never show provider-error
+stale readings. The raw model behind the CLI bridge, the tray, warning tiers, and
+notifications never carries stale data: while the server is unreachable, those
+entries report the outage with empty meters.
 
 Configuration is saved atomically beside the server's `config.yaml`:
 `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json` on Linux and macOS,
@@ -261,7 +292,8 @@ The tooltip has two lines: provider/primary usage, then reset time and warning
 level when needed. Connection errors replace those details with a short status.
 When the server cannot be reached, a red X replaces the tray's provider logo.
 Offline dashboard cards, the empty connection panel, and the footer divider turn
-red while retaining the last readings. Their normal appearance returns on recovery.
+red while showing the last readings as labelled stale meters. Their normal
+appearance returns on recovery.
 
 When the ring or secondary dot enters Critical, the tray briefly catches fire
 for four seconds, then flashes slowly for three minutes. Opening or focusing

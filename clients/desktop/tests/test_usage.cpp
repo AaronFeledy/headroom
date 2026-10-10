@@ -7,17 +7,17 @@
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <cmath>
+using TestUsage::disabledCredentials;
+
 class UsageTest : public QObject {
     Q_OBJECT
-    static CredentialServiceOptions disabledCredentials() {
-        CredentialServiceOptions options; options.enabled = false; return options;
-    }
 private slots:
     void initTestCase() {
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
@@ -689,8 +689,22 @@ private slots:
         controller.moveProvider("unknown", "Grok", false);
         QCOMPARE(controller.primary(), QString("Grok"));
         const auto previous = controller.providers();
+        // Every backend failure masks raw success in place: same providers and order,
+        // no meters or action metadata, and a secret-free error for IPC consumers.
+        auto expectMasked = [&] {
+            const auto current = controller.providers();
+            QCOMPARE(current.size(), previous.size());
+            for (int i = 0; i < current.size(); ++i) {
+                const auto provider = current[i].toMap();
+                QCOMPARE(provider["provider_name"].toString(), previous[i].toMap()["provider_name"].toString());
+                QVERIFY(!provider["is_success"].toBool()); QVERIFY(provider["buckets"].toList().isEmpty());
+                QVERIFY(provider["rate_limit_reset_credits"].isNull());
+                QCOMPARE(provider["error"].toString(), controller.state()["message"].toString());
+                QVERIFY(!provider["error"].toString().contains("test-secret"));
+            }
+        };
         status = 401; body = "{}"; received.clear(); controller.refresh();
-        QTRY_COMPARE(controller.state()["status"].toString(), "offline"); QCOMPARE(controller.providers(), previous);
+        QTRY_COMPARE(controller.state()["status"].toString(), "offline"); expectMasked();
         QVERIFY(!controller.state()["message"].toString().contains("test-secret"));
         QCOMPARE(controller.state()["errorKind"].toString(), QString("auth"));
         QCOMPARE(controller.state()["retryAttempt"].toInt(), 1);
@@ -712,7 +726,7 @@ private slots:
         QVERIFY(!restored.settings().contains("token"));
         received.clear(); status = 200; body = "[{}]"; controller.refresh();
         QTRY_COMPARE(controller.state()["status"].toString(), "offline"); QTRY_VERIFY(!controller.state()["loading"].toBool());
-        QCOMPARE(controller.providers(), previous);
+        expectMasked();
         QCOMPARE(controller.state()["errorKind"].toString(), QString("malformed"));
         status = 200; body = TestUsage::snapshot(); controller.refresh();
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
@@ -758,7 +772,10 @@ private slots:
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(usageRequests >= 1 && usageRequests <= 2); // Qt may transparently retry one idempotent GET.
         QTRY_VERIFY(healthRequests >= 2);
-        QVERIFY(controller.state()["retrySeconds"].toInt() > 100);
+        // A usage transport failure is a network failure: the first retry waits
+        // five seconds rather than hammering the probe, and never fires at once.
+        QVERIFY(controller.state()["retrySeconds"].toInt() > 0);
+        QVERIFY(controller.state()["retrySeconds"].toInt() <= 5);
         QVERIFY(controller.providers().isEmpty());
         QCOMPARE(controller.state()["lastGood"].toLongLong(), 0);
         QCOMPARE(controller.diagnosticText().count("Requesting usage snapshot."), 1);

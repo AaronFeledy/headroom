@@ -1,9 +1,11 @@
 package grok
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -111,6 +113,10 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 		}
 		if ready && err == nil {
 			data, err = p.fetchWithToken(ctx, data, creds)
+			var failure *usage.FetchFailure
+			if errors.As(err, &failure) {
+				data.FetchFailure = failure
+			}
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -123,6 +129,9 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 	}
 	webAdded, webErr := p.populateWebUsage(ctx, &data)
 	if webErr != nil {
+		if ctx.Err() == nil && err == nil && data.Error == nil && len(data.Buckets) > 0 {
+			return data, nil
+		}
 		return data, webErr
 	}
 	if webAdded {
@@ -144,9 +153,10 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 	query.Set("format", "credits")
 	parsedURL.RawQuery = query.Encode()
 	requestURL := parsedURL.String()
+	data.CredentialEpoch = usage.CredentialEpoch(providerName, p.credentialsPath, creds.entryKey, creds.accessToken, creds.userID)
 	billingResp, err := p.sendGet(ctx, requestURL, creds)
 	if err != nil {
-		return data, err
+		return data, usage.TransportFailure(err)
 	}
 
 	if billingResp.StatusCode == http.StatusUnauthorized || billingResp.StatusCode == http.StatusForbidden {
@@ -158,9 +168,10 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 			return p.refreshError(data, err)
 		}
 		creds = refreshed
+		data.CredentialEpoch = usage.CredentialEpoch(providerName, p.credentialsPath, creds.entryKey, creds.accessToken, creds.userID)
 		billingResp, err = p.sendGet(ctx, requestURL, creds)
 		if err != nil {
-			return data, err
+			return data, usage.TransportFailure(err)
 		}
 	}
 
@@ -171,13 +182,23 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 		return reauth(data), nil
 	}
 	if billingResp.StatusCode < http.StatusOK || billingResp.StatusCode >= http.StatusMultipleChoices {
+		data.FetchFailure = usage.HTTPFailure(billingResp)
 		if err := drainAndClose(billingResp); err != nil {
 			return data, err
 		}
 		data.Error = strPtr(fmt.Sprintf("Grok billing request failed (%d). Try again later.", billingResp.StatusCode))
 		return data, nil
 	}
-	if err := mapBilling(billingResp.Body, &data, p.now()); err != nil {
+	body, readErr := io.ReadAll(billingResp.Body)
+	if readErr != nil {
+		data.FetchFailure = usage.TransportFailure(readErr)
+		if closeErr := drainAndClose(billingResp); closeErr != nil {
+			return data, closeErr
+		}
+		return data, data.FetchFailure
+	}
+	if err := mapBilling(bytes.NewReader(body), &data, p.now()); err != nil {
+		data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
 		if closeErr := drainAndClose(billingResp); closeErr != nil {
 			return data, closeErr
 		}
@@ -192,6 +213,7 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 }
 
 func (p *Provider) authError(data usage.UsageData, err error) (usage.UsageData, error) {
+	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return data, err
 	}
@@ -203,6 +225,7 @@ func (p *Provider) authError(data usage.UsageData, err error) (usage.UsageData, 
 }
 
 func (p *Provider) refreshError(data usage.UsageData, err error) (usage.UsageData, error) {
+	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return data, err
 	}
@@ -224,6 +247,7 @@ func baseUsageData() usage.UsageData {
 }
 
 func reauth(data usage.UsageData) usage.UsageData {
+	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureAuth}
 	data.Error = strPtr("Grok auth expired. Run `grok login` again.")
 	data.NeedsReauth = true
 	return data

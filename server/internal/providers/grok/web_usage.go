@@ -31,8 +31,34 @@ func (p *Provider) populateWebUsage(ctx context.Context, data *usage.UsageData) 
 	if cookieHeader == "" {
 		return false, nil
 	}
+	data.CredentialEpoch = nil
 	bucket, statusCode, grpcStatus, err := p.fetchWebUsage(ctx, cookieHeader)
 	if err != nil {
+		var secondary *usage.FetchFailure
+		if !errors.As(err, &secondary) {
+			secondary = usage.TransportFailure(err)
+		}
+		if data.FetchFailure == nil {
+			data.FetchFailure = secondary
+		} else {
+			switch secondary.Kind {
+			case usage.FailureRateLimited:
+				merged := *data.FetchFailure
+				switch merged.Kind {
+				case usage.FailureRateLimited:
+					merged.RateLimitFallback = merged.RateLimitFallback || merged.RetryAfter.IsZero()
+				case usage.FailureTransient:
+					merged.Kind = usage.FailureRateLimited
+				case usage.FailureAuth, usage.FailureOther:
+				}
+				merged.RateLimitFallback = merged.RateLimitFallback || secondary.RateLimitFallback || secondary.RetryAfter.IsZero()
+				if secondary.RetryAfter.After(merged.RetryAfter) {
+					merged.RetryAfter = secondary.RetryAfter
+				}
+				data.FetchFailure = &merged
+			case usage.FailureTransient, usage.FailureAuth, usage.FailureOther:
+			}
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return false, err
 		}
@@ -47,6 +73,8 @@ func (p *Provider) populateWebUsage(ctx context.Context, data *usage.UsageData) 
 	}
 	if data.Error != nil {
 		replacement := baseUsageData().WithBuckets([]usage.Bucket{*bucket})
+		replacement.FetchFailure = data.FetchFailure
+		replacement.CredentialEpoch = usage.CredentialEpoch(providerName, "browser", cookieHeader)
 		*data = replacement
 		return true, nil
 	}
@@ -74,7 +102,13 @@ func (p *Provider) fetchWebUsage(ctx context.Context, cookieHeader string) (*usa
 	grpcStatus := resp.Header.Get("Grpc-Status")
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || (grpcStatus != "" && grpcStatus != "0") {
 		if err := drainAndClose(resp); err != nil {
+			if resp.StatusCode == http.StatusTooManyRequests {
+				err = errors.Join(usage.HTTPFailure(resp), err)
+			}
 			return nil, resp.StatusCode, grpcStatus, err
+		}
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			return nil, resp.StatusCode, grpcStatus, usage.HTTPFailure(resp)
 		}
 		return nil, resp.StatusCode, grpcStatus, nil
 	}

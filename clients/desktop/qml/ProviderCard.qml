@@ -14,6 +14,9 @@ Rectangle {
     property bool presentingNotifications: false
     property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
+    // A failed provider may carry its last successful reading as stale meters.
+    readonly property bool stale: failed && provider.stale === true
+    readonly property string readingAge: { card.clock; return backend.readingAgeLabel(provider.last_reading_at || 0) }
     readonly property var loginCopy: { backend.settings; return backend.loginCopy(provider) }
     readonly property bool hasAuthCopy: !!loginCopy.title
     readonly property bool cursorLoginRequired: failed && name === "Cursor"
@@ -248,37 +251,64 @@ Rectangle {
                 MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
             }
         }
-        GridLayout {
-            id: meters
-            visible: !card.failed
+        ColumnLayout {
+            id: meterColumn
+            visible: !card.failed || card.stale
             Layout.fillWidth: true
-            // Use the space the card supplies, not this grid's minimum width:
-            // its old column count can otherwise prevent it from shrinking.
-            readonly property real availableWidth: body.width - (card.stacked ? 0 : 138 + body.columnSpacing)
-            columns: Math.max(1, Math.min(card.provider.buckets.length - (card.stacked ? 1 : 0), Math.floor((availableWidth + columnSpacing) / (190 + columnSpacing))))
-            columnSpacing: 24; rowSpacing: card.compact ? 16 : 22; uniformCellWidths: true
-            Repeater {
-                model: card.provider.buckets
-                Meter {
-                    required property var modelData
-                    required property int index
-                    bucket: modelData; providerName: card.name; accent: card.accent
-                    compact: card.compact
-                    notificationViewport: card.notificationViewport
-                    presentingNotifications: card.presentingNotifications
-                    footerAccessory: card.name === "Codex" && modelData.id === "weekly" ? bankedResetsFooter : null
-                    footerAccessoryVisible: (card.hasBankedResets || card.automaticReset) && modelData.id === "weekly"
-                    Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
-                    Layout.columnSpan: {
-                        if (card.stacked && index === 0) return meters.columns
-                        const position = index - (card.stacked ? 1 : 0)
-                        return index === card.provider.buckets.length - 1 ? meters.columns - position % meters.columns : 1
+            spacing: card.compact ? 12 : 14
+            GridLayout {
+                id: meters
+                Layout.fillWidth: true
+                // Use the space the card supplies, not this grid's minimum width:
+                // its old column count can otherwise prevent it from shrinking.
+                readonly property real availableWidth: body.width - (card.stacked ? 0 : 138 + body.columnSpacing)
+                columns: Math.max(1, Math.min(card.provider.buckets.length - (card.stacked ? 1 : 0), Math.floor((availableWidth + columnSpacing) / (190 + columnSpacing))))
+                columnSpacing: 24; rowSpacing: card.compact ? 16 : 22; uniformCellWidths: true
+                Repeater {
+                    model: card.provider.buckets
+                    Meter {
+                        required property var modelData
+                        required property int index
+                        bucket: modelData; providerName: card.name; accent: card.accent
+                        compact: card.compact
+                        stale: card.stale
+                        notificationViewport: card.notificationViewport
+                        presentingNotifications: card.presentingNotifications
+                        // Stale readings carry no actions: banked-reset counts and
+                        // reset controls wait for a fresh reading.
+                        footerAccessory: card.name === "Codex" && modelData.id === "weekly" && !card.stale ? bankedResetsFooter : null
+                        footerAccessoryVisible: !card.stale && (card.hasBankedResets || card.automaticReset) && modelData.id === "weekly"
+                        Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
+                        Layout.columnSpan: {
+                            if (card.stacked && index === 0) return meters.columns
+                            const position = index - (card.stacked ? 1 : 0)
+                            return index === card.provider.buckets.length - 1 ? meters.columns - position % meters.columns : 1
+                        }
                     }
+                }
+            }
+            ColumnLayout {
+                objectName: "providerStaleNotice_" + card.name
+                visible: card.stale
+                Layout.fillWidth: true; spacing: 3
+                Text {
+                    objectName: "providerStaleAge_" + card.name
+                    textFormat: Text.PlainText
+                    text: "Last successful reading " + card.readingAge
+                    color: Theme.orange; font.pixelSize: 11; font.weight: Font.Medium
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                Text {
+                    objectName: "providerStaleError_" + card.name
+                    textFormat: Text.PlainText
+                    text: card.provider.error || "The provider could not return usage."
+                    color: Theme.muted; font.pixelSize: 11
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
             }
         }
         ColumnLayout {
-            visible: card.failed; spacing: 12; Layout.fillWidth: true
+            visible: card.failed && !card.stale; spacing: 12; Layout.fillWidth: true
             Text { objectName: "providerErrorTitle_" + card.name; textFormat: Text.PlainText; text: card.hasAuthCopy ? card.loginCopy.title : card.provider.needs_reauth || card.cursorLoginRequired ? "Reconnect your account" : "Usage is unavailable"; color: Theme.red; font.pixelSize: 14; font.weight: Font.Medium }
             Repeater {
                 model: card.hasAuthCopy ? card.loginCopy.lines : []

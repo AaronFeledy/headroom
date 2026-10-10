@@ -22,22 +22,32 @@ type Options struct {
 }
 
 type Poller struct {
-	clock     Clock
-	newTicker func(time.Duration) Ticker
-	mu        sync.RWMutex
-	providers map[string]*providerState
+	clock        Clock
+	newTicker    func(time.Duration) Ticker
+	mu           sync.RWMutex
+	providers    map[string]*providerState
+	serviceCtx   context.Context
+	refreshUntil time.Time
+	round        map[*providerState]bool
+	workers      sync.WaitGroup
 }
 
 type providerState struct {
-	name        string
-	provider    usage.Provider
-	enabled     bool
-	fetchMu     sync.Mutex
-	mu          sync.RWMutex
-	entry       Entry
-	hasEntry    bool
-	lastGood    usage.UsageData
-	hasLastGood bool
+	name             string
+	provider         usage.Provider
+	enabled          bool
+	fetchMu          sync.Mutex
+	mu               sync.RWMutex
+	entry            Entry
+	hasEntry         bool
+	lastGood         usage.UsageData
+	hasLastGood      bool
+	owner            *Poller
+	interval         time.Duration
+	nextDue          time.Time
+	rateUntil        time.Time
+	transientRetries int
+	rateDelay        time.Duration
 }
 
 func New(opts Options) *Poller {
@@ -66,7 +76,7 @@ func (p *Poller) Register(provider usage.Provider, enabled bool) error {
 	if _, exists := p.providers[key]; exists {
 		return invalidProviderError{reason: "duplicate provider " + name}
 	}
-	p.providers[key] = &providerState{name: name, provider: provider, enabled: enabled}
+	p.providers[key] = &providerState{name: name, provider: provider, enabled: enabled, owner: p}
 	return nil
 }
 
@@ -74,12 +84,21 @@ func (p *Poller) PollAll(ctx context.Context) []Entry {
 	states := p.enabledStates()
 	entries := make([]Entry, len(states))
 	var wg sync.WaitGroup
-	wg.Add(len(states))
+	var busy []int
 	for i, state := range states {
+		if !state.fetchMu.TryLock() {
+			busy = append(busy, i)
+			continue
+		}
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			entries[i] = state.poll(ctx, p.clock.Now)
+			defer state.release()
+			entries[i] = state.pollLocked(ctx, p.clock.Now)
 		}()
+	}
+	for _, i := range busy {
+		entries[i] = states[i].poll(ctx, p.clock.Now)
 	}
 	wg.Wait()
 	sortEntries(entries)
@@ -121,26 +140,6 @@ func (p *Poller) Get(name string) (Entry, bool) {
 	return copyEntry(state.entry), true
 }
 
-func (p *Poller) Run(ctx context.Context, interval time.Duration) error {
-	if interval <= 0 {
-		return invalidIntervalError{interval: interval.String()}
-	}
-	p.PollAll(ctx)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	ticker := p.newTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C():
-			p.PollAll(ctx)
-		}
-	}
-}
-
 func (p *Poller) enabledState(name string) (*providerState, bool) {
 	p.mu.RLock()
 	state, ok := p.providers[providerKey(name)]
@@ -168,16 +167,8 @@ func (p *Poller) enabledStates() []*providerState {
 
 func (s *providerState) poll(ctx context.Context, now func() time.Time) Entry {
 	s.fetchMu.Lock()
-	defer s.fetchMu.Unlock()
-
-	data, err := fetchProvider(ctx, s.name, s.provider)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entry := Entry{Data: s.normalize(data, err), FetchedAt: now().UTC()}
-	s.entry = copyEntry(entry)
-	s.hasEntry = true
-	return copyEntry(entry)
+	defer s.release()
+	return s.pollLocked(ctx, now)
 }
 
 func fetchProvider(ctx context.Context, name string, provider usage.Provider) (data usage.UsageData, err error) {
@@ -221,7 +212,9 @@ func (s *providerState) overlayExpectedError(data usage.UsageData) usage.UsageDa
 
 func (s *providerState) overlayFetchFailure(data usage.UsageData, err error) usage.UsageData {
 	message := "Provider fetch failed. Will retry."
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if usage.IsTimeout(err) {
+		message = "Provider fetch timed out. Will retry."
+	} else if errors.Is(err, context.Canceled) {
 		message = "Provider fetch canceled."
 	}
 	if s.hasLastGood {
