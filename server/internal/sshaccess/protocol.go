@@ -159,7 +159,7 @@ func decodeJSONString(decoder *json.Decoder) (string, error) {
 
 func allowedRequest(request requestFrame) bool {
 	switch request.Method + " " + request.Path {
-	case "GET /api/v1/health", "GET /api/v1/usage":
+	case "GET /api/v1/health", "GET /api/v1/usage", "POST /api/v1/usage/refresh":
 		return len(request.Body) == 0
 	case "PUT /api/v1/providers/cursor/credentials", "PUT /api/v1/providers/grok/credentials":
 		return true
