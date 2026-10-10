@@ -32,6 +32,9 @@ func Test_Poller_Run_rejects_nonpositive_interval_polls_immediately_and_stops_on
 	for provider.calls.Load() == 0 {
 		runtimeGosched()
 	}
+	state, _ := poller.enabledState("Claude")
+	state.fetchMu.Lock()
+	state.fetchMu.Unlock()
 	manual.tick(clock.next(time.Minute))
 	for provider.calls.Load() < 2 {
 		runtimeGosched()
