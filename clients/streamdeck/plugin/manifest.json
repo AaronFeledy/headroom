@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.aaronfeledy.headroom",
+  "Name": "Headroom",
+  "Author": "Aaron Feledy",
+  "Description": "See Claude, ChatGPT, Cursor, and Grok usage on your keys and open Headroom.",
+  "Version": "0.0.0.0",
+  "SDKVersion": 3,
+  "CodePath": "bin/plugin.js",
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "14.4"
+    }
+  ],
+  "Icon": "imgs/plugin",
+  "Category": "Headroom",
+  "CategoryIcon": "imgs/category",
+  "URL": "https://github.com/AaronFeledy/headroom",
+  "PropertyInspectorPath": "ui/settings.html",
+  "Actions": [
+    {
+      "UUID": "com.aaronfeledy.headroom.usage",
+      "Name": "Usage Meter",
+      "Tooltip": "Show usage and pace. Press to open Headroom.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "Icon": "imgs/action",
+      "DisableCaching": true,
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/key",
+          "ShowTitle": false
+        }
+      ]
+    },
+    {
+      "UUID": "com.aaronfeledy.headroom.open",
+      "Name": "Open Headroom",
+      "Tooltip": "Open the Headroom desktop app.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "Icon": "imgs/action",
+      "States": [
+        {
+          "Image": "imgs/key",
+          "Title": "Headroom",
+          "TitleAlignment": "bottom",
+          "FontSize": 12
+        }
+      ]
+    }
+  ]
+}

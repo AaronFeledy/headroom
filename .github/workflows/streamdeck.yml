@@ -1,0 +1,53 @@
+name: Stream Deck
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'clients/streamdeck/**'
+      - 'clients/desktop/headroom.svg'
+      - 'clients/shared/provider-icons/**'
+      - '.github/workflows/streamdeck.yml'
+  pull_request:
+    branches: [main, 'codex/**']
+    paths:
+      - 'clients/streamdeck/**'
+      - 'clients/desktop/headroom.svg'
+      - 'clients/shared/provider-icons/**'
+      - '.github/workflows/streamdeck.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin:
+    name: Validate on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    defaults:
+      run:
+        working-directory: clients/streamdeck
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/streamdeck/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - name: Build plugin
+        run: npm run build -- --version 0.1.0+ci.${{ github.run_number }}.${{ github.run_attempt }}
+      - run: npm test
+      - run: npm run validate
+      - run: npm run pack
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'windows-latest'
+        with:
+          name: headroom-streamdeck
+          path: clients/streamdeck/dist/*.streamDeckPlugin
+          if-no-files-found: error
