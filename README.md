@@ -31,6 +31,13 @@ Linux uses baseline system graphics, desktop, C++,
 glibc, D-Bus, and OpenSSL libraries; the exact package list is in the
 [package contract](packaging/README.md). Source builds require Qt 6.12 or newer.
 
+## Stream Deck
+
+The optional [Stream Deck plugin](clients/streamdeck/README.md) adds usage keys
+for Claude, ChatGPT, Cursor, and Grok, plus a key to open Headroom. It follows
+the running desktop's selected connection and needs no separate credentials.
+See the plugin guide for build and installation instructions.
+
 ## Install
 
 The per-user installers select only the exact package for the current OS and

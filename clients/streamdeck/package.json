@@ -1,0 +1,28 @@
+{
+  "name": "headroom-streamdeck",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "validate": "streamdeck validate dist/com.aaronfeledy.headroom.sdPlugin",
+    "pack": "node scripts/pack.mjs",
+    "preview": "tsx scripts/preview.ts"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "3.0.2"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.10.2",
+    "@resvg/resvg-js": "2.6.2",
+    "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

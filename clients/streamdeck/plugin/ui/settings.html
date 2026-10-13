@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src ws://127.0.0.1:*">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Headroom</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main>
+    <section id="usage">
+      <label for="provider">Provider</label>
+      <select id="provider">
+        <option value="Claude">Claude</option><option value="Codex">ChatGPT</option>
+        <option value="Cursor">Cursor</option><option value="Grok">Grok</option>
+      </select>
+      <label for="bucket">Meter</label>
+      <select id="bucket">
+        <option value="first">First available</option><option value="session">Session</option>
+        <option value="weekly">Weekly</option><option value="plan">Plan</option>
+        <option value="auto">Auto</option><option value="api">API</option>
+        <option value="credits">Credits</option><option value="extra">Extra usage</option>
+        <option value="on_demand">On demand</option><option value="weekly_grok_bot">Weekly Grok Bot</option>
+        <option value="custom">Custom meter</option>
+      </select>
+      <div id="customMeter" hidden>
+        <label for="customBucket">Custom meter ID</label>
+        <input id="customBucket" maxlength="64" pattern="[a-z0-9_]{1,64}" spellcheck="false" placeholder="weekly_sonnet">
+      </div>
+      <p>Available meters depend on your provider and plan.</p>
+      <p>Updates every 15 seconds. The ring shows usage; the white tick marks expected usage. Past the tick means over pace. A ? means pacing is unavailable. Press the key to open Headroom.</p>
+    </section>
+    <label for="cliPath">Headroom CLI path <span>(optional)</span></label>
+    <input id="cliPath" type="text" spellcheck="false" placeholder="Automatic">
+    <p>For a custom installation, enter the full path to the <b>headroom</b> CLI, without quotes or arguments.</p>
+    <p>Choose the account and connection in Headroom. Keep it open to use that connection.</p>
+    <p id="status" role="status"></p>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>
