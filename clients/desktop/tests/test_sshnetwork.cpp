@@ -89,6 +89,33 @@ private slots:
         QSignalSpy oversizedFinished(oversized, &QNetworkReply::finished); QTRY_COMPARE(oversizedFinished.size(), 1);
         QVERIFY(oversized->error() != QNetworkReply::NoError);
     }
+
+    void allowsOnlyTheBodilessRefreshPost()
+    {
+        SshNetworkAccessManager network(SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
+        const QNetworkRequest refresh(QUrl(QStringLiteral("ssh://valid/api/v1/usage/refresh")));
+        auto accepted = network.post(refresh, QByteArray());
+        QSignalSpy acceptedFinished(accepted, &QNetworkReply::finished); QTRY_COMPARE(acceptedFinished.size(), 1);
+        QCOMPARE(accepted->error(), QNetworkReply::NoError);
+        QCOMPARE(accepted->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), 202);
+        QVERIFY(accepted->readAll().contains("\"accepted\""));
+        // The receiver contract is an exact empty-body frame: payloads and other methods never leave the desktop.
+        auto withBody = network.post(refresh, QByteArrayLiteral("{}"));
+        QSignalSpy withBodyFinished(withBody, &QNetworkReply::finished); QTRY_COMPARE(withBodyFinished.size(), 1);
+        QCOMPARE(withBody->error(), QNetworkReply::ContentOperationNotPermittedError);
+        auto asGet = network.get(refresh);
+        QSignalSpy asGetFinished(asGet, &QNetworkReply::finished); QTRY_COMPARE(asGetFinished.size(), 1);
+        QCOMPARE(asGet->error(), QNetworkReply::ProtocolInvalidOperationError);
+        auto asPut = network.put(refresh, QByteArray());
+        QSignalSpy asPutFinished(asPut, &QNetworkReply::finished); QTRY_COMPARE(asPutFinished.size(), 1);
+        QCOMPARE(asPut->error(), QNetworkReply::ProtocolInvalidOperationError);
+        // A receiver that predates the endpoint answers 400 "invalid request"; that is a response, not a transport error.
+        auto legacy = network.post(QNetworkRequest(QUrl(QStringLiteral("ssh://legacy/api/v1/usage/refresh"))), QByteArray());
+        QSignalSpy legacyFinished(legacy, &QNetworkReply::finished); QTRY_COMPARE(legacyFinished.size(), 1);
+        QCOMPARE(legacy->error(), QNetworkReply::NoError);
+        QCOMPARE(legacy->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), 400);
+        QCOMPARE(legacy->readAll(), QByteArrayLiteral("{\"error\":\"invalid request\"}"));
+    }
 };
 
 QTEST_GUILESS_MAIN(SshNetworkTest)

@@ -70,8 +70,18 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 		}
 		c.adopt(candidate)
 		data = c.attachAuth(data, candidates, &candidate)
+		data.CredentialEpoch = usage.CredentialEpoch(providerName, candidate.source.Kind, candidate.source.Name, candidate.path, cookieHeader)
 		if err != nil {
-			message := err.Error()
+			var typed *usage.FetchFailure
+			if errors.As(err, &typed) {
+				data.FetchFailure = typed
+			}
+			message := "Cursor usage request failed. Will retry."
+			if usage.IsTimeout(err) {
+				message = "Cursor usage request timed out. Will retry."
+			} else if errors.Is(err, context.Canceled) {
+				message = "Cursor usage request canceled."
+			}
 			data.Error = &message
 			if ctx.Err() != nil {
 				return data, err
@@ -91,5 +101,11 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 		return data, nil
 	}
 	c.secret.clear()
+	for _, candidate := range candidates {
+		if candidate.failure != nil {
+			data.FetchFailure = candidate.failure
+			break
+		}
+	}
 	return c.attachAuth(data, candidates, nil), ctx.Err()
 }

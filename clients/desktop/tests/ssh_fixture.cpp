@@ -25,13 +25,21 @@ int main(int argc, char **argv)
     const auto request = QJsonDocument::fromJson(requestBytes.trimmed(), &error).object();
     if (error.error != QJsonParseError::NoError || request.size() != 4 || request.value("schema").toInt() != 1) return 7;
     QByteArray body = QByteArrayLiteral("[]");
-    if (request.value("path").toString().endsWith(QStringLiteral("health"))) body = QByteArrayLiteral("{\"status\":\"ok\",\"version\":\"test\"}");
-    else if (request.value("path").toString().contains(QStringLiteral("/providers/cursor/credentials"))) {
+    int status = 200;
+    const QString method = request.value("method").toString(), path = request.value("path").toString();
+    if (method == QStringLiteral("POST") && path == QStringLiteral("/api/v1/usage/refresh")) {
+        // The refresh request must arrive exactly as the server contract expects: an empty body.
+        if (!request.value("body").toString().isEmpty()) return 5;
+        if (host == QStringLiteral("legacy")) { status = 400; body = QByteArrayLiteral("{\"error\":\"invalid request\"}"); }
+        else { status = 202; body = QByteArrayLiteral("{\"status\":\"accepted\",\"retry_after_seconds\":15}"); }
+    } else if (path.endsWith(QStringLiteral("health"))) body = QByteArrayLiteral("{\"status\":\"ok\",\"version\":\"test\"}");
+    else if (path.contains(QStringLiteral("/providers/cursor/credentials"))) {
         const QByteArray submitted = QByteArray::fromBase64(request.value("body").toString().toLatin1());
         if (!submitted.contains("synthetic-cursor")) return 6;
         body = QByteArrayLiteral("{\"provider\":\"Cursor\",\"refetched\":true,\"usage\":{\"provider_name\":\"Cursor\",\"error\":null,\"is_success\":true,\"needs_reauth\":false,\"buckets\":[{\"id\":\"weekly\",\"label\":\"Weekly\",\"utilization\":2,\"resets_at\":null,\"status_text\":null}]}}");
     }
-    const QByteArray response = QByteArrayLiteral("{\"schema\":1,\"status\":200,\"body\":\"") + body.toBase64() + QByteArrayLiteral("\"}\n");
+    const QByteArray response = QByteArrayLiteral("{\"schema\":1,\"status\":") + QByteArray::number(status)
+        + QByteArrayLiteral(",\"body\":\"") + body.toBase64() + QByteArrayLiteral("\"}\n");
     fwrite(response.constData(), 1, size_t(response.size()), stdout);
     return 0;
 }

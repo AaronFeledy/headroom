@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -135,14 +136,18 @@ func (c *Client) SetAccessToken(accessToken string) error {
 func (c *Client) fetchUsageSummary(ctx context.Context, cookieHeader string) (cursorUsageSummary, int, error) {
 	resp, err := c.get(ctx, usageSummaryPath, cookieHeader)
 	if err != nil {
-		return cursorUsageSummary{}, 0, err
+		return cursorUsageSummary{}, 0, usage.TransportFailure(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return cursorUsageSummary{}, resp.StatusCode, nil
+		return cursorUsageSummary{}, resp.StatusCode, usage.HTTPFailure(resp)
 	}
 	var summary cursorUsageSummary
-	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return cursorUsageSummary{}, resp.StatusCode, usage.TransportFailure(err)
+	}
+	if err := json.Unmarshal(body, &summary); err != nil {
 		return cursorUsageSummary{}, resp.StatusCode, fmt.Errorf("decode Cursor usage summary: %w", err)
 	}
 	return summary, resp.StatusCode, nil

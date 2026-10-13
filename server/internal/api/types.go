@@ -31,6 +31,7 @@ type CodexResetter interface {
 
 type ProviderPoller interface {
 	PollProvider(context.Context, string) (poller.Entry, bool, error)
+	UpdateCredentials(context.Context, string, func() error) (poller.Entry, bool, error)
 }
 
 type Options struct {

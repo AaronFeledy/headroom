@@ -20,6 +20,10 @@ class Controller : public QObject {
     Q_OBJECT
     Q_PROPERTY(Notifications *notifications READ notifications CONSTANT)
     Q_PROPERTY(QVariantList providers READ providers NOTIFY providersChanged)
+    // Dashboard model: raw providers, except that a transiently failed provider
+    // may carry its last successful reading as clearly labelled stale meters.
+    Q_PROPERTY(QVariantList displayProviders READ displayProviders NOTIFY providersChanged)
+    Q_PROPERTY(QVariantMap refreshStatus READ refreshStatus NOTIFY refreshStatusChanged)
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
@@ -31,7 +35,11 @@ public:
                         CredentialServiceOptions credentialOptions = {}, SshOptions sshOptions = {}, bool startPolling = true);
     ~Controller() override;
     Notifications *notifications() { return &m_notificationCenter; }
+    // Raw server model for IPC/CLI, notifications, warning transitions,
+    // credentials, and reset eligibility. Never carries stale readings.
     QVariantList providers() const;
+    QVariantList displayProviders() const;
+    QVariantMap refreshStatus() const;
     QVariantMap state() const;
     QVariantMap settings() const;
     QVariantMap browserChecked() const;
@@ -58,7 +66,13 @@ public:
     void stopOwnedServer() { m_server.stopOwned(); }
     qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }
     QString ownedServerExecutablePath() const { return m_server.ownedExecutablePath(); }
+    // Internal cache read of GET /api/v1/usage: startup, reconnects, settings,
+    // post-update checks, and recovery polling. Never forces a provider fetch.
     Q_INVOKABLE virtual void refresh();
+    // Explicit user action: POST /api/v1/usage/refresh over the selected
+    // transport, then bounded cache reads while the server refetches.
+    Q_INVOKABLE virtual void requestRefresh();
+    Q_INVOKABLE QString readingAgeLabel(qint64 observedAt) const;
     QVariantMap resetAction() const;
     // DO NOT test this button, endpoint, or any code that could trigger a reset.
     // A reset is valuable and irreversible; the skip-only tests are intentional.
@@ -85,9 +99,16 @@ signals:
     void diagnosticsChanged();
     void providersChanged();
     void settingsChanged();
+    void refreshStatusChanged();
 protected:
     void acceptSnapshot(const QVariantList &providers);
 private:
+    struct RetainedReading {
+        QVariantList buckets;
+        QString fetchedAt, epoch, source;
+        qint64 observedAt = 0;      // desktop time this reading was first seen
+        quint64 snapshotSerial = 0; // last accepted snapshot in which the provider succeeded
+    };
     void updateMeterStates();
     void fail(const QString &message, const QString &kind = "network");
     void log(const QString &category, const QString &message);
@@ -95,6 +116,23 @@ private:
     void cancel();
     void requestUsage();
     void refreshUsage(bool userRequested);
+    void requestProviderRefresh();
+    QNetworkRequest backendRequest(const QUrl &url, const ServerConnection &transport) const;
+    QNetworkAccessManager *transportNetwork();
+    void guardReply(QNetworkReply *reply, const ServerConnection &transport, int deadlineMs, qint64 maximumBytes);
+    bool rejectRedirectOrToken(int status, bool redirected);
+    void reportNetworkFailure(bool certificateFailure);
+    void acceptRefresh(const QByteArray &body);
+    void limitRefresh(const QByteArray &body);
+    void noteRefresh(const QString &kind, const QString &summary);
+    void runRecoveryStep();
+    void endRefreshWindow();
+    bool refreshObserved(const QVariantList &providers) const;
+    void syncRefreshClock();
+    void invalidateConnection();
+    void markBackendUnavailable(bool outage, const QString &message = {});
+    void retainReadings(const QVariantList &providers, bool removeMissing);
+    bool transientRecoveryActive() const;
     void syncConnection();
     void verifyRemote(bool upgrade);
     QVariantMap chatGptWeekly() const;
@@ -122,6 +160,18 @@ private:
     bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
     QVariantList m_providers;
+    // Session-only presentation cache: successful buckets only, never action metadata.
+    QHash<QString, RetainedReading> m_retained;
+    QHash<QString, qint64> m_transientSince;
+    QSet<QString> m_maskedProviders; // raw entries masked by a backend failure, not by the server
+    quint64 m_snapshotSerial = 0, m_connectionGeneration = 0;
+    bool m_backendOutage = false;
+    // Explicit refresh bookkeeping. Timers are bounded and never repeat the POST.
+    QTimer m_recovery, m_refreshClock;
+    QHash<QString, QString> m_refreshBaseline;
+    QString m_refreshKind, m_refreshSummary;
+    qint64 m_refreshAcceptedAt = 0, m_refreshAllowedAt = 0, m_refreshNoticeUntil = 0;
+    int m_recoveryStep = 0;
     using MeterKey = QPair<QString, QString>;
     QHash<MeterKey, Usage::WarningState> m_warningStates;
     QHash<MeterKey, QVariantMap> m_concerns;

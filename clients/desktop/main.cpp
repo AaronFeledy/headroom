@@ -263,7 +263,7 @@ int main(int argc, char **argv) {
     QObject::connect(&app, &QGuiApplication::applicationStateChanged, &attention, [&](Qt::ApplicationState state) {
         if (state == Qt::ApplicationActive && window->isVisible()) attention.acknowledge();
     });
-    menu.addAction("Open Headroom", &app, show); menu.addAction("Refresh usage", &controller, &Controller::refresh);
+    menu.addAction("Open Headroom", &app, show); menu.addAction("Refresh usage", &controller, &Controller::requestRefresh);
     menu.addAction("Settings…", &app, [&] {
         show();
         if (auto settings = window->findChild<QObject *>("settingsPanel")) QMetaObject::invokeMethod(settings, "open");

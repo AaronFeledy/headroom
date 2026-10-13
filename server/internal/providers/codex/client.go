@@ -57,7 +57,9 @@ func New(opts Options) *Client {
 func (c *Client) Name() string { return providerName }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
+	var epoch *string
 	defer func() {
+		result.CredentialEpoch = epoch
 		c.store.mu.RLock()
 		loaded, sourceKind, path := c.store.loaded, c.store.source, c.store.path
 		c.store.mu.RUnlock()
@@ -87,6 +89,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 	creds, err := c.store.Current(ctx)
 	if err != nil {
 		if errors.Is(err, ErrCredentialsMissing) {
+			data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
 			message := "Run `codex` to sign in."
 			data.Error = &message
 			return data, nil
@@ -111,9 +114,10 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			return data, err
 		}
 	}
+	epoch = usage.CredentialEpoch(providerName, creds.Path, fmt.Sprint(creds.Source), creds.AccessToken, creds.AccountID)
 	resp, err := c.sendUsage(ctx, creds)
 	if err != nil {
-		return data, err
+		return data, usage.TransportFailure(err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		if err := drainAndCloseResponseBody(resp, "close codex unauthorized response body"); err != nil {
@@ -146,12 +150,14 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 				return data, err
 			}
 		}
+		epoch = usage.CredentialEpoch(providerName, creds.Path, fmt.Sprint(creds.Source), creds.AccessToken, creds.AccountID)
 		resp, err = c.sendUsage(ctx, creds)
 		if err != nil {
-			return data, err
+			return data, usage.TransportFailure(err)
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		data.FetchFailure = usage.HTTPFailure(resp)
 		message := fmt.Sprintf("API error (%d)", resp.StatusCode)
 		data.Error = &message
 		if err := drainAndCloseResponseBody(resp, "close codex error response body"); err != nil {
@@ -162,7 +168,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 	body, err := io.ReadAll(resp.Body)
 	closeErr := closeResponseBody(resp, "close codex usage response body")
 	if err != nil {
-		return data, fmt.Errorf("read codex usage response: %w", err)
+		return data, usage.TransportFailure(err)
 	}
 	if closeErr != nil {
 		return data, closeErr

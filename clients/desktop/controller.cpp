@@ -9,6 +9,11 @@
 #include <QUrl>
 #include <utility>
 
+namespace {
+// Network-only retry schedule; token, API, and certificate failures keep the slower backoff.
+constexpr int networkRetrySecs[] = {5, 10, 20, 40, 60, 120, 240, 300};
+}
+
 Controller::Controller(const QString &configPath, QObject *parent, bool allowAutomaticMigration,
                        ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, SshOptions sshOptions, bool startPolling)
     : QObject(parent), m_settingsService(configPath, allowAutomaticMigration),
@@ -31,6 +36,11 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     if (m_startPolling) m_poll.start(m_interval * 1000);
     connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledChatGptReset(); updateMeterStates(); emit changed(); });
     if (m_startPolling) m_clock.start(30000);
+    m_recovery.setSingleShot(true);
+    m_recovery.setTimerType(Qt::PreciseTimer);
+    connect(&m_recovery, &QTimer::timeout, this, &Controller::runRecoveryStep);
+    m_refreshClock.setInterval(1000);
+    connect(&m_refreshClock, &QTimer::timeout, this, [this] { syncRefreshClock(); emit refreshStatusChanged(); });
     m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_server.configure(m_mode, m_token);
     syncConnection();
@@ -50,6 +60,8 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
             break;
         }
         if (!replaced) return;
+        m_maskedProviders.remove(name);
+        retainReadings({replacement}, false);
         m_notificationCenter.resetUsageBaseline(name);
         m_notificationCenter.observeUsage(m_providers, false);
         updateMeterStates();
@@ -64,16 +76,24 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
         if (m_mode != "local") return;
         cancelResetRequest();
         cancel(); m_poll.stop(); m_waitingForUsageRetry = false;
+        endRefreshWindow();
         m_status = "offline"; m_message = message; m_errorKind = kind;
-        log("Local server", message); emit changed();
+        // A lost local server masks the raw model like any backend failure. Only
+        // an unreachable or unresponsive server is an outage that may keep this
+        // session's last reading on the dashboard; an incompatible, rejecting, or
+        // replaced peer means those readings are no longer this server's.
+        markBackendUnavailable(kind == QStringLiteral("network") || kind == QStringLiteral("timeout"));
+        log("Local server", message); emit providersChanged(); emit changed();
     });
     connect(&m_server, &ManagedServer::connectionChanged, this, [this] {
         if (m_mode != QStringLiteral("local")) return;
         cancelResetRequest();
-        cancel();
+        // A new server identity is a new peer: late replies and retained
+        // readings from the previous process must not survive it.
+        invalidateConnection();
         m_localNetwork.clearConnectionCache();
         syncConnection();
-        emit changed();
+        emit providersChanged(); emit changed();
     });
     connect(&m_server, &ManagedServer::stateChanged, this, [this] {
         if (m_mode != "local" || m_server.isAvailable() || m_server.state() == "failed") return;
@@ -161,7 +181,7 @@ void Controller::verifyRemote(bool upgrade) {
         const QString error = m_settingsService.save(updated);
         if (!error.isEmpty()) { fail(QStringLiteral("The verified server certificate could not be saved."), QStringLiteral("settings")); return; }
         m_url = m_settingsService.value().url;
-        cancelResetRequest(); cancelScheduledChatGptReset(); m_network.clearConnectionCache(); syncConnection();
+        cancelResetRequest(); cancelScheduledChatGptReset(); invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
         log(QStringLiteral("Connection"), upgrade ? QStringLiteral("Connection upgraded to HTTPS.")
             : rotation ? QStringLiteral("The server certificate changed and was verified with your access token.")
                        : QStringLiteral("The server's identity was verified with your access token."));
@@ -192,24 +212,77 @@ QString Controller::diagnosticText() const {
 }
 void Controller::resetRetry() {
     m_retryAttempt = 0; m_errorKind.clear();
-    if (m_startPolling) m_poll.start((m_autoResetConnection.isEmpty() ? m_interval : 15) * 1000);
+    int seconds = m_interval;
+    if (!m_autoResetConnection.isEmpty()) seconds = 15;
+    // A provider the server reports as transiently failed usually recovers on
+    // the server's own retry schedule; read its cache a little sooner for a
+    // bounded time instead of waiting a full interval to notice.
+    else if (transientRecoveryActive()) seconds = qMin(m_interval, 15);
+    if (m_startPolling) m_poll.start(seconds * 1000);
 }
 void Controller::fail(const QString &message, const QString &kind) {
     m_status = "offline"; m_message = message; m_loading = false; m_errorKind = kind;
     m_retryAttempt = qMin(m_retryAttempt + 1, 8);
+    endRefreshWindow();
     // An armed one-shot reset starts from the 15-second cadence used by
     // resetRetry(), so a transient failure cannot stretch polling past its
     // weekly window. It still backs off to at most five minutes: a long outage
     // must not poll an unreachable endpoint four times a minute all week.
-    const int seconds = m_autoResetConnection.isEmpty()
-        ? qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval))
-        : qMin(15 * (1 << (m_retryAttempt - 1)), 300);
+    int seconds;
+    if (!m_autoResetConnection.isEmpty()) seconds = qMin(15 * (1 << (m_retryAttempt - 1)), 300);
+    else if (kind == QStringLiteral("network")) seconds = networkRetrySecs[qMin(m_retryAttempt - 1, 7)];
+    else seconds = qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval));
     if (m_startPolling) m_poll.start(seconds * 1000);
+    // No backend failure passes old success through the raw model. Only a
+    // plain network failure is an outage whose last reading the dashboard may
+    // keep; a rejected token or certificate, a redirect, an HTTP error, or a
+    // malformed body means the peer may not be the server that produced it.
+    markBackendUnavailable(kind == QStringLiteral("network"));
     log("Connection", message + QString(" Retry in %1 seconds.").arg(seconds));
-    emit changed();
+    emit providersChanged(); emit changed();
 }
 void Controller::refresh() {
     refreshUsage(true);
+}
+QNetworkRequest Controller::backendRequest(const QUrl &url, const ServerConnection &transport) const {
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    request.setTransferTimeout(10000);
+    if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
+    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
+    return request;
+}
+QNetworkAccessManager *Controller::transportNetwork() {
+    return m_mode == QStringLiteral("local") ? &m_localNetwork
+        : m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
+}
+void Controller::guardReply(QNetworkReply *reply, const ServerConnection &transport, int deadlineMs, qint64 maximumBytes) {
+    connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError> &errors) {
+        if (!errors.isEmpty()) reply->setProperty("headroomCertificateErrors", true);
+    });
+    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
+    auto deadline = new QTimer(reply); deadline->setSingleShot(true);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(deadlineMs);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, maximumBytes] { if (reply->bytesAvailable() > maximumBytes) reply->abort(); });
+}
+bool Controller::rejectRedirectOrToken(int status, bool redirected) {
+    if (redirected) { fail("The backend redirected the request. Enter its final address in settings.", "api"); return true; }
+    if (status == 401 || status == 403) { fail("Your backend rejected the token. Update it in connection settings.", "auth"); return true; }
+    return false;
+}
+void Controller::reportNetworkFailure(bool certificateFailure) {
+    if (m_mode == QStringLiteral("remote") && QUrl(m_url).scheme() == QStringLiteral("https") && certificateFailure) {
+        if (!m_token.isEmpty() && (!m_proofAttempted || QDateTime::currentSecsSinceEpoch() >= m_nextUpgradeAttempt)) { verifyRemote(false); return; }
+        fail(QStringLiteral("The server certificate could not be verified. Check the server and access token; HTTPS will not be downgraded."), QStringLiteral("certificate")); return;
+    }
+    if (m_mode == "local") {
+        m_waitingForUsageRetry = true;
+        m_server.reportConnectionFailure();
+        fail("Cannot reach the local usage server. Headroom will recheck it before retrying.");
+    } else if (m_mode == "ssh") fail("Cannot connect over SSH. Make sure OpenSSH is installed, then check the address, trusted host key, and key or agent authentication.");
+    else fail("Cannot reach your backend. Check your network and connection settings.");
 }
 void Controller::refreshUsage(bool userRequested) {
     if (m_loading || m_resetBusy) return;
@@ -234,51 +307,25 @@ void Controller::requestUsage() {
     m_poll.stop();
     if (m_mode == QStringLiteral("remote") && TlsProof::shouldUpgrade(QUrl(m_url), !m_token.isEmpty(),
         QDateTime::currentSecsSinceEpoch(), m_nextUpgradeAttempt)) { verifyRemote(true); return; }
-    const QString baseUrl = backendUrl();
-    const auto url = Usage::endpoint(baseUrl);
+    const auto url = Usage::endpoint(backendUrl());
     if (url.isEmpty()) { fail("Enter a valid HTTP or HTTPS backend address in settings."); return; }
-    QNetworkRequest request(url);
-    request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-    request.setTransferTimeout(10000);
     const ServerConnection transport = m_mode == QStringLiteral("local")
         ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
-    if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
+    const auto request = backendRequest(url, transport);
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
-    QNetworkAccessManager *network = m_mode == QStringLiteral("local") ? &m_localNetwork
-        : m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
-    auto reply = network->get(request); m_reply = reply;
-    connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError> &errors) {
-        if (!errors.isEmpty()) reply->setProperty("headroomCertificateErrors", true);
-    });
-    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
-    auto deadline = new QTimer(reply); deadline->setSingleShot(true);
-    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(m_mode == QStringLiteral("ssh") ? 27000 : 12000);
-    connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    auto reply = transportNetwork()->get(request); m_reply = reply;
+    guardReply(reply, transport, m_mode == QStringLiteral("ssh") ? 27000 : 12000, 1024 * 1024);
+    const quint64 generation = m_connectionGeneration;
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation] {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto body = reply->isOpen() ? reply->readAll() : QByteArray();
         const bool certificateFailure = reply->property("headroomPinMismatch").toBool() || reply->property("headroomCertificateErrors").toBool();
         reply->deleteLater(); m_reply.clear(); m_loading = false;
-        if (redirected) { fail("The backend redirected the request. Enter its final address in settings.", "api"); return; }
-        if (status == 401 || status == 403) { fail("Your backend rejected the token. Update it in connection settings.", "auth"); return; }
+        if (generation != m_connectionGeneration) return;
+        if (rejectRedirectOrToken(status, redirected)) return;
         if (status && status != 200) { fail(QString("Backend returned HTTP %1. Check the address and try again.").arg(status), "api"); return; }
-        if (error != QNetworkReply::NoError) {
-            if (m_mode == QStringLiteral("remote") && QUrl(m_url).scheme() == QStringLiteral("https") && certificateFailure) {
-                if (!m_token.isEmpty() && (!m_proofAttempted || QDateTime::currentSecsSinceEpoch() >= m_nextUpgradeAttempt)) { verifyRemote(false); return; }
-                fail(QStringLiteral("The server certificate could not be verified. Check the server and access token; HTTPS will not be downgraded."), QStringLiteral("certificate")); return;
-            }
-            if (m_mode == "local") {
-                m_waitingForUsageRetry = true;
-                m_server.reportConnectionFailure();
-                fail("Cannot reach the local usage server. Headroom will recheck it before retrying.");
-            } else if (m_mode == "ssh") fail("Cannot connect over SSH. Make sure OpenSSH is installed, then check the address, trusted host key, and key or agent authentication.");
-            else fail("Cannot reach your backend. Check your network and connection settings.");
-            return;
-        }
+        if (error != QNetworkReply::NoError) { reportNetworkFailure(certificateFailure); return; }
         QVariantList providers;
         if (body.size() > 1024 * 1024 || !Usage::parse(body, providers)) { fail("The backend returned an unexpected usage response.", "malformed"); return; }
         acceptSnapshot(providers);
@@ -286,12 +333,31 @@ void Controller::requestUsage() {
     });
 }
 void Controller::acceptSnapshot(const QVariantList &providers) {
+    ++m_snapshotSerial;
+    m_backendOutage = false;
+    retainReadings(providers, true);
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QSet<QString> transient;
+    int failed = 0;
+    for (const auto &value : providers) {
+        const auto provider = value.toMap();
+        if (provider["is_success"].toBool()) continue;
+        ++failed;
+        if (provider["fetch_status"].toMap()["failure_kind"].toString() != QStringLiteral("transient")) continue;
+        const QString name = provider["provider_name"].toString();
+        transient.insert(name);
+        if (!m_transientSince.contains(name)) m_transientSince.insert(name, now);
+    }
+    for (auto it = m_transientSince.begin(); it != m_transientSince.end();) {
+        if (transient.contains(it.key())) ++it; else it = m_transientSince.erase(it);
+    }
     resetRetry();
     m_waitingForUsageRetry = false;
-    int failed = 0;
-    for (const auto &provider : providers) if (!provider.toMap()["is_success"].toBool()) ++failed;
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
-    m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
+    m_providers = providers; m_maskedProviders.clear(); m_lastGood = now; m_status = "ready"; m_message.clear();
+    // An accepted refresh never counts as fresh data by itself; only a snapshot
+    // whose every attempt time advanced proves the server finished the round.
+    if (m_recovery.isActive() && refreshObserved(providers)) endRefreshWindow();
     observeResetUsage();
     m_notificationCenter.observeUsage(m_providers, m_notifications);
     for (const auto &value : m_providers) {
@@ -333,10 +399,10 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (mode == "remote") QHostInfo::clearCache();
     cancel();
     m_tlsProof.cancel(); m_proving = false;
-    if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; }
+    if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; invalidateConnection(); }
     m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (connectionChanged) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledChatGptReset(); }
+    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledChatGptReset(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();

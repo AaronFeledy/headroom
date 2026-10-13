@@ -21,10 +21,15 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 				Utilization: bucket.Utilization,
 				ResetsAt:    copyTime(bucket.ResetsAt),
 				StatusText:  copyString(bucket.StatusText),
+				StartsAt:    copyTime(bucket.StartsAt),
+				DetailText:  copyString(bucket.DetailText),
 			}
 		}
 	}
 	return usage.UsageData{
+		FetchStatus:           copyFetchStatus(data.FetchStatus),
+		FetchFailure:          copyFetchFailure(data.FetchFailure),
+		CredentialEpoch:       copyString(data.CredentialEpoch),
 		Auth:                  copyAuth(data.Auth),
 		ProviderName:          data.ProviderName,
 		PrimaryLabel:          data.PrimaryLabel,
@@ -42,6 +47,27 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
 		ProviderAccountID:     data.ProviderAccountID,
 	}
+}
+
+func copyFetchStatus(value *usage.FetchStatus) *usage.FetchStatus {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	copy.CredentialEpoch = copyString(value.CredentialEpoch)
+	if value.FailureKind != nil {
+		kind := *value.FailureKind
+		copy.FailureKind = &kind
+	}
+	return &copy
+}
+
+func copyFetchFailure(value *usage.FetchFailure) *usage.FetchFailure {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func copyAuth(auth usage.Auth) usage.Auth {

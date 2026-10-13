@@ -27,6 +27,13 @@ QUrl Usage::endpoint(const QString &base) {
     return result;
 }
 
+QUrl Usage::refreshEndpoint(const QString &base) {
+    QUrl url = endpoint(base);
+    if (url.isEmpty()) return {};
+    url.setPath(url.path() + QStringLiteral("/refresh"));
+    return url;
+}
+
 bool Usage::parse(const QByteArray &json, QVariantList &providers) {
     QJsonParseError error;
     const auto doc = QJsonDocument::fromJson(json, &error);
@@ -58,6 +65,28 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;
+        // Optional per-entry fetch metadata. Older servers omit it; anything
+        // malformed or inconsistent with the frozen error contract is dropped
+        // so it can never enable a stale reading for that entry.
+        QJsonValue fetchStatus(QJsonValue::Null);
+        if (p["fetch_status"].isObject()) {
+            const auto status = p["fetch_status"].toObject();
+            const auto fetchedAt = status["fetched_at"];
+            const auto kind = status["failure_kind"];
+            const auto epoch = status["credential_epoch"];
+            static const QStringList kinds{"transient", "rate_limited", "auth", "other"};
+            const bool validTime = fetchedAt.isString() && fetchedAt.toString().size() <= 64
+                && QDateTime::fromString(fetchedAt.toString(), Qt::ISODateWithMs).isValid();
+            const bool validKind = kind.isNull() || kind.isUndefined() ? p["error"].isNull()
+                : kind.isString() && kinds.contains(kind.toString()) && !p["error"].isNull();
+            const bool validEpoch = epoch.isNull() || epoch.isUndefined()
+                || (epoch.isString() && !epoch.toString().isEmpty() && epoch.toString().size() <= 256);
+            if (validTime && validKind && validEpoch)
+                fetchStatus = QJsonObject{{"fetched_at", fetchedAt},
+                    {"failure_kind", kind.isString() ? kind : QJsonValue(QJsonValue::Null)},
+                    {"credential_epoch", epoch.isString() ? epoch : QJsonValue(QJsonValue::Null)}};
+        }
+        p["fetch_status"] = fetchStatus;
         QJsonArray buckets;
         if (p["error"].isNull()) {
             if (p.contains("buckets") && !p["buckets"].isArray()) return false;

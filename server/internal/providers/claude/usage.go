@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -45,6 +46,7 @@ type limitModel struct {
 }
 
 type statusError struct {
+	failure    *usage.FetchFailure
 	statusCode int
 	body       string
 }
@@ -66,15 +68,15 @@ func (c *Client) fetchUsage(ctx context.Context, creds *credentials) (usage.Usag
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return usage.UsageData{}, nil, err
+		return usage.UsageData{}, nil, usage.TransportFailure(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return usage.UsageData{}, nil, fmt.Errorf("read usage response: %w", err)
-	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return usage.UsageData{}, &statusError{statusCode: resp.StatusCode, body: string(body)}, nil
+		return usage.UsageData{}, &statusError{statusCode: resp.StatusCode, body: string(body), failure: usage.HTTPFailure(resp)}, nil
+	}
+	if err != nil {
+		return usage.UsageData{}, nil, usage.TransportFailure(err)
 	}
 	parsed, err := parseUsageResponse(body, creds.subscriptionType)
 	if err != nil {
@@ -278,8 +280,11 @@ func formatFetchError(err error) string {
 	if err == nil {
 		return ""
 	}
-	if strings.Contains(err.Error(), "Client.Timeout") || strings.Contains(err.Error(), "context deadline exceeded") {
+	if usage.IsTimeout(err) {
 		return "Request timed out"
 	}
-	return "Network error: " + err.Error()
+	if errors.Is(err, context.Canceled) {
+		return "Request canceled"
+	}
+	return "Usage request failed. Will retry."
 }

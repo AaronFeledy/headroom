@@ -9,6 +9,8 @@
 namespace Usage {
 bool parse(const QByteArray &json, QVariantList &providers);
 QUrl endpoint(const QString &base);
+// POST target for an explicit provider refresh: the usage endpoint plus "/refresh".
+QUrl refreshEndpoint(const QString &base);
 QString countdown(const QString &timestamp);
 QString resetTimeLabel(const QString &timestamp,
                        const QDateTime &now = QDateTime::currentDateTime(),
