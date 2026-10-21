@@ -177,9 +177,11 @@ Each provider entry has this shape:
 
 Optional strings and reset timestamps are explicit `null`. `is_success` is true only when `error` is `null`.
 
-ChatGPT (`Codex`) responses may also include
+ChatGPT (`Codex`) and Claude responses may also include
 `"rate_limit_reset_credits": {"available_count": 3, "account_fingerprint":
-"<64 lowercase hex characters>"}`. This metadata reports how many usage resets
+"<64 lowercase hex characters>", "usable_now": null}`. For Claude, `usable_now`
+is a boolean indicating whether an eligible next grant is usable without an
+active cooldown; for Codex it remains `null`. This metadata reports how many usage resets
 are currently banked and, when available, an account fingerprint used to keep a
 manual action bound to the account whose usage was checked. The fingerprint is
 otherwise `null`. The complete metadata object is `null` when the count is
