@@ -1,0 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { readFile, rename } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+process.chdir(fileURLToPath(new URL("..", import.meta.url)));
+const folder = "dist/com.aaronfeledy.headroom.sdPlugin";
+const { version } = JSON.parse(await readFile(folder + "/headroom-version.json", "utf8"));
+execFileSync(process.execPath, ["node_modules/@elgato/cli/bin/streamdeck.mjs", "pack", folder, "--output", "dist", "--force"], { stdio: "inherit" });
+const output = "dist/headroom-streamdeck-" + version + ".streamDeckPlugin";
+await rename("dist/com.aaronfeledy.headroom.streamDeckPlugin", output);
+console.log(output);
