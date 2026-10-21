@@ -91,6 +91,7 @@ type UsageData struct {
 type RateLimitResetCredits struct {
 	AvailableCount     int64   `json:"available_count"`
 	AccountFingerprint *string `json:"account_fingerprint"`
+	UsableNow          *bool   `json:"usable_now"`
 }
 
 type Header struct {

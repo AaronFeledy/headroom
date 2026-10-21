@@ -24,7 +24,7 @@ type GrokCredentials interface {
 	SetCookieHeader(string)
 }
 
-type CodexResetter interface {
+type ProviderResetter interface {
 	ResetAttemptStatus(string) (known, blocked bool)
 	ConsumeResetCredit(context.Context, string, string, string) (outcome string, ambiguous bool, err error)
 }
@@ -38,7 +38,8 @@ type Options struct {
 	Cache                Cache
 	Cursor               CursorCredentials
 	Grok                 GrokCredentials
-	Codex                CodexResetter
+	Codex                ProviderResetter
+	Claude               ProviderResetter
 	Poller               ProviderPoller
 	Logger               Logger
 	AuthToken            string

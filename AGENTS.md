@@ -124,6 +124,13 @@ duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
 `credits`, `weekly`, `weekly_<slug>`, `extra`, and `on_demand`. Cursor Grok Bot
 is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
+Claude and Codex may expose read-only `rate_limit_reset_credits`; `usable_now`
+is a nullable boolean (Codex leaves it null). Claude's confirmed reset uses
+token-bound account/organization identity and a fresh banked-status GET.
+Consume methods, HTTP reset routes, and SSH reset forwarding must never be
+executed in tests, including against fakes: banked resets have real value.
+Keep their safety tests skip-only and never enable live provider tests for validation.
+
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
 trusted native per-user install. Capture, explicit-config, source, and
@@ -190,10 +197,10 @@ go build ./...
 go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
 
 cd ../../server
-go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
+go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
-go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
+go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 
 cd ..
 dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release -r win-x64

@@ -61,7 +61,8 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
                 resetCredits = QJsonObject{{"available_count", count},
                     {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
-                        ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)}};
+                        ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)},
+                    {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)}};
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;

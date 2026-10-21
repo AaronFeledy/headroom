@@ -27,19 +27,21 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
-	authToken           string
-	tlsFingerprint      string
-	cache               Cache
-	cursor              CursorCredentials
-	grok                GrokCredentials
-	codex               CodexResetter
-	poller              ProviderPoller
-	version             string
-	providerNames       []string
-	credentialMu        sync.Mutex
-	resetMu             sync.Mutex
-	codexRefreshMu      sync.Mutex
-	codexRefreshPending bool
+	authToken            string
+	tlsFingerprint       string
+	cache                Cache
+	cursor               CursorCredentials
+	grok                 GrokCredentials
+	codex                ProviderResetter
+	claude               ProviderResetter
+	poller               ProviderPoller
+	version              string
+	providerNames        []string
+	credentialMu         sync.Mutex
+	resetMu              sync.Mutex
+	resetRefreshMu       sync.Mutex
+	codexRefreshPending  bool
+	claudeRefreshPending bool
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +74,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.route(w, r, http.MethodPut, h.grokCredentials)
 		return
 	}
-	if path == "/api/v1/providers/codex/reset" {
-		h.route(w, r, http.MethodPost, h.codexReset)
+	if path == "/api/v1/providers/codex/reset" || path == "/api/v1/providers/claude/reset" {
+		h.route(w, r, http.MethodPost, h.providerReset)
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -92,8 +94,14 @@ type codexResetResponse struct {
 // This handler can spend a very valuable banked reset. Do not test the reset
 // button, this endpoint, or any code that may trigger a reset. The skipped
 // safety tests are intentional and must not be converted into executable tests.
-func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
-	if h.codex == nil || h.poller == nil || !h.hasProvider("codex") {
+func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
+	provider, label, resetter := "codex", "ChatGPT", h.codex
+	eligible := eligibleForCodexReset
+	if r.URL.Path == "/api/v1/providers/claude/reset" {
+		provider, label, resetter = "claude", "Claude", h.claude
+		eligible = eligibleForClaudeReset
+	}
+	if resetter == nil || h.poller == nil || !h.hasProvider(provider) {
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
 	}
@@ -135,24 +143,24 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.resetMu.Unlock()
-	known, blocked := h.codex.ResetAttemptStatus(request.RequestID)
+	known, blocked := resetter.ResetAttemptStatus(request.RequestID)
 	if blocked {
 		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
 		return
 	}
 	expectedAccountID := ""
 	if !known {
-		entry, ok, err := h.poller.PollProvider(resetCtx, "codex")
-		if err != nil || !ok || !eligibleForCodexReset(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
-			writeError(w, http.StatusConflict, "fresh eligible ChatGPT usage is required")
+		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
+		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
+			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
 			return
 		}
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
-	outcome, ambiguous, err := h.codex.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	outcome, ambiguous, err := resetter.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
 	// Reconcile even an uncertain response with a delayed read-only fetch. Never
 	// repeat ConsumeResetCredit automatically or exercise this flow in tests.
-	h.scheduleCodexUsageRefresh()
+	h.scheduleResetUsageRefresh(provider)
 	if err != nil {
 		if ambiguous {
 			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
@@ -164,27 +172,31 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
 }
 
-func (h *handler) scheduleCodexUsageRefresh() {
-	h.codexRefreshMu.Lock()
-	if h.codexRefreshPending {
-		h.codexRefreshMu.Unlock()
+func (h *handler) scheduleResetUsageRefresh(provider string) {
+	h.resetRefreshMu.Lock()
+	pending := &h.codexRefreshPending
+	if provider == "claude" {
+		pending = &h.claudeRefreshPending
+	}
+	if *pending {
+		h.resetRefreshMu.Unlock()
 		return
 	}
-	h.codexRefreshPending = true
-	h.codexRefreshMu.Unlock()
+	*pending = true
+	h.resetRefreshMu.Unlock()
 	go func() {
 		defer func() {
-			h.codexRefreshMu.Lock()
-			h.codexRefreshPending = false
-			h.codexRefreshMu.Unlock()
+			h.resetRefreshMu.Lock()
+			*pending = false
+			h.resetRefreshMu.Unlock()
 		}()
-		// Give OpenAI time to apply the reset, then update the ordinary usage
+		// Give the provider time to apply the reset, then update the ordinary usage
 		// cache once. This is only a provider GET, never another redemption.
 		// It outlives the response but has its own bounded fetch deadline.
 		time.Sleep(3 * time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		_, _, _ = h.poller.PollProvider(ctx, "codex")
+		_, _, _ = h.poller.PollProvider(ctx, provider)
 	}()
 }
 
@@ -236,6 +248,11 @@ func eligibleForCodexReset(entry poller.Entry) bool {
 		}
 	}
 	return false
+}
+
+func eligibleForClaudeReset(entry poller.Entry) bool {
+	credits := entry.Data.RateLimitResetCredits
+	return entry.Data.Error == nil && entry.Data.ProviderAccountID != "" && credits != nil && credits.AvailableCount > 0 && credits.UsableNow != nil && *credits.UsableNow
 }
 
 func (h *handler) route(w http.ResponseWriter, r *http.Request, method string, next http.HandlerFunc) {

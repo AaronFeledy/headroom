@@ -126,7 +126,7 @@ func Test_BuildPoller_discovers_cursor_credentials_for_every_bind(t *testing.T) 
 
 			// When
 			discovery := &cursor.Discovery{Environment: winprofile.Environment{GOOS: "linux", Home: home, Root: t.TempDir(), Env: func(string) string { return "" }}, Now: time.Now}
-			_, _, cursorClient, _, _, err := buildPollerWithCursorDiscovery(cfg, discovery)
+			_, _, _, cursorClient, _, _, err := buildPollerWithCursorDiscovery(cfg, discovery)
 			if err != nil {
 				t.Fatalf("buildPoller error = %v", err)
 			}

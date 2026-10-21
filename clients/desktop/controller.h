@@ -76,11 +76,12 @@ public:
     QVariantMap resetAction() const;
     // DO NOT test this button, endpoint, or any code that could trigger a reset.
     // A reset is valuable and irreversible; the skip-only tests are intentional.
-    Q_INVOKABLE bool prepareChatGptReset();
-    Q_INVOKABLE void cancelChatGptResetConfirmation();
-    Q_INVOKABLE void consumeChatGptReset();
-    Q_INVOKABLE bool scheduleChatGptReset();
-    Q_INVOKABLE void cancelScheduledChatGptReset();
+    Q_INVOKABLE bool prepareReset(const QString &provider);
+    Q_INVOKABLE void cancelResetConfirmation();
+    Q_INVOKABLE void consumeReset();
+    Q_INVOKABLE bool scheduleReset();
+    Q_INVOKABLE void cancelScheduledReset();
+    Q_INVOKABLE QVariantMap resetState(const QString &provider) const;
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QVariantMap loginCopy(const QVariantMap &provider) const;
@@ -135,17 +136,18 @@ private:
     bool transientRecoveryActive() const;
     void syncConnection();
     void verifyRemote(bool upgrade);
-    QVariantMap chatGptWeekly() const;
-    bool chatGptResetEligible() const;
-    bool chatGptResetAwaitingUsage() const;
+    QVariantMap resetReading(const QString &provider) const;
+    bool resetReadingFresh(const QString &provider) const;
+    bool resetEligible(const QString &provider) const;
+    bool resetAwaitingUsage(const QString &provider) const;
     QString resetConnectionIdentity() const;
-    QString resetReceiptPath() const;
+    QString resetReceiptPath(const QString &provider) const;
     QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
-    void observeScheduledChatGptReset();
-    void expireScheduledChatGptReset();
-    void clearScheduledChatGptReset();
-    void submitChatGptReset(bool automatic);
+    void observeScheduledReset();
+    void expireScheduledReset();
+    void clearScheduledReset();
+    void submitReset(bool automatic);
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
@@ -186,7 +188,7 @@ private:
     bool m_proofAttempted = false;
     QPointer<QNetworkReply> m_reply;
     QPointer<QNetworkReply> m_resetReply;
-    QString m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
+    QString m_resetProvider = "Codex", m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
     bool m_resetBusy = false;
     // One-shot authorization is session-only and bound to this account,
     // transport, and weekly window. Never restore it on an app restart.

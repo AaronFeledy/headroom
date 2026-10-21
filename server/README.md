@@ -24,7 +24,7 @@ and source checkouts use their original deployment method to update.
 From `server/`:
 
 ```bash
-go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
+go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
 go build -trimpath -ldflags='-s -w -buildid=' -o usage-server ./cmd/usage-server
@@ -81,6 +81,7 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `GET /api/v1/tls/proof?nonce=<64 hex>` - unauthenticated TLS identity proof; available only over HTTPS when a bearer token is configured.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 - `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
+- `POST /api/v1/providers/claude/reset` - explicitly confirmed banked reset for Claude. Uses the same three JSON fields and browser-origin rejection as the Codex route. New requests require fresh successful Claude usage, a positive available count, `usable_now: true`, and a matching account fingerprint.
 
 ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
 allowance produces one `weekly` bucket; an absent five-hour window does not
@@ -91,7 +92,8 @@ Successful ChatGPT (`Codex`) usage entries include read-only
 banked-reset count. It contains `available_count` and a nullable, opaque
 `account_fingerprint` that binds a confirmed action to the observed account
 without exposing the provider account ID. The field is `null` when the count is
-unknown or on provider errors.
+unknown or on provider errors. The additive `usable_now` field is `null` for
+Codex; its existing weekly-at-least-95% eligibility rule is unchanged.
 
 The reset response contains `outcome`: `reset`, `already_redeemed`,
 `nothing_to_reset`, or `no_credit`. Reset submission is a single attempt: no
@@ -115,6 +117,50 @@ usage below 95% has been observed, including while a successful reset propagates
 After submission, the server waits three seconds and performs one read-only OpenAI
 usage fetch. The desktop checks the usage cache after 5, 12, and 25 seconds while
 waiting, then continues normal polling. These reads never resubmit a reset.
+
+### Claude banked resets
+
+Anthropic's banked-reset status, profile, and consumption endpoints are
+undocumented. Successful Claude usage may include the same
+`rate_limit_reset_credits` object, with `available_count`, nullable
+`account_fingerprint`, and boolean `usable_now`. Available counts sum unpaused
+grants with remaining resets. `usable_now` additionally requires eligibility,
+no active cooldown, and a usable next grant. Ineligible accounts with no remaining
+grants, absent/malformed status, and provider usage errors report null metadata.
+Profile lookup failure leaves the count visible but the fingerprint null, which
+prevents consumption. Account and organization UUIDs never appear in API JSON.
+
+The ordinary usage GET remains unchanged so extra-usage data is preserved. A
+separate read-only GET appends exactly `?cedar_ember=1&skip_spend=1`. Status reads
+are normally at least five minutes apart, shortened to one minute when the
+ordinary session or weekly reading reaches 95%. Failed status reads, including
+429s, do not fail ordinary usage; last-good metadata is retained for at most
+15 minutes. Status is not read after a failed ordinary usage fetch. Profiles
+are fetched only for positive available counts and cached by access token.
+
+The Claude reset route applies the same JSON size/shape, confirmation, UUID,
+fingerprint, browser-header, authentication, shared in-flight lock, and deadline
+guards as Codex. Ineligible new requests return `409` with
+`fresh eligible Claude usage is required`. Immediately before submission, the
+provider checks fresh credentials, the token-bound profile identity, and a fresh
+status GET. Claude outcomes are `reset`, `already_redeemed`, `nothing_to_reset`,
+or `unavailable`; Codex retains its existing outcomes including `no_credit`.
+Successful outcomes return `200`; uncertain or unavailable submissions return
+`502` without retry. Invalid JSON/confirmation/identity fields return `400`,
+browser headers `403`, and non-JSON content `415`, as on the Codex route.
+
+Every attempted ID is remembered for the server process lifetime, up to 1024
+attempts without eviction. A repeated successful ID returns `already_redeemed`;
+uncertain IDs are never resent. New IDs remain blocked until a successful status
+GET begun after submission for the same account shows fewer available resets or
+`usable_now: false`. Definitive non-consuming results release that gate
+immediately. One delayed read-only usage refresh is scheduled after an attempt;
+its status read bypasses the pre-submission cache. Both HTTP and SSH uploads are
+single-shot, non-rewindable, and never redirected or retried.
+
+Never exercise either provider's consume method, reset HTTP route, or SSH reset
+forwarding during tests or manual validation, even with a fake upstream. Their
+skip-only safety tests are intentional, not TODOs.
 
 Each usage entry also includes an always-present `auth` object: `state`
 (`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,

@@ -49,7 +49,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test with race detector
-        run: go test -race -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
+        run: go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
       - name: Build packages
         run: go build ./...
 
@@ -466,7 +466,7 @@ jobs:
         id: mac-server
         timeout-minutes: 10
         run: |
-          (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
+          (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
       - name: Test native macOS installs and update transactions
         id: mac-manager
         timeout-minutes: 10

@@ -17,8 +17,8 @@ public:
     QVariantList presented() const { return m_presented; }
     void post(const QString &target, const QString &title, const QString &message, int severity = 0, const QVariantMap &details = {});
     void observeUpdate(const QString &state, const QString &version, const QString &message, bool enabled);
-    void observeBankedResetCount(qint64 count, const QString &accountFingerprint, bool enabled);
-    void resetBankedResetBaseline();
+    void observeBankedResetCount(const QString &provider, qint64 count, const QString &accountFingerprint, bool enabled);
+    void resetBankedResetBaseline(const QString &provider = {});
     void observeUsage(const QVariantList &providers, bool enabled,
                       const QDateTime &now = QDateTime::currentDateTimeUtc());
     void resetUsageBaseline(const QString &provider = {});
@@ -39,8 +39,11 @@ private:
         QHash<QString, UsageSample> buckets;
     };
     QHash<QString, UsageBaseline> m_usageBaselines;
-    qint64 m_bankedResetCount = -1;
-    QString m_resetAccountFingerprint;
+    struct BankedResetBaseline {
+        qint64 count = -1;
+        QString accountFingerprint;
+    };
+    QHash<QString, BankedResetBaseline> m_bankedResetBaselines;
     QVariantList m_pending, m_presented;
     QSet<QString> m_highlights;
     QHash<QString, QString> m_updateEpisodes;

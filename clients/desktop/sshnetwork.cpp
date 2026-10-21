@@ -37,7 +37,9 @@ bool allowed(const QByteArray &method, const QString &path)
     if (method == "PUT") return path == QStringLiteral("/api/v1/providers/cursor/credentials")
         || path == QStringLiteral("/api/v1/providers/grok/credentials");
     // DO NOT test the reset endpoint or any code that could trigger a valuable banked reset.
+    // This prohibition also covers Claude forwarding, even with fixtures or fakes.
     if (method == "POST") return path == QStringLiteral("/api/v1/providers/codex/reset")
+        || path == QStringLiteral("/api/v1/providers/claude/reset")
         || path == QStringLiteral("/api/v1/usage/refresh");
     return false;
 }
@@ -91,7 +93,8 @@ public:
             : operation == QNetworkAccessManager::PostOperation ? QByteArrayLiteral("POST") : QByteArray();
         const QString path = request.url().path(QUrl::FullyDecoded);
         const bool resetRequest = method == QByteArrayLiteral("POST")
-            && path == QStringLiteral("/api/v1/providers/codex/reset");
+            && (path == QStringLiteral("/api/v1/providers/codex/reset")
+                || path == QStringLiteral("/api/v1/providers/claude/reset"));
         QUrl address;
         if (!SshTransport::parseAddress(request.url().adjusted(QUrl::RemovePath).toString(QUrl::FullyEncoded), &address)
             || !allowed(method, path)) {
