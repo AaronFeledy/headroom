@@ -165,7 +165,7 @@ func allowedRequest(request requestFrame) bool {
 		return true
 	// This route can spend a very valuable banked reset. Do not test the reset
 	// button, endpoint, or code that may trigger it. Its skipped test is intentional.
-	case "POST /api/v1/providers/codex/reset":
+	case "POST /api/v1/providers/codex/reset", "POST /api/v1/providers/claude/reset":
 		return true
 	default:
 		return false
@@ -182,7 +182,7 @@ func doRequest(ctx context.Context, home string, request requestFrame) (int, []b
 	}
 	defer transport.CloseIdleConnections()
 	requestTimeout := 10 * time.Second
-	if request.Method == http.MethodPost && request.Path == "/api/v1/providers/codex/reset" {
+	if request.Method == http.MethodPost && (request.Path == "/api/v1/providers/codex/reset" || request.Path == "/api/v1/providers/claude/reset") {
 		requestTimeout = 70 * time.Second
 	}
 	client := &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -192,7 +192,7 @@ func doRequest(ctx context.Context, home string, request requestFrame) (int, []b
 	if err != nil {
 		return 0, nil, err
 	}
-	if request.Method == http.MethodPost && request.Path == "/api/v1/providers/codex/reset" {
+	if request.Method == http.MethodPost && (request.Path == "/api/v1/providers/codex/reset" || request.Path == "/api/v1/providers/claude/reset") {
 		// DO NOT test this path. The reset upload may be sent only once,
 		// including when a socket connection fails before a reply arrives.
 		httpRequest.GetBody = nil
