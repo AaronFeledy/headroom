@@ -72,6 +72,14 @@ func Test_UsageData_MarshalJSON_emits_optional_reset_credit_metadata(t *testing.
 	}
 	assertJSONField(t, encoded, "rate_limit_reset_credits.available_count", `3`)
 	assertJSONField(t, encoded, "rate_limit_reset_credits.account_fingerprint", `"`+fingerprint+`"`)
+	assertJSONField(t, encoded, "rate_limit_reset_credits.usable_now", `null`)
+	usable := true
+	data.RateLimitResetCredits.UsableNow = &usable
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.usable_now", `true`)
 
 	errorText := "unavailable"
 	data.Error = &errorText
