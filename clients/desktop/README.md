@@ -34,7 +34,8 @@ clears that opening's activity and highlights, preventing replay on the next
 opening. Native notification clicks open the dashboard on the Qt and Windows
 stable-tray paths.
 
-Changes in ChatGPT's reported banked-reset count use this same notification path.
+Changes in Claude's and ChatGPT's reported banked-reset counts use this same notification path,
+with independent baselines for each provider.
 The first valid count establishes a baseline. Missing/failed readings do not imply
 zero; account or connection changes establish a new baseline. Disabled notifications
 still update the baseline, so enabling them does not replay past changes. A decrease
@@ -451,12 +452,12 @@ percentage or pacing marker. The existing Windows pacing indicators are retained
 Headroom uses the server's provider names, subtitles, bucket labels, variable
 meter counts, status text, and authentication errors. Live accounts may return
 different bucket layouts. Both clients retain pacing and provider ordering.
-When ChatGPT reports one or more banked usage resets, Headroom shows the available
+When Claude or ChatGPT reports one or more banked usage resets, Headroom shows the available
 count at the right of its weekly meter's bottom text row. The label turns red only
-while ChatGPT's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
+while that provider's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
-Activate the label to open ChatGPT's usage and reset controls in a browser.
-At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
+Activate the label to open that provider's usage and reset controls in a browser.
+For ChatGPT, at 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
 is available. Its confirmation offers **Use now** or **Use automatically at 100%**.
 The automatic choice authorizes one reset for the current account, connection,
 and weekly window. Headroom checks the server's usage snapshot every 15 seconds
@@ -474,6 +475,27 @@ connection failure or app restart, until fresh usage for the same account falls
 below 95%. Headroom schedules read-only usage refreshes after submission to pick
 up the reset's effect. The button can appear again when weekly usage
 subsequently reaches 95%. Both the desktop and server must support resets.
+
+Claude uses the same confirmation and selected Local, HTTP(S), or SSH transport.
+Its **Use reset…** button appears with an account-bound banked reset when Anthropic
+reports that it can be used now, or when session or weekly usage reaches 95%.
+**Use now** requires Anthropic's explicit `usable_now: true`; an unknown or false
+value cannot authorize immediate use. **Use automatically at limit** authorizes
+one reset when a fresh reading reports session or weekly usage at 100% and
+`usable_now: true`. Automatic use requires a known future weekly reset deadline,
+so authorization cannot survive an unknown window. The same 15-second cache polling, weekly-window expiry,
+identity checks, and cancellation on connection/account changes, exhausted credits,
+or an existing request apply. Provider errors pause monitoring. Unlike ChatGPT,
+Claude does not cancel merely because weekly usage falls below 95%.
+Only one provider can have an active confirmation, submission, or automatic choice
+at a time. Spending a reset cannot be undone. A durable Claude receipt prevents
+another request until a fresh successful reading shows fewer banked resets than
+at submission or explicitly reports `usable_now: false`. An `unavailable` result
+means Anthropic declined the reset and no reset was used; it retains the same
+receipt protection as other non-consuming terminal results until usage updates.
+Old receipts without a provider remain ChatGPT receipts. Reset submission and
+automatic firing are deliberately excluded from executable verification; the
+reset-prohibited suite stays disabled and skip-only.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies
