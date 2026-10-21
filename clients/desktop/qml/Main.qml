@@ -211,22 +211,28 @@ ApplicationWindow {
         id: resetConfirmation
         objectName: "resetConfirmation"
         property var action: backend.resetAction
+        readonly property bool claude: action.provider === "Claude"
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(440, parent.width - 32)
         modal: true; focus: true; padding: 24
         closePolicy: Popup.NoAutoClose
         onOpened: resetCancel.forceActiveFocus()
-        onClosed: { backend.cancelChatGptResetConfirmation(); restoreEscapeFocus() }
+        onClosed: { backend.cancelResetConfirmation(); restoreEscapeFocus() }
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
         Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
             spacing: 12
             Text { text: resetConfirmation.action.automatic ? "Automatic reset scheduled" : "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Text {
-                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.automatic
-                text: resetConfirmation.action.automatic
-                    ? "One reset will be used when a usage update reports 100% weekly usage. Keep Headroom running; quitting cancels this choice."
-                    : "Use one reset now, or once a usage update reports 100% weekly usage. Keep Headroom running for automatic use. Spending a reset cannot be undone."
+                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.canSchedule || resetConfirmation.action.automatic
+                text: {
+                    if (resetConfirmation.claude) return resetConfirmation.action.automatic
+                        ? "One Claude reset will be used when a usage update reports a session or weekly limit and Anthropic allows a reset. Keep Headroom running; quitting cancels this choice. Spending a reset cannot be undone."
+                        : "Use one Claude reset now when Anthropic allows it, or once a usage update reports a session or weekly limit and Anthropic allows a reset. Keep Headroom running for automatic use. Spending a reset cannot be undone."
+                    return resetConfirmation.action.automatic
+                        ? "One reset will be used when a usage update reports 100% weekly usage. Keep Headroom running; quitting cancels this choice."
+                        : "Use one reset now, or once a usage update reports 100% weekly usage. Keep Headroom running for automatic use. Spending a reset cannot be undone."
+                }
                 color: Theme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Text {
@@ -237,7 +243,7 @@ ApplicationWindow {
             }
             RowLayout {
                 Layout.fillWidth: true
-                ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
+                ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally(resetConfirmation.claude ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage") }
                 Item { Layout.fillWidth: true }
                 ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
             }
@@ -249,22 +255,22 @@ ApplicationWindow {
                 enabled: resetConfirmation.action.canConfirm
                 text: resetConfirmation.action.busy ? "Using reset…" : "Use now"
                 accent: true; Layout.fillWidth: true
-                onClicked: backend.consumeChatGptReset()
+                onClicked: backend.consumeReset()
             }
             ActionButton {
                 objectName: "scheduleBankedReset"
-                visible: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic
+                visible: (resetConfirmation.action.canConfirm || resetConfirmation.action.canSchedule) && !resetConfirmation.action.automatic
                 enabled: resetConfirmation.action.canSchedule
-                text: "Use automatically at 100%"
+                text: resetConfirmation.claude ? "Use automatically at limit" : "Use automatically at 100%"
                 Layout.fillWidth: true
-                onClicked: if (backend.scheduleChatGptReset()) resetConfirmation.close()
+                onClicked: if (backend.scheduleReset()) resetConfirmation.close()
             }
             ActionButton {
                 objectName: "cancelScheduledBankedReset"
                 visible: resetConfirmation.action.automatic
                 text: "Cancel automatic reset"
                 Layout.fillWidth: true
-                onClicked: { backend.cancelScheduledChatGptReset(); resetConfirmation.close() }
+                onClicked: { backend.cancelScheduledReset(); resetConfirmation.close() }
             }
         }
     }
@@ -294,7 +300,7 @@ ApplicationWindow {
                                 provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
                                 notificationViewport: scroll
                                 presentingNotifications: window.presentingNotifications && !notificationReveal.running
-                                onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
+                                onResetRequested: { backend.prepareReset(name); if (backend.resetAction.provider === name) resetConfirmation.open() }
                             }
                         }
                     }

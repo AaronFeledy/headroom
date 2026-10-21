@@ -90,6 +90,26 @@ inline QByteArray snapshotWithCodex(double sessionUsed, double weeklyUsed, int r
     return QJsonDocument(providers).toJson();
 }
 
+inline QByteArray snapshotWithClaude(double sessionUsed, double weeklyUsed, int resetCount,
+                                    const QJsonValue &usableNow, const QString &fingerprint = QString(64, 'b')) {
+    auto providers = QJsonDocument::fromJson(snapshot()).array();
+    auto claude = providers[0].toObject();
+    auto buckets = claude["buckets"].toArray();
+    for (int i = 0; i < buckets.size(); ++i) {
+        auto bucket = buckets[i].toObject();
+        if (bucket["id"] == "session") bucket["utilization"] = sessionUsed;
+        if (bucket["id"] == "weekly") bucket["utilization"] = weeklyUsed;
+        buckets[i] = bucket;
+    }
+    claude["buckets"] = buckets;
+    claude["rate_limit_reset_credits"] = QJsonObject{{"available_count", resetCount},
+        {"account_fingerprint", fingerprint}, {"usable_now", usableNow}};
+    claude["fetch_status"] = QJsonObject{{"fetched_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+        {"failure_kind", QJsonValue::Null}, {"credential_epoch", QJsonValue::Null}};
+    providers[0] = claude;
+    return QJsonDocument(providers).toJson();
+}
+
 }
 
 class ControllerFixture final : public Controller {
