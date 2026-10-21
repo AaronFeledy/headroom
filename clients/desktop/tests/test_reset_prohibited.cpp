@@ -19,6 +19,15 @@ private slots:
     void resetTransportMustNeverBeRetriedOrTested() {
         QSKIP("DO NOT TEST or add retry behavior to reset submission, upload replay, SSH forwarding, or the provider POST. Do not simulate failed reset requests or consume a reset to verify that retries are disabled. This intentional skip must remain unimplemented and disabled.");
     }
+    void claudeResetButtonAndConfirmationMustNotBeTested() {
+        QSKIP("DO NOT TEST the Claude reset button, Use now, or confirmation. It can burn a very valuable banked reset. This skip is intentional; do not implement or enable this test.");
+    }
+    void claudeAutomaticResetMustNotBeTested() {
+        QSKIP("DO NOT TEST Claude automatic reset arming or firing, even with fixtures or fakes. It can burn a very valuable banked reset. This skip is intentional; do not implement or enable this test.");
+    }
+    void claudeResetReceiptAndTransportsMustNotBeTestedThroughRedemption() {
+        QSKIP("DO NOT TEST Claude reset submission, the reset endpoint, durable receipts, latch release, HTTP(S), or SSH through redemption, even with mocked transports. A reset is very valuable; do not implement or enable this test.");
+    }
 };
 
 QTEST_APPLESS_MAIN(ResetProhibitedTest)
