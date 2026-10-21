@@ -15,13 +15,15 @@ import (
 )
 
 const (
-	providerName      = "Claude"
-	primaryLabel      = "Current Session"
-	secondaryLabel    = "Weekly"
-	defaultUsageURL   = "https://api.anthropic.com/api/oauth/usage"
-	defaultTokenURL   = "https://platform.claude.com/v1/oauth/token"
-	betaHeader        = "oauth-2025-04-20"
-	userAgent         = "claude-code/2.1.69"
+	providerName    = "Claude"
+	primaryLabel    = "Current Session"
+	secondaryLabel  = "Weekly"
+	defaultUsageURL = "https://api.anthropic.com/api/oauth/usage"
+	defaultTokenURL = "https://platform.claude.com/v1/oauth/token"
+	betaHeader      = "oauth-2025-04-20"
+	// Banked-reset discovery requires the Claude CLI identity (2.1.280+).
+	// The legacy claude-code identity returns ineligible_reason: surface.
+	userAgent         = "claude-cli/2.1.306 (external, cli)"
 	oauthClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultTimeout    = 15 * time.Second
 	expirySkew        = 60 * time.Second

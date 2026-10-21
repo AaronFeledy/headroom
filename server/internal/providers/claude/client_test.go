@@ -26,7 +26,7 @@ func Test_Client_Fetch_returns_usage_when_claude_credentials_are_valid(t *testin
 		if r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
 			t.Fatalf("anthropic-beta = %q", r.Header.Get("anthropic-beta"))
 		}
-		if r.Header.Get("User-Agent") != "claude-code/2.1.69" {
+		if r.Header.Get("User-Agent") != "claude-cli/2.1.306 (external, cli)" {
 			t.Fatalf("User-Agent = %q", r.Header.Get("User-Agent"))
 		}
 		writeResponse(t, w, `{"five_hour":{"utilization":42.5,"resets_at":"2026-07-12T18:30:00-04:00"},"seven_day":{"utilization":71,"resets_at":"2026-07-19T00:00:00Z"}}`)
