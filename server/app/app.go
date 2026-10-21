@@ -95,7 +95,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		defer sshListener.Close()
 	}
-	providerPoller, codexClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
 		return err
 	}
@@ -104,6 +104,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		Cursor:        cursorClient,
 		Grok:          grokProvider,
 		Codex:         codexClient,
+		Claude:        claudeClient,
 		Poller:        providerPoller,
 		Logger:        logger,
 		AuthToken:     cfg.AuthToken,
@@ -118,7 +119,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return errors.Join(err, listener.Close())
 	}
-	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint})
+	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Claude: claudeClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint})
 	defer listener.Close()
 	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
 		return err
@@ -139,7 +140,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	}
 	defer prepared.listener.Close()
 	cfg.AuthToken = prepared.request.Token
-	providerPoller, codexClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
 		return err
 	}
@@ -148,6 +149,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		Cursor:        cursorClient,
 		Grok:          grokProvider,
 		Codex:         codexClient,
+		Claude:        claudeClient,
 		Poller:        providerPoller,
 		Logger:        logger,
 		AuthToken:     cfg.AuthToken,
@@ -183,14 +185,15 @@ type appRuntime struct {
 	interval time.Duration
 }
 
-func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *cursor.Client, *grok.Provider, []string, error) {
+func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
 	return buildPollerWithCursorDiscovery(cfg, nil)
 }
 
-func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *cursor.Client, *grok.Provider, []string, error) {
+func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
 	providerPoller := poller.New(poller.Options{})
 	var cursorClient *cursor.Client
 	var codexClient *codex.Client
+	var claudeClient *claude.Client
 	var grokProvider *grok.Provider
 	names := []string{}
 	for name, providerCfg := range cfg.Providers {
@@ -199,7 +202,7 @@ func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discove
 		}
 		provider, err := buildProvider(name, providerCfg)
 		if err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 		if c, ok := provider.(*cursor.Client); ok {
 			if discovery != nil {
@@ -211,15 +214,18 @@ func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discove
 		if c, ok := provider.(*codex.Client); ok {
 			codexClient = c
 		}
+		if c, ok := provider.(*claude.Client); ok {
+			claudeClient = c
+		}
 		if g, ok := provider.(*grok.Provider); ok {
 			grokProvider = g
 		}
 		if err := providerPoller.Register(provider, true); err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 		names = append(names, provider.Name())
 	}
-	return providerPoller, codexClient, cursorClient, grokProvider, names, nil
+	return providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, nil
 }
 
 func buildProvider(name string, providerCfg config.ProviderConfig) (usage.Provider, error) {
