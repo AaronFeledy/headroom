@@ -149,7 +149,9 @@ func Test_Client_Fetch_forces_refresh_after_401_even_when_token_expiry_is_future
 			assertRefreshRequest(t, r, "refresh-token")
 			writeResponse(t, w, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`)
 		case "/api/oauth/usage":
-			atomic.AddInt32(&usageCalls, 1)
+			if r.URL.RawQuery == "" {
+				atomic.AddInt32(&usageCalls, 1)
+			}
 			if r.Header.Get("Authorization") == "Bearer revoked-access" {
 				w.WriteHeader(http.StatusUnauthorized)
 				writeResponse(t, w, `{"error":"unauthorized"}`)

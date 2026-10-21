@@ -35,18 +35,29 @@ type Options struct {
 	OpenCodePath    string
 	UsageURL        string
 	TokenURL        string
+	APIBaseURL      string
 	HTTPClient      *http.Client
 }
 
 type Client struct {
-	client   *http.Client
-	usageURL string
-	tokenURL string
-	paths    discoveryOptions
+	client     *http.Client
+	usageURL   string
+	tokenURL   string
+	apiBaseURL string
+	paths      discoveryOptions
 
-	stateMu   sync.Mutex
-	refreshMu sync.Mutex
-	loaded    *credentials
+	stateMu            sync.Mutex
+	refreshMu          sync.Mutex
+	loaded             *credentials
+	bankMu             sync.Mutex
+	bank               bankCache
+	resetMu            sync.Mutex
+	resetAttempts      map[string]resetAttempt
+	resetAttemptID     string
+	resetAccountID     string
+	resetStartedAt     time.Time
+	resetAvailable     int64
+	resetUsageObserved bool
 }
 
 func New(opts Options) *Client {
@@ -62,10 +73,15 @@ func New(opts Options) *Client {
 	if tokenURL == "" {
 		tokenURL = defaultTokenURL
 	}
+	apiBaseURL := strings.TrimRight(opts.APIBaseURL, "/")
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.anthropic.com"
+	}
 	return &Client{
-		client:   client,
-		usageURL: usageURL,
-		tokenURL: tokenURL,
+		client:     client,
+		usageURL:   usageURL,
+		tokenURL:   tokenURL,
+		apiBaseURL: apiBaseURL,
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
 			homeDir:        opts.HomeDir,
@@ -129,6 +145,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		if statusErr == nil {
 			authExpired = false
+			c.attachResetCredits(ctx, creds, &data)
 			return data, nil
 		}
 		failure = statusErr.failure
