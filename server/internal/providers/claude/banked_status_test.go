@@ -16,14 +16,14 @@ func Test_BankedStatus_computes_available_and_usable(t *testing.T) {
 	}{
 		{"absent", `{}`, 0, false, true},
 		{"malformed", `{"cedar_ember":{"eligible":"yes","grants":[]}}`, 0, false, true},
-		{"ineligible empty", `{"cedar_ember":{"eligible":false,"grants":[]}}`, 0, false, true},
+		{"ineligible empty", `{"cedar_ember":{"eligible":false,"grants":[]}}`, 0, false, false},
 		{"eligible empty", `{"cedar_ember":{"eligible":true,"grants":[]}}`, 0, false, false},
 		{"usable", `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true}]}}`, 2, true, false},
 		{"paused", `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":true,"usable_now":true}]}}`, 0, false, false},
 		{"ineligible credit", `{"cedar_ember":{"eligible":false,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true}]}}`, 2, false, false},
 		{"cooldown", `{"cedar_ember":{"eligible":true,"cooldown_until":"2099-01-01T00:00:00Z","next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true}]}}`, 2, false, false},
-		{"missing next", `{"cedar_ember":{"eligible":true,"next_grant_id":"b","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true}]}}`, 2, false, false},
-		{"bad grant", `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":-1,"paused":false,"usable_now":true},null,{"id":"bad/id"}]}}`, 0, false, false},
+		{"missing next", `{"cedar_ember":{"eligible":true,"next_grant_id":"b","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true}]}}`, 0, false, true},
+		{"bad grant", `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":-1,"paused":false,"usable_now":true},null,{"id":"bad/id"}]}}`, 0, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,15 +76,8 @@ func Test_BankedStatus_rejects_mistyped_optional_fields(t *testing.T) {
 			// When
 			status := parseBankStatus([]byte(body))
 			// Then
-			if !tc.grant {
-				if status != nil {
-					t.Fatal("mistyped block field accepted")
-				}
-				return
-			}
-			credits := status.credits(time.Time{})
-			if credits == nil || credits.AvailableCount != 0 || credits.UsableNow == nil || *credits.UsableNow {
-				t.Fatalf("mistyped grant contributed credits: %+v", credits)
+			if status != nil {
+				t.Fatal("mistyped field must invalidate the entire status")
 			}
 		})
 	}

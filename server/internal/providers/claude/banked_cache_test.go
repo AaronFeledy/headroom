@@ -38,7 +38,7 @@ func Test_BankedMetadata_refresh_cadence(t *testing.T) {
 			}))
 			defer server.Close()
 			c := New(Options{UsageURL: server.URL, APIBaseURL: server.URL, HTTPClient: server.Client()})
-			c.bank = bankCache{token: "fixture", attemptedAt: time.Now().Add(-tc.age), goodAt: time.Now(), status: &bankStatus{eligible: true}}
+			c.bank = bankCache{token: "fixture", accountID: "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222", attemptedAt: time.Now().Add(-tc.age), goodAt: time.Now(), status: &bankStatus{eligible: true}}
 			data := usage.UsageData{Buckets: []usage.Bucket{{ID: usage.BucketWeekly, Utilization: tc.utilization}}}
 			// When
 			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
@@ -80,8 +80,13 @@ func Test_BankedMetadata_only_valid_ineligible_status_releases_pending_gate(t *t
 			// When
 			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
 			// Then
-			if data.RateLimitResetCredits != nil {
-				t.Fatal("unknown credits must remain hidden")
+			credits := data.RateLimitResetCredits
+			if tc.blocked {
+				if credits != nil {
+					t.Fatal("unknown credits must remain hidden")
+				}
+			} else if credits == nil || credits.AvailableCount != 0 || credits.UsableNow == nil || *credits.UsableNow || credits.AccountFingerprint == nil {
+				t.Fatal("valid ineligible status must expose account-bound zero credits")
 			}
 			if _, blocked := c.ResetAttemptStatus("new-fixture"); blocked != tc.blocked {
 				t.Fatalf("pending gate blocked = %v, want %v", blocked, tc.blocked)

@@ -128,19 +128,16 @@ func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, dat
 	if time.Since(c.bank.goodAt) <= 15*time.Minute {
 		data.RateLimitResetCredits = c.bank.status.credits(time.Now())
 	}
-	if credits := data.RateLimitResetCredits; credits != nil && credits.AvailableCount > 0 {
+	if credits := data.RateLimitResetCredits; credits != nil {
 		if account, err := c.bankAccount(ctx, creds.accessToken); err == nil {
 			data.ProviderAccountID = account
 			credits.AccountFingerprint = accountFingerprint(account)
 		}
 	}
-	// Zero-credit observations still need the token-bound identity cached earlier.
+	// Zero-credit readings need the same verified identity as positive counts,
+	// including after a restart. Only fresh validated status can release a gate.
 	accountID := c.bank.accountID
 	observed := data.RateLimitResetCredits
-	if !started.IsZero() && observed == nil && c.bank.status != nil && !c.bank.status.eligible {
-		usable := false
-		observed = &usage.RateLimitResetCredits{UsableNow: &usable}
-	}
 	c.bankMu.Unlock()
 	if !started.IsZero() {
 		c.observeResetStatus(observed, accountID, started)

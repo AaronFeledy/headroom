@@ -68,14 +68,19 @@ func parseBankStatus(body []byte) *bankStatus {
 	var total int64
 	for _, raw := range block.Grants {
 		var grant bankGrant
+		// A partial count or inferred refusal could release an unresolved reset.
+		// Invalid grants make the whole reading unknown; never discard them.
 		if json.Unmarshal(raw, &grant) != nil || !grantIDPattern.MatchString(grant.ID) || grant.ResetsTotal == nil || grant.ResetsLeft == nil || *grant.ResetsTotal < 0 || *grant.ResetsLeft < 0 || grant.Paused == nil || grant.UsableNow == nil || seen[grant.ID] {
-			continue
+			return nil
 		}
 		seen[grant.ID] = true
 		switch grant.Type {
 		case "", "session", "weekly", "full":
 		default:
-			continue
+			return nil
+		}
+		if status.nextGrantID == "" && !*grant.Paused && *grant.ResetsLeft > 0 && *grant.UsableNow {
+			return nil
 		}
 		if !*grant.Paused {
 			if *grant.ResetsLeft > math.MaxInt64-total {
@@ -85,6 +90,9 @@ func parseBankStatus(body []byte) *bankStatus {
 		}
 		status.grants = append(status.grants, grant)
 	}
+	if status.nextGrantID != "" && !seen[status.nextGrantID] {
+		return nil
+	}
 	return status
 }
 
@@ -93,12 +101,11 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 		return nil
 	}
 	var available int64
-	hasCredit, usable := false, false
+	usable := false
 	for _, grant := range s.grants {
 		if *grant.ResetsLeft <= 0 {
 			continue
 		}
-		hasCredit = true
 		if *grant.Paused {
 			continue
 		}
@@ -107,9 +114,8 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 			usable = true
 		}
 	}
-	if !s.eligible && !hasCredit {
-		return nil
-	}
+	// A validated empty/ineligible reading is known zero, not unknown. Keep
+	// it serializable so an account-bound desktop receipt can be reconciled.
 	usable = usable && s.eligible && (s.cooldownUntil == nil || !s.cooldownUntil.After(now))
 	return &usage.RateLimitResetCredits{AvailableCount: available, UsableNow: &usable}
 }
