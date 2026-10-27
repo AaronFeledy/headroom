@@ -125,10 +125,15 @@ undocumented. Successful Claude usage may include the same
 `rate_limit_reset_credits` object, with `available_count`, nullable
 `account_fingerprint`, and boolean `usable_now`. Available counts sum unpaused
 grants with remaining resets. `usable_now` additionally requires eligibility,
-no active cooldown, and a usable next grant. Ineligible accounts with no remaining
-grants, absent/malformed status, and provider usage errors report null metadata.
-Profile lookup failure leaves the count visible but the fingerprint null, which
-prevents consumption. Account and organization UUIDs never appear in API JSON.
+no active cooldown, and a usable next grant. Valid status with no available grants
+reports zero available resets and `usable_now: false`, retaining the verified
+account fingerprint so the desktop can reconcile a pending receipt. Absent or
+malformed status and provider usage errors report null metadata. A malformed,
+duplicate, or unsupported grant, or an inconsistent next-grant reference, makes
+the entire status unknown; a partial count or inferred refusal cannot release a
+pending reset. Profile lookup failure leaves the count visible but the fingerprint
+null, which prevents consumption and account-bound receipt release. Account and
+organization UUIDs never appear in API JSON.
 
 The ordinary usage GET remains unchanged so extra-usage data is preserved. A
 separate read-only GET appends exactly `?cedar_ember=1&skip_spend=1`. Status reads
@@ -136,7 +141,9 @@ are normally at least five minutes apart, shortened to one minute when the
 ordinary session or weekly reading reaches 95%. Failed status reads, including
 429s, do not fail ordinary usage; last-good metadata is retained for at most
 15 minutes. Status is not read after a failed ordinary usage fetch. Profiles
-are fetched only for positive available counts and cached by access token.
+are fetched for valid banked status, including zero available counts, and cached
+by access token. This preserves account binding after a server restart without
+reusing another token's identity.
 
 The Claude reset route applies the same JSON size/shape, confirmation, UUID,
 fingerprint, browser-header, authentication, shared in-flight lock, and deadline
