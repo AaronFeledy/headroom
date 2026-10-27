@@ -169,7 +169,7 @@ QVariantMap Controller::resetState(const QString &provider) const {
     const bool occupied = m_resetBusy || !m_resetConfirmation.isEmpty() || !m_autoResetConnection.isEmpty();
     const bool visible = automatic || (reading.value("available_count").toLongLong() > 0
         && validFingerprint(reading.value("account_fingerprint").toString())
-        && (reading.value("utilization").toDouble() >= 95
+        && (reading.value("utilization").toDouble() >= 90
             || (provider == "Claude" && reading.value("usable_now").metaType().id() == QMetaType::Bool
                 && reading.value("usable_now").toBool())));
     const bool canPrepare = provider == "Claude" ? visible && resetReadingFresh(provider) && !m_resetBusy
@@ -187,7 +187,7 @@ QVariantMap Controller::resetAction() const {
     const auto state = resetState(m_resetProvider);
     const bool canSchedule = !m_resetConfirmation.isEmpty() && m_resetConfirmation == resetConnectionIdentity()
         && !m_resetBusy && state.value("visible").toBool() && !resetAwaitingUsage(m_resetProvider)
-        && resetReadingFresh(m_resetProvider);
+        && resetReadingFresh(m_resetProvider) && (m_resetProvider != "Codex" || canConfirm);
     return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", automatic},
         {"awaitingUsage", resetAwaitingUsage(m_resetProvider)},
         {"enabled", automatic || (m_resetConfirmation.isEmpty() && resetEligible(m_resetProvider))},

@@ -951,8 +951,21 @@ private slots:
         const QString captureDir = requested.isEmpty() ? dir.path() : requested;
         QVERIFY(QDir().mkpath(captureDir));
         QVERIFY(window->grabWindow().save(QDir(captureDir).filePath("headroom-claude-banked-resets.png")));
+        // The button appears from 90% weekly usage without Anthropic's usable_now.
+        // Captures come before the assertion so the boundary renders in both states.
+        for (const double weekly : {89.99, 90.0}) {
+            controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, weekly, 3, QJsonValue::Null));
+            QVERIFY(button());
+            for (int width : {460, 1000}) {
+                window->resize(width, 1000); QTest::qWait(100);
+                QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
+                    QString("headroom-claude-reset-boundary-weekly%1-%2.png").arg(weekly).arg(width))));
+            }
+            QTRY_COMPARE(button()->isVisible(), weekly >= 90);
+        }
         struct Reading { double session, weekly; int count; QJsonValue usable; bool visible; };
-        const QList<Reading> readings{{40, 60, 3, false, false}, {94, 94, 3, QJsonValue::Null, false},
+        const QList<Reading> readings{{40, 60, 3, false, false}, {89.99, 89.99, 3, QJsonValue::Null, false},
+            {90, 40, 3, false, true}, {40, 90, 3, QJsonValue::Null, true}, {94, 94, 3, QJsonValue::Null, true},
             {95, 40, 3, false, true}, {40, 95, 3, false, true}, {100, 40, 3, true, true},
             {40, 100, 3, true, true}, {100, 100, 0, true, false}};
         // Visibility and labels only. DO NOT click, confirm, arm, or invoke a reset.
@@ -960,6 +973,8 @@ private slots:
             controller.replaceSnapshot(TestUsage::snapshotWithClaude(reading.session, reading.weekly, reading.count, reading.usable));
             QVERIFY(button()); QTRY_COMPARE(button()->isVisible(), reading.visible);
             QTRY_COMPARE(label()->isVisible(), reading.count > 0);
+            // Visible is not eligible: Use now still needs usable_now == true.
+            QCOMPARE(controller.resetState("Claude").value("eligible").toBool(), reading.visible && reading.usable == QJsonValue(true));
         }
         controller.replaceSnapshot(TestUsage::snapshotWithClaude(100, 100, 3, true, "invalid"));
         QTRY_VERIFY(!button()->isVisible());
@@ -985,6 +1000,65 @@ private slots:
         claude["error"] = "Unavailable"; claude["is_success"] = false; noWeekly[0] = claude;
         controller.replaceSnapshot(QJsonDocument(noWeekly).toJson());
         QTRY_VERIFY(!button() || !button()->isVisible());
+    }
+    void codexBankedResetButtonAppearsAt90WithoutInvokingActions() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
+        // snapshotWithCodex has no account binding; the button needs the server's opaque fingerprint.
+        auto bound = [&](double weekly, int count, const QString &fingerprint = QString(64, 'c')) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, weekly, count, reset)).array();
+            auto codex = providers[1].toObject();
+            codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
+            providers[1] = codex;
+            return QJsonDocument(providers).toJson();
+        };
+        ControllerFixture controller(dir.filePath("settings.json"), bound(89.99, 3));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto button = [&] { return findItem(window->contentItem(), "useBankedReset_Codex"); };
+        const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        const QString captureDir = requested.isEmpty() ? dir.path() : requested;
+        QVERIFY(QDir().mkpath(captureDir));
+        // Visibility and eligibility only. DO NOT click, confirm, arm, or invoke a reset.
+        for (const double weekly : {89.99, 90.0}) {
+            controller.replaceSnapshot(bound(weekly, 3));
+            QVERIFY(button());
+            for (int width : {460, 1000}) {
+                window->resize(width, 1000); QTest::qWait(100);
+                QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
+                    QString("headroom-codex-reset-boundary-weekly%1-%2.png").arg(weekly).arg(width))));
+            }
+            QTRY_COMPARE(button()->isVisible(), weekly >= 90);
+        }
+        // ChatGPT shows the button from 90% but Use now still requires 95% weekly usage.
+        struct Reading { double weekly; int count; QString fingerprint; bool visible, eligible; };
+        const QList<Reading> readings{{89.99, 3, QString(64, 'c'), false, false}, {90, 3, QString(64, 'c'), true, false},
+            {94.99, 3, QString(64, 'c'), true, false}, {95, 3, QString(64, 'c'), true, true}, {100, 3, QString(64, 'c'), true, true},
+            {95, 0, QString(64, 'c'), false, false}, {95, 3, "invalid", false, false}};
+        for (const auto &reading : readings) {
+            controller.replaceSnapshot(bound(reading.weekly, reading.count, reading.fingerprint));
+            QVERIFY(button()); QTRY_COMPARE(button()->isVisible(), reading.visible);
+            QTRY_COMPARE(button()->isEnabled(), reading.eligible);
+            const auto state = controller.resetState("Codex");
+            QCOMPARE(state.value("visible").toBool(), reading.visible);
+            QCOMPARE(state.value("enabled").toBool(), reading.eligible);
+            QCOMPARE(state.value("eligible").toBool(), reading.eligible);
+        }
     }
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
