@@ -334,6 +334,58 @@ private slots:
         QVERIFY(QFileInfo::exists(receiptPath));
         QVERIFY(controller.resetState("Claude")["awaitingUsage"].toBool());
     }
+    void claudeReceiptReconciliationSnapshots_data() {
+        QTest::addColumn<bool>("known");
+        QTest::addColumn<int>("count");
+        QTest::addColumn<bool>("usable");
+        QTest::addColumn<QString>("fingerprint");
+        QTest::addColumn<bool>("release");
+        const QString account(64, QLatin1Char('b'));
+        QTest::newRow("known zero") << true << 0 << false << account << true;
+        QTest::newRow("known refusal") << true << 3 << false << account << true;
+        QTest::newRow("count decreased") << true << 2 << true << account << true;
+        QTest::newRow("unchanged") << true << 3 << true << account << false;
+        QTest::newRow("unknown malformed status") << false << 0 << false << account << false;
+        QTest::newRow("unbound zero") << true << 0 << false << QString() << false;
+        QTest::newRow("another account zero") << true << 0 << false << QString(64, QLatin1Char('c')) << false;
+    }
+    void claudeReceiptReconciliationSnapshots() {
+        // Read-only: seed a receipt and accept synthetic snapshots. Never
+        // prepare, schedule, consume, invoke a reset route, or submit a POST.
+        QFETCH(bool, known); QFETCH(int, count); QFETCH(bool, usable);
+        QFETCH(QString, fingerprint); QFETCH(bool, release);
+        QTemporaryDir dir;
+        const QString settings = dir.filePath("settings.json");
+        const QString account(64, QLatin1Char('b'));
+        const QString path = settings + ".reset-claude-account-" + account + ".json";
+        const auto baseline = QDateTime::currentDateTimeUtc().addSecs(-60);
+        const auto snapshot = [&](bool valid, int available, bool usableNow, const QString &binding, const QDateTime &at) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 100, available, usableNow)).array();
+            auto provider = providers[0].toObject();
+            auto credits = provider["rate_limit_reset_credits"].toObject();
+            credits["account_fingerprint"] = binding.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(binding);
+            provider["rate_limit_reset_credits"] = valid ? QJsonValue(credits) : QJsonValue(QJsonValue::Null);
+            provider["fetch_status"] = QJsonObject{{"fetched_at", at.toString(Qt::ISODateWithMs)}};
+            providers[0] = provider;
+            return QJsonDocument(providers).toJson();
+        };
+        ControllerFixture controller(settings, snapshot(true, 3, true, account, baseline));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QFile receipt(path);
+        QVERIFY(receipt.open(QIODevice::WriteOnly));
+        const auto bytes = QJsonDocument(QJsonObject{{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"completed", false}, {"provider", "Claude"}, {"account_fingerprint", account},
+            {"available_count", 3}, {"reading_fetched_at", baseline.toString(Qt::ISODateWithMs)}}).toJson();
+        QCOMPARE(receipt.write(bytes), bytes.size()); receipt.close();
+        controller.replaceSnapshot(snapshot(known, count, usable, fingerprint, baseline.addSecs(30)));
+        QCOMPARE(QFileInfo::exists(path), !release);
+        if (release) {
+            // Replenishment at the same count must not resurrect a retired receipt.
+            controller.replaceSnapshot(snapshot(true, 3, true, account, baseline.addSecs(60)));
+            QVERIFY(!controller.resetState("Claude")["awaitingUsage"].toBool());
+            QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+        }
+    }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
         const QString fingerprint(64, QLatin1Char('a'));
