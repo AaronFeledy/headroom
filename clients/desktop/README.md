@@ -223,9 +223,11 @@ cache reads.
 
 When a provider fails only temporarily, its card keeps the last successful
 meters as a clearly labelled stale reading: muted percentages and bars, no pace
-marker, pacing text, warning labels, or banked-reset controls, scheduled reset
+marker, pacing text, or warning labels, scheduled reset
 times instead of live countdowns, and a **Last successful reading …** line with
-the current error. A reading is reused only while the server reports the failure
+the current error. New reset spending and automatic authorization stay disabled;
+known active requests retain an informational management entry, including
+cancellation of an armed choice. A reading is reused only while the server reports the failure
 as transient or rate limited for the same credential epoch and the provider is
 still signed in, or during a backend outage for the connection that produced it.
 Sign-in changes, account or source changes, a rejected token or certificate,
@@ -457,39 +459,53 @@ count at the right of its weekly meter's bottom text row. The label turns red on
 while that provider's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open that provider's usage and reset controls in a browser.
-For ChatGPT, at 90% weekly usage or higher, a **Use reset…** button appears when a banked reset
-is available. It stays disabled until weekly usage reaches 95%, which is the
-eligibility threshold for either choice. Its confirmation offers **Use now** or
-**Use automatically at 100%**.
+For either provider, **Reset options…** appears at 90% usage when an account-bound
+banked reset is available. An active automatic choice or pending request keeps
+its management controls available. The options separate **Use now** from
+one-shot automatic use; unavailable choices stay visible with an explanation.
+Opening the options does not spend a reset or authorize automatic use.
+
+For ChatGPT, **Use now** requires at least 90% weekly usage and an available
+banked reset; the server applies the same floor. This is Headroom's conservative
+near-the-limit policy, not the OpenAI API minimum. [OpenAI's published rules](https://help.openai.com/en/articles/20001498-how-resets-work-in-codex)
+allow manual use when a covered allowance has less than 80% remaining, and
+assistant use at 10% remaining or less. A reset counts only when it restores a
+qualifying allowance. The provider can still refuse a request; Headroom does not retry.
+
 The automatic choice authorizes one reset for the current account, connection,
-and weekly window. Headroom checks the server's usage snapshot every 15 seconds
-while armed and submits once when it reports 100%; the server's provider polling
+and weekly window. It is offered independently of immediate-use permission,
+with fresh account-bound credits and a known future weekly reset deadline.
+Headroom checks the server's usage snapshot every 15 seconds while armed and
+submits once when it reports 100% and the reset is still permitted. The provider polling
 cadence still determines when new usage becomes available. Connection failures
 back that cadence off to at most five minutes, and the arm is retired as soon as
 its weekly window ends, even while the server stays unreachable. Keep Headroom
 running: quitting cancels the choice. **Auto at 100%…** reopens the dialog to
-use it now or cancel. Account, connection, or weekly-window changes, usage below
-95%, no credits, or an existing reset request cancel the choice. Provider errors
-pause it. It never rearms itself or carries over to another week. Both choices
+use it now or cancel. Account, connection, or weekly-window changes, a valid
+reading below 90%, no credits, or an existing reset request cancel the choice.
+Provider errors pause monitoring; cancellation remains available while paused
+or offline. It never rearms itself or carries over to another week. Both choices
 use the selected backend transport. Each confirmed request is submitted once,
-without retries. The button stays disabled after submission, including after a
-connection failure or app restart, until fresh usage for the same account falls
-below 95%. Headroom schedules read-only usage refreshes after submission to pick
-up the reset's effect. The button can appear again when weekly usage
-subsequently reaches 90%, and becomes eligible again at 95%. Both the desktop
-and server must support resets.
+without retries. Both spending choices stay disabled after submission,
+including after a connection failure or app restart, until usage for the same
+account falls below 90%; readings at 90–94.99% do not release the pending request.
+The options explain that pending state without offering another spend.
+Headroom schedules read-only usage refreshes after submission to pick up the
+reset's effect. A later rise to 90% can permit another explicit choice when a
+banked reset is available. Update both the desktop and server for these rules.
 
 Claude uses the same confirmation and selected Local, HTTP(S), or SSH transport.
-Its **Use reset…** button appears with an account-bound banked reset when Anthropic
+Its **Reset options…** button appears with an account-bound banked reset when Anthropic
 reports that it can be used now, or when session or weekly usage reaches 90%.
 **Use now** requires Anthropic's explicit `usable_now: true`; an unknown or false
-value cannot authorize immediate use. **Use automatically at limit** authorizes
-one reset when a fresh reading reports session or weekly usage at 100% and
+value blocks immediate use with an explanation, but does not block planning
+automatic use. **Use automatically at limit** authorizes one reset when a fresh
+reading reports session or weekly usage at 100% and
 `usable_now: true`. Automatic use requires a known future weekly reset deadline,
 so authorization cannot survive an unknown window. The same 15-second cache polling, weekly-window expiry,
 identity checks, and cancellation on connection/account changes, exhausted credits,
-or an existing request apply. Provider errors pause monitoring. Unlike ChatGPT,
-Claude does not cancel merely because weekly usage falls below 95%.
+or an existing request apply. Provider errors pause monitoring, with cancellation
+still available. Unlike ChatGPT, Claude does not cancel merely because usage falls below a floor.
 Only one provider can have an active confirmation, submission, or automatic choice
 at a time. Spending a reset cannot be undone. A durable Claude receipt prevents
 another request until a fresh successful reading shows fewer banked resets than
