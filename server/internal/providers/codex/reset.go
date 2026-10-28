@@ -40,7 +40,7 @@ func (c *Client) ResetAttemptStatus(requestID string) (known, blocked bool) {
 }
 
 // Only a successful provider GET begun after submission can establish that
-// this account's weekly usage fell below 95%. An older in-flight fetch, a new
+// this account's weekly usage fell below the manual reset floor. An older in-flight fetch, a new
 // reset timestamp, or a different account must not release the pending gate.
 // This observation never retries or consumes a reset.
 func (c *Client) observeResetUsage(data usage.UsageData, fetchStartedAt time.Time) {
@@ -48,7 +48,7 @@ func (c *Client) observeResetUsage(data usage.UsageData, fetchStartedAt time.Tim
 		return
 	}
 	for _, bucket := range data.Buckets {
-		if bucket.ID != usage.BucketWeekly || math.IsNaN(bucket.Utilization) || math.IsInf(bucket.Utilization, 0) || bucket.Utilization < 0 || bucket.Utilization >= 95 {
+		if bucket.ID != usage.BucketWeekly || math.IsNaN(bucket.Utilization) || math.IsInf(bucket.Utilization, 0) || bucket.Utilization < 0 || bucket.Utilization >= usage.CodexManualResetFloor {
 			continue
 		}
 		c.resetMu.Lock()
