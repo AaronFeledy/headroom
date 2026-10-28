@@ -162,14 +162,54 @@ Successful outcomes return `200`; uncertain or unavailable submissions return
 `502` without retry. Invalid JSON/confirmation/identity fields return `400`,
 browser headers `403`, and non-JSON content `415`, as on the Codex route.
 
-Every attempted ID is remembered for the server process lifetime, up to 1024
-attempts without eviction. A repeated successful ID returns `already_redeemed`;
-uncertain IDs are never resent. New IDs remain blocked until a successful status
-GET begun after submission for the same account shows fewer available resets or
-`usable_now: false`. Definitive non-consuming results release that gate
-immediately. One delayed read-only usage refresh is scheduled after an attempt;
-its status read bypasses the pre-submission cache. Both HTTP and SSH uploads are
-single-shot, non-rewindable, and never redirected or retried.
+Claude attempts are saved in an owner-only journal under
+`<default config directory>/claude-reset-state/attempts.json`, alongside the
+default TLS directory. The directory is independent of `--config`, address,
+bearer token, and installation generation. It retains every UUID and only an
+account fingerprint, the final pre-submission available count, phase, and any
+known terminal outcome; provider account IDs and credentials are never stored.
+There are at most 1024 attempts without eviction; a full journal blocks new IDs.
+A repeated successful ID returns `already_redeemed`; uncertain IDs are never
+resent, including after a server restart.
+
+One cross-process lock spans the final fresh status GET, a synced pending
+journal commit, the single upstream attempt, and its terminal journal commit.
+New IDs remain blocked until a fresh successful status GET for the same verified
+account, made under that lock after the pending attempt, shows fewer available
+resets than the **final server baseline** or `usable_now: false`. All outcomes,
+including definitive non-consuming results, retain this protection until that
+read. Cached bank metadata and ordinary usage `fetch_status.fetched_at` never
+reconcile an attempt. One delayed read-only usage refresh is scheduled after an
+attempt; its status read bypasses the pre-submission cache. Both HTTP and SSH
+uploads are single-shot, non-rewindable, and never redirected or retried.
+
+Successful usage can include optional
+`rate_limit_reset_credits.reconciled_request_ids`, containing the current
+account's durably reconciled UUIDs (up to 1024). The journal is revalidated on
+every usage serialization, including cached snapshots. A desktop retires its
+Claude receipt only when its provider, account fingerprint, and exact request
+UUID match this evidence. This also lets a lagging desktop reconcile an older
+request after later requests. Older servers or receipts without matching
+evidence keep the desktop latch closed.
+
+The journal directory is created exclusively once and serves as the durable
+initialization marker. A missing/corrupt ledger in an existing directory, a
+lock failure, or a write/sync failure disables new attempts and reconciliation
+evidence. Each write first syncs a `write-in-progress` marker and leaves it in
+place on failure; no process automatically repairs or discards uncertain state.
+Deleting or rolling back **all** reset state is outside the server guarantee;
+the desktop's separately saved pending receipt still prevents its own retry.
+Direct provider construction with an empty `Options.ResetStateDir` disables
+consumption rather than writing to the real user's home directory.
+
+Initialization makes every ancestor directory durable before the journal can
+permit submission. Unix syncs the entire ancestor chain on each initialization,
+including retries after an earlier sync failure. Windows publishes each new
+directory with a same-volume, non-replacing `MoveFileEx WRITE_THROUGH` rename;
+sibling initialization locks and pending markers preserve an uncertain outcome
+across processes and restarts. These markers are never automatically repaired.
+This relies on the operating system's persistence primitives; tests use isolated
+storage fixtures and do not simulate actual power loss or execute resets.
 
 Never exercise either provider's consume method, reset HTTP route, or SSH reset
 forwarding during tests or manual validation, even with a fake upstream. Their

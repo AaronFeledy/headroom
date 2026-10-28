@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
@@ -39,6 +41,8 @@ type Options struct {
 	TokenURL        string
 	APIBaseURL      string
 	HTTPClient      *http.Client
+	// Empty disables reset consumption; New never derives persistent state from HOME.
+	ResetStateDir string
 }
 
 type Client struct {
@@ -54,12 +58,8 @@ type Client struct {
 	bankMu             sync.Mutex
 	bank               bankCache
 	resetMu            sync.Mutex
-	resetAttempts      map[string]resetAttempt
-	resetAttemptID     string
-	resetAccountID     string
-	resetStartedAt     time.Time
-	resetAvailable     int64
-	resetUsageObserved bool
+	resetStateDir      string
+	resetJournalFailed atomic.Bool
 }
 
 func New(opts Options) *Client {
@@ -79,11 +79,16 @@ func New(opts Options) *Client {
 	if apiBaseURL == "" {
 		apiBaseURL = "https://api.anthropic.com"
 	}
+	resetStateDir := opts.ResetStateDir
+	if resetStateDir != "" {
+		resetStateDir = filepath.Clean(resetStateDir)
+	}
 	return &Client{
-		client:     client,
-		usageURL:   usageURL,
-		tokenURL:   tokenURL,
-		apiBaseURL: apiBaseURL,
+		client:        client,
+		usageURL:      usageURL,
+		tokenURL:      tokenURL,
+		apiBaseURL:    apiBaseURL,
+		resetStateDir: resetStateDir,
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
 			homeDir:        opts.HomeDir,

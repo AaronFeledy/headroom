@@ -92,6 +92,21 @@ type RateLimitResetCredits struct {
 	AvailableCount     int64   `json:"available_count"`
 	AccountFingerprint *string `json:"account_fingerprint"`
 	UsableNow          *bool   `json:"usable_now"`
+	// ReconciledRequests revalidates durable provider evidence at serialization
+	// time, so cached snapshots cannot retain evidence after journal damage.
+	ReconciledRequests func() []string `json:"-"`
+}
+
+func (credits RateLimitResetCredits) MarshalJSON() ([]byte, error) {
+	type fields RateLimitResetCredits
+	var ids []string
+	if credits.ReconciledRequests != nil {
+		ids = credits.ReconciledRequests()
+	}
+	return json.Marshal(struct {
+		fields
+		ReconciledRequestIDs []string `json:"reconciled_request_ids,omitempty"`
+	}{fields: fields(credits), ReconciledRequestIDs: ids})
 }
 
 type Header struct {

@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QSet>
 #include <QRegularExpression>
+#include <QUuid>
 #include <cmath>
 
 QString Usage::displayName(const QString &provider) {
@@ -59,10 +60,28 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 && count <= maxSafeInteger && std::floor(count) == count) {
                 const QString fingerprint = credits["account_fingerprint"].toString();
                 static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
-                resetCredits = QJsonObject{{"available_count", count},
+                QJsonObject normalized{{"available_count", count},
                     {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
                         ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)},
                     {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)}};
+                // Evidence is an optional, bounded list of canonical request
+                // UUIDs. A malformed list cannot retire any local receipt.
+                const auto evidence = credits["reconciled_request_ids"];
+                if (evidence.isArray() && evidence.toArray().size() <= 1024) {
+                    QSet<QString> seen;
+                    bool valid = true;
+                    for (const auto &id : evidence.toArray()) {
+                        const QString text = id.toString();
+                        const QUuid uuid(text);
+                        if (!id.isString() || uuid.isNull() || text != uuid.toString(QUuid::WithoutBraces) || seen.contains(text)) {
+                            valid = false;
+                            break;
+                        }
+                        seen.insert(text);
+                    }
+                    if (valid) normalized["reconciled_request_ids"] = evidence;
+                }
+                resetCredits = normalized;
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;

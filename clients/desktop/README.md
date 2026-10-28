@@ -508,8 +508,13 @@ or an existing request apply. Provider errors pause monitoring, with cancellatio
 still available. Unlike ChatGPT, Claude does not cancel merely because usage falls below a floor.
 Only one provider can have an active confirmation, submission, or automatic choice
 at a time. Spending a reset cannot be undone. A durable Claude receipt prevents
-another request until a fresh successful reading shows fewer banked resets than
-at submission or explicitly reports `usable_now: false`. An `unavailable` result
+another request until the server reports durably reconciled evidence for that
+exact request UUID and account. The server compares a fresh bank status GET
+against its final pre-submission balance, persists the resolution, and exposes
+`reconciled_request_ids` through normal usage reads. Desktop count changes and
+ordinary usage timestamps cannot release the receipt. Update both desktop and
+server; older servers without that evidence leave pending receipts protected.
+An `unavailable` result
 means Anthropic declined the reset and no reset was used; it retains the same
 receipt protection as other non-consuming terminal results until usage updates.
 Old receipts without a provider remain ChatGPT receipts. Reset submission and

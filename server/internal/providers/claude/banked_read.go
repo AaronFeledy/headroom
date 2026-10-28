@@ -108,7 +108,16 @@ func matchesAccountFingerprint(accountID, expected string) bool {
 }
 
 func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, data *usage.UsageData) {
+	// All paths that can reconcile or submit use this order. The cross-process
+	// lock is acquired before any bank GET that may reconcile a pending attempt.
+	c.resetMu.Lock()
+	defer c.resetMu.Unlock()
 	c.bankMu.Lock()
+	defer c.bankMu.Unlock()
+	journal, lock, journalErr := c.openResetJournal(ctx, false)
+	if lock != nil {
+		defer lock.Close()
+	}
 	c.selectBankToken(creds.accessToken)
 	now := time.Now()
 	interval := 5 * time.Minute
@@ -117,13 +126,11 @@ func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, dat
 			interval = time.Minute
 		}
 	}
-	var started time.Time
+	fresh := false
 	if now.Sub(c.bank.attemptedAt) >= interval {
-		started = now
 		c.bank.attemptedAt = now
-		if status, err := c.readBankStatus(ctx, creds.accessToken); err != nil || status == nil {
-			started = time.Time{}
-		}
+		status, err := c.readBankStatus(ctx, creds.accessToken)
+		fresh = err == nil && status != nil
 	}
 	if time.Since(c.bank.goodAt) <= 15*time.Minute {
 		data.RateLimitResetCredits = c.bank.status.credits(time.Now())
@@ -132,14 +139,13 @@ func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, dat
 		if account, err := c.bankAccount(ctx, creds.accessToken); err == nil {
 			data.ProviderAccountID = account
 			credits.AccountFingerprint = accountFingerprint(account)
+			if fingerprint := credits.AccountFingerprint; fingerprint != nil {
+				if journalErr == nil && fresh {
+					_ = reconcileResetJournal(journal, credits, *fingerprint, c.commitResetJournal)
+				}
+				binding := *fingerprint
+				credits.ReconciledRequests = func() []string { return c.reconciledResetRequests(binding) }
+			}
 		}
-	}
-	// Zero-credit readings need the same verified identity as positive counts,
-	// including after a restart. Only fresh validated status can release a gate.
-	accountID := c.bank.accountID
-	observed := data.RateLimitResetCredits
-	c.bankMu.Unlock()
-	if !started.IsZero() {
-		c.observeResetStatus(observed, accountID, started)
 	}
 }

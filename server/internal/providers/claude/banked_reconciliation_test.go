@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
@@ -40,8 +39,7 @@ func Test_BankedMetadata_incomplete_grants_keep_pending_gate(t *testing.T) {
 			c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
 			accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 			c.bank = bankCache{token: "fixture", accountID: accountID}
-			c.resetAttemptID, c.resetAccountID = "pending-fixture", accountID
-			c.resetStartedAt, c.resetAvailable = time.Now().Add(-time.Minute), 3
+			seedPendingJournal(t, c, accountID, 3)
 			data := usage.UsageData{}
 			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
 			if c.bank.status != nil || data.RateLimitResetCredits != nil {
@@ -88,8 +86,7 @@ func Test_BankedMetadata_zero_credits_preserve_verified_binding(t *testing.T) {
 				if cached {
 					c.bank.accountID = accountID
 				}
-				c.resetAttemptID, c.resetAccountID = "pending-fixture", accountID
-				c.resetStartedAt, c.resetAvailable = time.Now().Add(-time.Minute), 1
+				seedPendingJournal(t, c, accountID, 1)
 				data := usage.UsageData{}
 				c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
 				credits := data.RateLimitResetCredits
@@ -147,8 +144,7 @@ func Test_BankedMetadata_zero_credits_do_not_reuse_previous_token_binding(t *tes
 	c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
 	accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 	c.bank = bankCache{token: "previous-token", accountID: accountID}
-	c.resetAttemptID, c.resetAccountID = "pending-fixture", accountID
-	c.resetStartedAt, c.resetAvailable = time.Now().Add(-time.Minute), 1
+	seedPendingJournal(t, c, accountID, 1)
 	data := usage.UsageData{}
 	c.attachResetCredits(context.Background(), &credentials{accessToken: "new-token"}, &data)
 	if profileCalls.Load() != 1 || data.RateLimitResetCredits == nil || data.RateLimitResetCredits.AccountFingerprint != nil || data.ProviderAccountID != "" {

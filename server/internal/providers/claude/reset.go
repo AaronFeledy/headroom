@@ -8,11 +8,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 const maxResetResponseBytes = 64 << 10
@@ -20,28 +17,24 @@ const maxRememberedResetAttempts = 1024
 
 var errResetUnavailable = errors.New("reset request unavailable")
 var errDifferentResetPending = errors.New("a different reset request is awaiting usage confirmation")
-var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-
-type resetAttempt struct {
-	accountID string
-	outcome   string
-}
 
 func (c *Client) ResetAttemptStatus(requestID string) (known, blocked bool) {
 	c.resetMu.Lock()
 	defer c.resetMu.Unlock()
-	if _, exists := c.resetAttempts[strings.ToLower(requestID)]; exists {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	journal, lock, err := c.openResetJournal(ctx, true)
+	if err != nil {
+		return false, true
+	}
+	if lock.Close() != nil {
+		return false, true
+	}
+	if _, exists := journal.Attempts[strings.ToLower(requestID)]; exists {
 		return true, false
 	}
-	return false, c.resetAttemptID != "" && !c.resetUsageObserved
-}
-
-func (c *Client) observeResetStatus(credits *usage.RateLimitResetCredits, accountID string, started time.Time) {
-	c.resetMu.Lock()
-	defer c.resetMu.Unlock()
-	if credits != nil && c.resetAttemptID != "" && accountID == c.resetAccountID && started.After(c.resetStartedAt) && (credits.AvailableCount < c.resetAvailable || credits.UsableNow != nil && !*credits.UsableNow) {
-		c.resetUsageObserved = true
-	}
+	// This API has no account argument, so any unresolved account blocks a new ID.
+	return false, journal.pending() || len(journal.Attempts) >= maxRememberedResetAttempts
 }
 
 // ConsumeResetCredit can spend a valuable banked reset. Do not test this
@@ -51,7 +44,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	c.resetMu.Lock()
 	defer c.resetMu.Unlock()
 	requestID = strings.ToLower(requestID)
-	if !requestIDPattern.MatchString(requestID) {
+	if !validRequestID(requestID) {
 		return "", false, errResetUnavailable
 	}
 	creds, err := c.currentCredentials(ctx)
@@ -64,27 +57,37 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	}
 	c.bankMu.Lock()
 	defer c.bankMu.Unlock()
+	journal, lock, err := c.openResetJournal(ctx, true)
+	if err != nil {
+		return "", false, errResetUnavailable
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil {
+			err = errResetUnavailable
+			ambiguous = true
+		}
+	}()
 	c.selectBankToken(creds.accessToken)
 	accountID, err := c.bankAccount(ctx, creds.accessToken)
 	if err != nil || !matchesAccountFingerprint(accountID, expectedAccountFingerprint) || expectedAccountID != "" && expectedAccountID != accountID {
 		return "", false, errResetUnavailable
 	}
-	if previous, exists := c.resetAttempts[requestID]; exists {
-		if previous.accountID != accountID {
+	if previous, exists := journal.Attempts[requestID]; exists {
+		if !matchesAccountFingerprint(accountID, previous.AccountFingerprint) {
 			return "", false, errResetUnavailable
 		}
-		if previous.outcome == "" {
+		if previous.Outcome == "" {
 			return "", true, errResetUnavailable
 		}
-		if previous.outcome == "reset" {
+		if previous.Outcome == "reset" {
 			return "already_redeemed", false, nil
 		}
-		return previous.outcome, false, nil
+		return previous.Outcome, false, nil
 	}
-	if c.resetAttemptID != "" && !c.resetUsageObserved {
+	if journal.pending() {
 		return "", false, errDifferentResetPending
 	}
-	if expectedAccountID == "" || len(c.resetAttempts) >= maxRememberedResetAttempts {
+	if expectedAccountID == "" || len(journal.Attempts) >= maxRememberedResetAttempts {
 		return "", false, errResetUnavailable
 	}
 	c.bank.attemptedAt = time.Now()
@@ -118,13 +121,14 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	req.Header.Set("Content-Type", "application/json")
 	client := *c.client
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	// Remember before submission; uncertain outcomes must never become replayable.
-	c.resetAttemptID, c.resetAccountID = requestID, accountID
-	c.resetStartedAt, c.resetAvailable, c.resetUsageObserved = time.Now(), credits.AvailableCount, false
-	if c.resetAttempts == nil {
-		c.resetAttempts = make(map[string]resetAttempt)
+	// Commit the FINAL bank baseline before the only upstream submission. The
+	// cross-process lock remains held through the response and terminal commit.
+	// Crashing here intentionally leaves a pending attempt even before send.
+	attempt := resetAttempt{AccountFingerprint: *accountFingerprint(accountID), AvailableBefore: credits.AvailableCount, Phase: "pending"}
+	journal.Attempts[requestID] = attempt
+	if c.commitResetJournal(journal) != nil {
+		return "", false, errResetUnavailable
 	}
-	c.resetAttempts[requestID] = resetAttempt{accountID: accountID}
 	c.bank.attemptedAt = time.Time{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -154,12 +158,16 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	case "already_used":
 		outcome = "already_redeemed"
 	case "not_limited":
-		outcome, c.resetUsageObserved = "nothing_to_reset", true
+		outcome = "nothing_to_reset"
 	case "cooldown", "ineligible", "unavailable":
-		outcome, c.resetUsageObserved = "unavailable", true
+		outcome = "unavailable"
 	default:
 		return "", true, errResetUnavailable
 	}
-	c.resetAttempts[requestID] = resetAttempt{accountID: accountID, outcome: outcome}
+	attempt.Outcome = outcome
+	journal.Attempts[requestID] = attempt
+	if c.commitResetJournal(journal) != nil {
+		return "", true, errResetUnavailable
+	}
 	return outcome, false, nil
 }

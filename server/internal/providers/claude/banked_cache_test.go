@@ -74,8 +74,7 @@ func Test_BankedMetadata_only_valid_ineligible_status_releases_pending_gate(t *t
 			c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
 			accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 			c.bank = bankCache{token: "fixture", accountID: accountID}
-			c.resetAttemptID, c.resetAccountID = "pending-fixture", accountID
-			c.resetStartedAt, c.resetAvailable = time.Now().Add(-time.Minute), 2
+			seedPendingJournal(t, c, accountID, 2)
 			data := usage.UsageData{}
 			// When
 			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)

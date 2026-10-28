@@ -22,6 +22,7 @@ type Config struct {
 	TLSCertFile    string
 	TLSKeyFile     string
 	TLSDir         string
+	ResetStateDir  string
 }
 
 type ProviderConfig struct {

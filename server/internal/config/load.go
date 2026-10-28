@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -77,6 +78,7 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	}
 	if defaultPath, err := DefaultPath(goos, opts.Env); err == nil {
 		cfg.TLSDir = tlsDirectory(defaultPath)
+		cfg.ResetStateDir = filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
 	}
 	if err := validateTLS(cfg); err != nil {
 		return Config{}, err

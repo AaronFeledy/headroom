@@ -200,7 +200,7 @@ func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discove
 		if !providerCfg.Enabled {
 			continue
 		}
-		provider, err := buildProvider(name, providerCfg)
+		provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir)
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, err
 		}
@@ -228,10 +228,10 @@ func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discove
 	return providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, nil
 }
 
-func buildProvider(name string, providerCfg config.ProviderConfig) (usage.Provider, error) {
+func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string) (usage.Provider, error) {
 	switch strings.ToLower(name) {
 	case "claude":
-		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
+		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, ResetStateDir: resetStateDir}), nil
 	case "codex":
 		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "cursor":

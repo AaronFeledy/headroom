@@ -350,10 +350,9 @@ void Controller::observeScheduledReset() {
 }
 
 void Controller::observeResetUsage() {
-    // Read-only usage polling never sends a redemption. Only a successful
-    // reading below the manual floor releases the account-bound latch. A
-    // different reset timestamp, missing/zero credits, an error, or an
-    // uncertain response does not prove that the usage reset has been observed.
+    // Read-only usage polling never sends a redemption. Claude receipts need
+    // durable server evidence for their exact account and request UUID. Usage
+    // timestamps and desktop count baselines cannot establish that evidence.
     if (m_resetBusy) return;
     for (const QString provider : {QStringLiteral("Codex"), QStringLiteral("Claude")}) {
         const auto weekly = resetReading(provider);
@@ -365,18 +364,8 @@ void Controller::observeResetUsage() {
             || receipt.value("account_fingerprint").toString() != weekly.value("account_fingerprint").toString()) continue;
         bool validUsage = false;
         const double utilization = weekly.value("utilization").toDouble(&validUsage);
-        // Claude's banked-count decrease or explicit refusal proves the updated
-        // state. Release needs a reading the server fetched after the reading
-        // the request was based on. Never release from a cached pre-submission reading. DO NOT TEST
-        // this as part of a submission; only read-only snapshots are permitted.
-        const auto fetchedAt = QDateTime::fromString(weekly.value("fetched_at").toString(), Qt::ISODateWithMs);
-        const auto readingFetchedAt = QDateTime::fromString(receipt.value("reading_fetched_at").toString(), Qt::ISODateWithMs);
-        // Missing or malformed fetch metadata cannot prove the reading is newer.
-        const bool fresh = fetchedAt.isValid() && readingFetchedAt.isValid() && fetchedAt > readingFetchedAt;
-        const bool released = provider == "Claude" ? fresh
-            && ((weekly.value("usable_now").metaType().id() == QMetaType::Bool && !weekly.value("usable_now").toBool())
-                || (receipt.value("available_count").isDouble() && weekly.contains("available_count")
-                    && weekly.value("available_count").toLongLong() < receipt.value("available_count").toInteger()))
+        const QString requestID = QUuid(receipt.value("request_id").toString()).toString(QUuid::WithoutBraces);
+        const bool released = provider == "Claude" ? weekly.value("reconciled_request_ids").toStringList().contains(requestID)
             : ResetPolicy::releasesCodexReceipt(validUsage ? std::optional<double>(utilization) : std::nullopt);
         if (released && QFile::remove(path)) {
             if (m_resetBlockedReceipt == path) m_resetBlockedReceipt.clear();
@@ -411,7 +400,7 @@ void Controller::consumeReset() {
 void Controller::submitReset(bool automatic) {
     // Only explicit immediate or one-shot scheduled consent reaches here.
     // Never retry automatically, follow redirects, or offer another request
-    // until usage below 90% has released the durable account latch.
+    // until read-only usage has released the durable account latch.
     if (!resetAction().value("canConfirm").toBool()) return;
     // DO NOT TEST: both Codex and Claude submissions spend real banked resets.
     const QString receiptPath = resetReceiptPath(m_resetProvider);
