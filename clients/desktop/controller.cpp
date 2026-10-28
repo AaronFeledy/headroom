@@ -34,7 +34,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     m_poll.setTimerType(Qt::PreciseTimer);
     connect(&m_poll, &QTimer::timeout, this, [this] { refreshUsage(false); });
     if (m_startPolling) m_poll.start(m_interval * 1000);
-    connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledChatGptReset(); updateMeterStates(); emit changed(); });
+    connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledReset(); updateMeterStates(); emit changed(); });
     if (m_startPolling) m_clock.start(30000);
     m_recovery.setSingleShot(true);
     m_recovery.setTimerType(Qt::PreciseTimer);
@@ -181,7 +181,7 @@ void Controller::verifyRemote(bool upgrade) {
         const QString error = m_settingsService.save(updated);
         if (!error.isEmpty()) { fail(QStringLiteral("The verified server certificate could not be saved."), QStringLiteral("settings")); return; }
         m_url = m_settingsService.value().url;
-        cancelResetRequest(); cancelScheduledChatGptReset(); invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
+        cancelResetRequest(); cancelScheduledReset(); invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
         log(QStringLiteral("Connection"), upgrade ? QStringLiteral("Connection upgraded to HTTPS.")
             : rotation ? QStringLiteral("The server certificate changed and was verified with your access token.")
                        : QStringLiteral("The server's identity was verified with your access token."));
@@ -362,15 +362,16 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     m_notificationCenter.observeUsage(m_providers, m_notifications);
     for (const auto &value : m_providers) {
         const auto provider = value.toMap();
-        if (provider["provider_name"].toString() != "Codex" || !provider["is_success"].toBool()) continue;
+        const QString name = provider["provider_name"].toString();
+        if ((name != "Codex" && name != "Claude") || !provider["is_success"].toBool()) continue;
         const auto credits = provider["rate_limit_reset_credits"].toMap();
         if (credits.contains("available_count"))
-            m_notificationCenter.observeBankedResetCount(credits["available_count"].toLongLong(),
+            m_notificationCenter.observeBankedResetCount(name, credits["available_count"].toLongLong(),
                 credits["account_fingerprint"].toString(), m_notifications);
     }
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
-    observeScheduledChatGptReset();
+    observeScheduledReset();
 }
 Controller::~Controller() {
     // The network manager outlives every other member, so an in-flight reply must be
@@ -402,7 +403,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; invalidateConnection(); }
     m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledChatGptReset(); }
+    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledReset(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();

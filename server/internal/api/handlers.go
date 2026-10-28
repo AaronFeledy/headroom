@@ -27,19 +27,21 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
-	authToken           string
-	tlsFingerprint      string
-	cache               Cache
-	cursor              CursorCredentials
-	grok                GrokCredentials
-	codex               CodexResetter
-	poller              ProviderPoller
-	version             string
-	providerNames       []string
-	credentialMu        sync.Mutex
-	resetMu             sync.Mutex
-	codexRefreshMu      sync.Mutex
-	codexRefreshPending bool
+	authToken            string
+	tlsFingerprint       string
+	cache                Cache
+	cursor               CursorCredentials
+	grok                 GrokCredentials
+	codex                ProviderResetter
+	claude               ProviderResetter
+	poller               ProviderPoller
+	version              string
+	providerNames        []string
+	credentialMu         sync.Mutex
+	resetMu              sync.Mutex
+	resetRefreshMu       sync.Mutex
+	codexRefreshPending  bool
+	claudeRefreshPending bool
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +74,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.route(w, r, http.MethodPut, h.grokCredentials)
 		return
 	}
-	if path == "/api/v1/providers/codex/reset" {
-		h.route(w, r, http.MethodPost, h.codexReset)
+	if path == "/api/v1/providers/codex/reset" || path == "/api/v1/providers/claude/reset" {
+		h.route(w, r, http.MethodPost, h.providerReset)
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -92,8 +94,14 @@ type codexResetResponse struct {
 // This handler can spend a very valuable banked reset. Do not test the reset
 // button, this endpoint, or any code that may trigger a reset. The skipped
 // safety tests are intentional and must not be converted into executable tests.
-func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
-	if h.codex == nil || h.poller == nil || !h.hasProvider("codex") {
+func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
+	provider, label, resetter := "codex", "ChatGPT", h.codex
+	eligible := eligibleForCodexReset
+	if r.URL.Path == "/api/v1/providers/claude/reset" {
+		provider, label, resetter = "claude", "Claude", h.claude
+		eligible = eligibleForClaudeReset
+	}
+	if resetter == nil || h.poller == nil || !h.hasProvider(provider) {
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
 	}
@@ -125,38 +133,45 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
 		return
 	}
+	request.RequestID = strings.ToLower(request.RequestID)
 	if resetCtx.Err() != nil {
+		finalizeResetRejection(provider, resetter, request)
 		writeError(w, http.StatusRequestTimeout, "reset request timed out")
 		return
 	}
 
 	if !h.resetMu.TryLock() {
+		finalizeResetRejection(provider, resetter, request)
 		writeError(w, http.StatusConflict, "another reset request is in progress")
 		return
 	}
-	defer h.resetMu.Unlock()
-	known, blocked := h.codex.ResetAttemptStatus(request.RequestID)
+	releaseResetGate := sync.OnceFunc(h.resetMu.Unlock)
+	defer releaseResetGate()
+	known, blocked := resetter.ResetAttemptStatus(request.RequestID)
 	if blocked {
+		finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
 		return
 	}
 	expectedAccountID := ""
 	if !known {
-		entry, ok, err := h.poller.PollProvider(resetCtx, "codex")
-		if err != nil || !ok || !eligibleForCodexReset(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
-			writeError(w, http.StatusConflict, "fresh eligible ChatGPT usage is required")
+		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
+		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
+			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
 			return
 		}
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
-	outcome, ambiguous, err := h.codex.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	outcome, ambiguous, err := resetter.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
 	// Reconcile even an uncertain response with a delayed read-only fetch. Never
 	// repeat ConsumeResetCredit automatically or exercise this flow in tests.
-	h.scheduleCodexUsageRefresh()
+	h.scheduleResetUsageRefresh(provider)
 	if err != nil {
 		if ambiguous {
 			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
 		} else {
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 			writeError(w, http.StatusBadGateway, "reset request unavailable")
 		}
 		return
@@ -164,27 +179,54 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
 }
 
-func (h *handler) scheduleCodexUsageRefresh() {
-	h.codexRefreshMu.Lock()
-	if h.codexRefreshPending {
-		h.codexRefreshMu.Unlock()
+// The provider finalizer keeps its own mutex and durable journal lock while it
+// waits. Release the cross-provider gate first so another provider can proceed.
+func finalizeResetRejectionAfterGate(releaseGate func(), finalize func()) {
+	releaseGate()
+	finalize()
+}
+
+// Only use after validated rejection, and after a consumer has returned when
+// one ran. A lost or ambiguous response is never proof of non-submission.
+func finalizeResetRejection(provider string, resetter ProviderResetter, request codexResetRequest) {
+	if provider != "claude" {
 		return
 	}
-	h.codexRefreshPending = true
-	h.codexRefreshMu.Unlock()
+	finalizer, ok := resetter.(ProviderResetRejectionFinalizer)
+	if !ok {
+		return
+	}
+	// Wait synchronously for durable evidence even after client cancellation or
+	// the response deadline. Healthy contention must not abandon this UUID.
+	// A crash or failed durable write still leaves the receipt latched.
+	_ = finalizer.RecordResetNotSubmitted(context.Background(), request.RequestID, request.AccountFingerprint)
+}
+
+func (h *handler) scheduleResetUsageRefresh(provider string) {
+	h.resetRefreshMu.Lock()
+	pending := &h.codexRefreshPending
+	if provider == "claude" {
+		pending = &h.claudeRefreshPending
+	}
+	if *pending {
+		h.resetRefreshMu.Unlock()
+		return
+	}
+	*pending = true
+	h.resetRefreshMu.Unlock()
 	go func() {
 		defer func() {
-			h.codexRefreshMu.Lock()
-			h.codexRefreshPending = false
-			h.codexRefreshMu.Unlock()
+			h.resetRefreshMu.Lock()
+			*pending = false
+			h.resetRefreshMu.Unlock()
 		}()
-		// Give OpenAI time to apply the reset, then update the ordinary usage
+		// Give the provider time to apply the reset, then update the ordinary usage
 		// cache once. This is only a provider GET, never another redemption.
 		// It outlives the response but has its own bounded fetch deadline.
 		time.Sleep(3 * time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		_, _, _ = h.poller.PollProvider(ctx, "codex")
+		_, _, _ = h.poller.PollProvider(ctx, provider)
 	}()
 }
 
@@ -224,18 +266,6 @@ func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
 		return codexResetRequest{}, fmt.Errorf("invalid JSON")
 	}
 	return request, nil
-}
-
-func eligibleForCodexReset(entry poller.Entry) bool {
-	if entry.Data.Error != nil || strings.TrimSpace(entry.Data.ProviderAccountID) == "" || entry.Data.RateLimitResetCredits == nil || entry.Data.RateLimitResetCredits.AvailableCount <= 0 {
-		return false
-	}
-	for _, bucket := range entry.Data.Buckets {
-		if bucket.ID == usage.BucketWeekly {
-			return bucket.Utilization >= 95
-		}
-	}
-	return false
 }
 
 func (h *handler) route(w http.ResponseWriter, r *http.Request, method string, next http.HandlerFunc) {

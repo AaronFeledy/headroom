@@ -34,7 +34,9 @@ explicitly. Explicit `--ssh` or `--url` options override discovery.
 The terminal uses the desktop warning policy: pressure relative to the remaining
 window, capacity guards near the limit, and lower exit thresholds to avoid
 flickering between tiers. Period lengths remain estimates when the API provides
-only a reset timestamp. Positive banked-reset counts are read-only metadata.
+only a reset timestamp. Positive banked-reset counts from Claude or ChatGPT are
+read-only metadata; the CLI never consumes them. Claude's `usable_now` signal is
+separate from its available count and does not trigger an automatic action.
 
 ## Connections
 

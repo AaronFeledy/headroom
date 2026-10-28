@@ -56,7 +56,7 @@ ApplicationWindow {
     onClosing: function(close) { if (trayAvailable) { close.accepted = false; hide() } }
     onProvidersChanged: { if (filter !== "All providers" && !providers.some(p => p.provider_name === filter)) filter = "All providers" }
     readonly property bool presentingNotifications: visible && active && visibility !== Window.Minimized
-        && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetConfirmation.visible
+        && !settings.visible && !diagnostics.visible && !filterMenu.visible && !resetOptions.visible
         && !notificationPopup.visible && !dashboardMenu.visible
     onPresentingNotificationsChanged: if (presentingNotifications) Qt.callLater(presentNotifications)
     onVisibleChanged: {
@@ -65,7 +65,7 @@ ApplicationWindow {
             notificationPopup.close()
             backend.notifications.endPresentation()
         }
-        else if (!settings.opened && !diagnostics.opened && !filterMenu.opened && !resetConfirmation.opened)
+        else if (!settings.opened && !diagnostics.opened && !filterMenu.opened && !resetOptions.opened)
             restoreEscapeFocus()
     }
     onVisibilityChanged: if (window.visibility === Window.Minimized) {
@@ -126,7 +126,7 @@ ApplicationWindow {
     }
     function dismissOverlayOrHide() {
         if (notificationPopup.opened) notificationPopup.close()
-        else if (resetConfirmation.opened) resetConfirmation.close()
+        else if (resetOptions.opened) resetOptions.close()
         else if (settings.opened) settings.close()
         else if (diagnostics.opened) diagnostics.close()
         else if (filterMenu.opened) filterMenu.close()
@@ -204,69 +204,20 @@ ApplicationWindow {
         }
     }
 
-    // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
-    // code that might trigger a reset: doing so can burn a very valuable reset.
+    // IMPORTANT: DO NOT test this popup's choices, their endpoint, or any code
+    // that might trigger a reset: doing so can burn a very valuable reset.
     // This restriction belongs in source and skip-only tests, never in UI copy.
-    Popup {
-        id: resetConfirmation
-        objectName: "resetConfirmation"
-        property var action: backend.resetAction
-        parent: Overlay.overlay; anchors.centerIn: parent
-        width: Math.min(440, parent.width - 32)
-        modal: true; focus: true; padding: 24
-        closePolicy: Popup.NoAutoClose
-        onOpened: resetCancel.forceActiveFocus()
-        onClosed: { backend.cancelChatGptResetConfirmation(); restoreEscapeFocus() }
-        background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
-        Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
-        contentItem: ColumnLayout {
-            spacing: 12
-            Text { text: resetConfirmation.action.automatic ? "Automatic reset scheduled" : "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Text {
-                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.automatic
-                text: resetConfirmation.action.automatic
-                    ? "One reset will be used when a usage update reports 100% weekly usage. Keep Headroom running; quitting cancels this choice."
-                    : "Use one reset now, or once a usage update reports 100% weekly usage. Keep Headroom running for automatic use. Spending a reset cannot be undone."
-                color: Theme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
-            }
-            Text {
-                visible: text.length > 0
-                text: resetConfirmation.action.message
-                textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 13
-                wrapMode: Text.WordWrap; Layout.fillWidth: true
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
-                Item { Layout.fillWidth: true }
-                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
-            }
-            // DO NOT activate either choice for testing. Both can spend a
-            // banked reset; skipped tests are intentional safeguards.
-            ActionButton {
-                objectName: "confirmBankedReset"
-                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.busy
-                enabled: resetConfirmation.action.canConfirm
-                text: resetConfirmation.action.busy ? "Using reset…" : "Use now"
-                accent: true; Layout.fillWidth: true
-                onClicked: backend.consumeChatGptReset()
-            }
-            ActionButton {
-                objectName: "scheduleBankedReset"
-                visible: resetConfirmation.action.canConfirm && !resetConfirmation.action.automatic
-                enabled: resetConfirmation.action.canSchedule
-                text: "Use automatically at 100%"
-                Layout.fillWidth: true
-                onClicked: if (backend.scheduleChatGptReset()) resetConfirmation.close()
-            }
-            ActionButton {
-                objectName: "cancelScheduledBankedReset"
-                visible: resetConfirmation.action.automatic
-                text: "Cancel automatic reset"
-                Layout.fillWidth: true
-                onClicked: { backend.cancelScheduledChatGptReset(); resetConfirmation.close() }
-            }
-        }
+    ResetOptions {
+        id: resetOptions
+        objectName: "resetOptions"
+        parent: Overlay.overlay
+        action: backend.resetAction
+        deadlineLabel: backend.resetTimeLabel(action.windowEndsAt || "")
+        onClosed: { backend.cancelResetConfirmation(); restoreEscapeFocus() }
+        onUsagePageRequested: Qt.openUrlExternally(claude ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage")
+        onUseNowRequested: backend.consumeReset()
+        onAutomaticRequested: if (backend.scheduleReset()) close()
+        onCancelAutomaticRequested: { backend.cancelScheduledReset(); close() }
     }
 
     ColumnLayout {
@@ -294,7 +245,7 @@ ApplicationWindow {
                                 provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
                                 notificationViewport: scroll
                                 presentingNotifications: window.presentingNotifications && !notificationReveal.running
-                                onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
+                                onResetRequested: if (backend.prepareReset(name)) resetOptions.open()
                             }
                         }
                     }

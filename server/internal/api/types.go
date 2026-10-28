@@ -24,9 +24,15 @@ type GrokCredentials interface {
 	SetCookieHeader(string)
 }
 
-type CodexResetter interface {
+type ProviderResetter interface {
 	ResetAttemptStatus(string) (known, blocked bool)
 	ConsumeResetCredit(context.Context, string, string, string) (outcome string, ambiguous bool, err error)
+}
+
+// Claude can durably resolve a validated rejection without a provider request.
+// This optional interface leaves other provider reset contracts unchanged.
+type ProviderResetRejectionFinalizer interface {
+	RecordResetNotSubmitted(context.Context, string, string) error
 }
 
 type ProviderPoller interface {
@@ -38,7 +44,8 @@ type Options struct {
 	Cache                Cache
 	Cursor               CursorCredentials
 	Grok                 GrokCredentials
-	Codex                CodexResetter
+	Codex                ProviderResetter
+	Claude               ProviderResetter
 	Poller               ProviderPoller
 	Logger               Logger
 	AuthToken            string

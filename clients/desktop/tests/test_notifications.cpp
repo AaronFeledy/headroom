@@ -168,45 +168,73 @@ private slots:
         notifications.observeUsage({provider({bucket(0, reset)}, "Codex")}, true, now.addSecs(120));
         QCOMPARE(native.size(), 3); // Only the unrelated update added an alert.
     }
+    void bankedResetChangesUseObservedCountsAndAccountBaselines_data() {
+        QTest::addColumn<QString>("provider");
+        QTest::addColumn<QString>("displayName");
+        QTest::newRow("ChatGPT") << QString("Codex") << QString("ChatGPT");
+        QTest::newRow("Claude") << QString("Claude") << QString("Claude");
+    }
     void bankedResetChangesUseObservedCountsAndAccountBaselines() {
+        QFETCH(QString, provider);
+        QFETCH(QString, displayName);
         Notifications notifications;
         QSignalSpy native(&notifications, &Notifications::desktopNotification);
-        notifications.observeBankedResetCount(3, "account-a", true);
-        notifications.observeBankedResetCount(3, "account-a", true);
-        notifications.observeBankedResetCount(-1, "account-a", true);
+        notifications.observeBankedResetCount(provider, 3, "account-a", true);
+        notifications.observeBankedResetCount(provider, 3, "account-a", true);
+        notifications.observeBankedResetCount(provider, -1, "account-a", true);
         QCOMPARE(native.size(), 0);
-        notifications.observeBankedResetCount(4, "account-a", true);
+        notifications.observeBankedResetCount(provider, 4, "account-a", true);
         QCOMPARE(native.size(), 1);
         QCOMPARE(notifications.unreadCount(), 1);
         notifications.present();
         auto event = notifications.presented().first().toMap();
-        QCOMPARE(event["target"].toString(), "bankedResets_Codex");
+        QCOMPARE(event["target"].toString(), "bankedResets_" + provider);
+        QCOMPARE(event["title"].toString(), displayName + " banked resets increased");
         QCOMPARE(event["delta"].toLongLong(), 1);
         QVERIFY(event["message"].toString().contains("3 to 4"));
         QVERIFY(!event.values().contains("account-a"));
         notifications.endPresentation();
-        notifications.observeBankedResetCount(1, "account-a", true);
-        notifications.observeBankedResetCount(0, "account-a", true);
+        notifications.observeBankedResetCount(provider, 1, "account-a", true);
+        notifications.observeBankedResetCount(provider, 0, "account-a", true);
         QCOMPARE(native.size(), 3);
         QCOMPARE(notifications.unreadCount(), 1); // Latest change for this counter wins.
         notifications.present();
         event = notifications.presented().first().toMap();
         QCOMPARE(event["delta"].toLongLong(), -1);
+        QCOMPARE(event["title"].toString(), displayName + " banked resets decreased");
         QCOMPARE(event["count"].toLongLong(), 0);
-        notifications.observeBankedResetCount(8, "account-b", true);
+        notifications.observeBankedResetCount(provider, 8, "account-b", true);
         QCOMPARE(native.size(), 3);
         QVERIFY(notifications.presented().isEmpty()); // Old-account attention cannot leak.
-        notifications.observeBankedResetCount(9, "account-b", false);
-        notifications.observeBankedResetCount(9, "account-b", true);
+        notifications.observeBankedResetCount(provider, 9, "account-b", false);
+        notifications.observeBankedResetCount(provider, 9, "account-b", true);
         QCOMPARE(native.size(), 3);
-        notifications.observeBankedResetCount(11, "account-b", true);
+        notifications.observeBankedResetCount(provider, 11, "account-b", true);
         notifications.present();
         QCOMPARE(notifications.presented().first().toMap()["delta"].toLongLong(), 2);
         notifications.resetBankedResetBaseline();
-        notifications.observeBankedResetCount(1, "account-b", true);
+        notifications.observeBankedResetCount(provider, 1, "account-b", true);
         QCOMPARE(native.size(), 4);
         QCOMPARE(notifications.unreadCount(), 0);
         QVERIFY(notifications.presented().isEmpty());
+    }
+    void bankedResetBaselinesAreIndependent() {
+        Notifications notifications;
+        QSignalSpy native(&notifications, &Notifications::desktopNotification);
+        notifications.observeBankedResetCount("Codex", 3, "same-fingerprint", true);
+        notifications.observeBankedResetCount("Claude", 5, "same-fingerprint", true);
+        QCOMPARE(native.size(), 0);
+        notifications.observeBankedResetCount("Codex", 4, "same-fingerprint", true);
+        notifications.observeBankedResetCount("Claude", 7, "same-fingerprint", true);
+        QCOMPARE(native.size(), 2);
+        QCOMPARE(notifications.unreadCount(), 2);
+        notifications.observeBankedResetCount("Claude", 9, "new-account", true);
+        QCOMPARE(native.size(), 2);
+        QCOMPARE(notifications.unreadCount(), 1);
+        notifications.present();
+        QCOMPARE(notifications.presented().first().toMap()["target"].toString(), "bankedResets_Codex");
+        notifications.observeBankedResetCount("Codex", 5, "same-fingerprint", true);
+        QCOMPARE(native.size(), 3);
     }
     void coalescesTargetsAndConsumesOnce() {
         Notifications notifications;

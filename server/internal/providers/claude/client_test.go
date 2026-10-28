@@ -26,7 +26,7 @@ func Test_Client_Fetch_returns_usage_when_claude_credentials_are_valid(t *testin
 		if r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
 			t.Fatalf("anthropic-beta = %q", r.Header.Get("anthropic-beta"))
 		}
-		if r.Header.Get("User-Agent") != "claude-code/2.1.69" {
+		if r.Header.Get("User-Agent") != "claude-cli/2.1.306 (external, cli)" {
 			t.Fatalf("User-Agent = %q", r.Header.Get("User-Agent"))
 		}
 		writeResponse(t, w, `{"five_hour":{"utilization":42.5,"resets_at":"2026-07-12T18:30:00-04:00"},"seven_day":{"utilization":71,"resets_at":"2026-07-19T00:00:00Z"}}`)
@@ -149,7 +149,9 @@ func Test_Client_Fetch_forces_refresh_after_401_even_when_token_expiry_is_future
 			assertRefreshRequest(t, r, "refresh-token")
 			writeResponse(t, w, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`)
 		case "/api/oauth/usage":
-			atomic.AddInt32(&usageCalls, 1)
+			if r.URL.RawQuery == "" {
+				atomic.AddInt32(&usageCalls, 1)
+			}
 			if r.Header.Get("Authorization") == "Bearer revoked-access" {
 				w.WriteHeader(http.StatusUnauthorized)
 				writeResponse(t, w, `{"error":"unauthorized"}`)

@@ -31,10 +31,12 @@ Rectangle {
         ? resetCredits.account_fingerprint : ""
     property bool hasResetAccountBinding: resetAccountFingerprint.length === 64
         && /^[0-9a-f]{64}$/.test(resetAccountFingerprint)
-    property bool hasResetCount: name === "Codex" && !failed && resetCredits !== null
+    property bool hasResetCount: !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count >= 0
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
-    readonly property bool automaticReset: name === "Codex" && backend.resetAction.automatic
+    readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
+    readonly property bool managingReset: resetState.managing === true
+    readonly property string usageUrl: name === "Claude" ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage"
     property var clock: backend.state
     property var weeklyBucket: {
         for (let bucket of provider.buckets || []) if (bucket.id === "weekly") return bucket
@@ -46,8 +48,9 @@ Rectangle {
     }
     Component {
         id: bankedResetsFooter
-        RowLayout {
-            spacing: 8
+        GridLayout {
+            columns: !card.weeklyBucket && !card.stacked ? 1 : 2
+            columnSpacing: 8; rowSpacing: 4
             Item {
                 // Keep the transient delta anchored even when the last reset
                 // disappears. Only positive counts have a visible/focusable label.
@@ -57,7 +60,7 @@ Rectangle {
                 Text {
                     id: resetLabel
                     anchors.fill: parent
-                    function openUsage() { Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
+                    function openUsage() { Qt.openUrlExternally(card.usageUrl) }
                     objectName: "bankedResets_" + card.name
                     visible: card.hasBankedResets
                     textFormat: Text.PlainText
@@ -70,7 +73,7 @@ Rectangle {
                     activeFocusOnTab: visible
                     Accessible.role: Accessible.Link
                     Accessible.name: text
-                    Accessible.description: "Open ChatGPT usage and reset controls"
+                    Accessible.description: "Open " + card.displayName + " usage and reset controls"
                     Accessible.onPressAction: openUsage()
                     Keys.onReturnPressed: openUsage()
                     Keys.onEnterPressed: openUsage()
@@ -78,7 +81,7 @@ Rectangle {
                     TapHandler { onTapped: parent.openUsage() }
                     HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
                     ToolTip.visible: bankedResetHover.hovered
-                    ToolTip.text: "Open ChatGPT usage and reset controls"
+                    ToolTip.text: "Open " + card.displayName + " usage and reset controls"
                 }
                 NotificationHighlight {
                     visible: card.hasBankedResets
@@ -132,15 +135,25 @@ Rectangle {
             // The intentionally skipped tests must not be filled in or enabled.
             ActionButton {
                 objectName: "useBankedReset_" + card.name
-                visible: card.automaticReset
-                    || (card.hasBankedResets && card.hasResetAccountBinding
-                        && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95)
-                enabled: backend.resetAction.enabled
-                text: backend.resetAction.busy ? "Resetting…" : backend.resetAction.automatic ? "Auto at 100%…"
-                    : backend.resetAction.awaitingUsage ? "Waiting…" : "Use reset…"
+                // A failed or stale card keeps only the management of an owned
+                // arm, submission, or pending request; fresh choices wait.
+                visible: card.resetState.visible && (!card.failed || card.managingReset)
+                enabled: card.resetState.enabled
+                text: {
+                    switch (card.resetState.phase) {
+                    case "submitting": return "Resetting…"
+                    case "armed": return card.name === "Claude" ? "Auto at limit…" : "Auto at 100%…"
+                    case "paused": return "Auto paused…"
+                    case "reconciling": return "Waiting…"
+                    default: return "Reset options…"
+                    }
+                }
                 implicitHeight: 24; implicitWidth: contentItem.implicitWidth + 16
                 padding: 6; font.pixelSize: 11
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                Accessible.description: card.resetState.openReason || ""
+                ToolTip.visible: hovered && !enabled && ToolTip.text.length > 0
+                ToolTip.text: card.resetState.openReason || ""
                 onClicked: card.resetRequested()
             }
         }
@@ -228,13 +241,13 @@ Rectangle {
                     }
                     Item {
                         id: headerCounterSlot
-                        visible: (card.hasBankedResets || card.automaticReset) && (!card.weeklyBucket || card.failed)
+                        visible: (card.hasBankedResets || card.managingReset) && (!card.weeklyBucket || card.failed)
                         implicitHeight: headerCounterOverlay.implicitHeight
                     }
                     Loader {
                         id: headerCounterOverlay
                         sourceComponent: !card.weeklyBucket || card.failed ? bankedResetsFooter : null
-                        visible: (card.hasResetCount || card.automaticReset) && (!card.weeklyBucket || card.failed)
+                        visible: (card.hasResetCount || card.managingReset) && (!card.weeklyBucket || card.failed)
                         anchors.top: headerMetadata.bottom; anchors.topMargin: 4
                         width: parent.width
                     }
@@ -276,8 +289,8 @@ Rectangle {
                         presentingNotifications: card.presentingNotifications
                         // Stale readings carry no actions: banked-reset counts and
                         // reset controls wait for a fresh reading.
-                        footerAccessory: card.name === "Codex" && modelData.id === "weekly" && !card.stale ? bankedResetsFooter : null
-                        footerAccessoryVisible: !card.stale && (card.hasBankedResets || card.automaticReset) && modelData.id === "weekly"
+                        footerAccessory: modelData.id === "weekly" && !card.stale ? bankedResetsFooter : null
+                        footerAccessoryVisible: !card.stale && (card.hasBankedResets || card.managingReset) && modelData.id === "weekly"
                         Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
                         Layout.columnSpan: {
                             if (card.stacked && index === 0) return meters.columns

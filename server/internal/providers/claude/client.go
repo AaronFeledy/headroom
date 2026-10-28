@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
@@ -15,13 +17,15 @@ import (
 )
 
 const (
-	providerName      = "Claude"
-	primaryLabel      = "Current Session"
-	secondaryLabel    = "Weekly"
-	defaultUsageURL   = "https://api.anthropic.com/api/oauth/usage"
-	defaultTokenURL   = "https://platform.claude.com/v1/oauth/token"
-	betaHeader        = "oauth-2025-04-20"
-	userAgent         = "claude-code/2.1.69"
+	providerName    = "Claude"
+	primaryLabel    = "Current Session"
+	secondaryLabel  = "Weekly"
+	defaultUsageURL = "https://api.anthropic.com/api/oauth/usage"
+	defaultTokenURL = "https://platform.claude.com/v1/oauth/token"
+	betaHeader      = "oauth-2025-04-20"
+	// Banked-reset discovery requires the Claude CLI identity (2.1.280+).
+	// The legacy claude-code identity returns ineligible_reason: surface.
+	userAgent         = "claude-cli/2.1.306 (external, cli)"
 	oauthClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultTimeout    = 15 * time.Second
 	expirySkew        = 60 * time.Second
@@ -35,18 +39,27 @@ type Options struct {
 	OpenCodePath    string
 	UsageURL        string
 	TokenURL        string
+	APIBaseURL      string
 	HTTPClient      *http.Client
+	// Empty disables reset consumption; New never derives persistent state from HOME.
+	ResetStateDir string
 }
 
 type Client struct {
-	client   *http.Client
-	usageURL string
-	tokenURL string
-	paths    discoveryOptions
+	client     *http.Client
+	usageURL   string
+	tokenURL   string
+	apiBaseURL string
+	paths      discoveryOptions
 
-	stateMu   sync.Mutex
-	refreshMu sync.Mutex
-	loaded    *credentials
+	stateMu            sync.Mutex
+	refreshMu          sync.Mutex
+	loaded             *credentials
+	bankMu             sync.Mutex
+	bank               bankCache
+	resetMu            sync.Mutex
+	resetStateDir      string
+	resetJournalFailed atomic.Bool
 }
 
 func New(opts Options) *Client {
@@ -62,10 +75,20 @@ func New(opts Options) *Client {
 	if tokenURL == "" {
 		tokenURL = defaultTokenURL
 	}
+	apiBaseURL := strings.TrimRight(opts.APIBaseURL, "/")
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.anthropic.com"
+	}
+	resetStateDir := opts.ResetStateDir
+	if resetStateDir != "" {
+		resetStateDir = filepath.Clean(resetStateDir)
+	}
 	return &Client{
-		client:   client,
-		usageURL: usageURL,
-		tokenURL: tokenURL,
+		client:        client,
+		usageURL:      usageURL,
+		tokenURL:      tokenURL,
+		apiBaseURL:    apiBaseURL,
+		resetStateDir: resetStateDir,
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
 			homeDir:        opts.HomeDir,
@@ -129,6 +152,14 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		if statusErr == nil {
 			authExpired = false
+			c.attachResetCredits(ctx, creds, &data)
+			// A canceled bank attachment has no trustworthy reset binding.
+			// Let the poller retain last-good display data as a failed fetch so
+			// armed actions pause rather than treating missing binding as success.
+			if err := ctx.Err(); err != nil {
+				failure = usage.TransportFailure(err)
+				return data, failure
+			}
 			return data, nil
 		}
 		failure = statusErr.failure

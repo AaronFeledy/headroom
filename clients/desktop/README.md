@@ -34,7 +34,8 @@ clears that opening's activity and highlights, preventing replay on the next
 opening. Native notification clicks open the dashboard on the Qt and Windows
 stable-tray paths.
 
-Changes in ChatGPT's reported banked-reset count use this same notification path.
+Changes in Claude's and ChatGPT's reported banked-reset counts use this same notification path,
+with independent baselines for each provider.
 The first valid count establishes a baseline. Missing/failed readings do not imply
 zero; account or connection changes establish a new baseline. Disabled notifications
 still update the baseline, so enabling them does not replay past changes. A decrease
@@ -222,9 +223,11 @@ cache reads.
 
 When a provider fails only temporarily, its card keeps the last successful
 meters as a clearly labelled stale reading: muted percentages and bars, no pace
-marker, pacing text, warning labels, or banked-reset controls, scheduled reset
+marker, pacing text, or warning labels, scheduled reset
 times instead of live countdowns, and a **Last successful reading …** line with
-the current error. A reading is reused only while the server reports the failure
+the current error. New reset spending and automatic authorization stay disabled;
+known active requests retain an informational management entry, including
+cancellation of an armed choice. A reading is reused only while the server reports the failure
 as transient or rate limited for the same credential epoch and the provider is
 still signed in, or during a backend outage for the connection that produced it.
 Sign-in changes, account or source changes, a rejected token or certificate,
@@ -451,29 +454,72 @@ percentage or pacing marker. The existing Windows pacing indicators are retained
 Headroom uses the server's provider names, subtitles, bucket labels, variable
 meter counts, status text, and authentication errors. Live accounts may return
 different bucket layouts. Both clients retain pacing and provider ordering.
-When ChatGPT reports one or more banked usage resets, Headroom shows the available
+When Claude or ChatGPT reports one or more banked usage resets, Headroom shows the available
 count at the right of its weekly meter's bottom text row. The label turns red only
-while ChatGPT's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
+while that provider's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
-Activate the label to open ChatGPT's usage and reset controls in a browser.
-At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
-is available. Its confirmation offers **Use now** or **Use automatically at 100%**.
+Activate the label to open that provider's usage and reset controls in a browser.
+For either provider, **Reset options…** appears at 90% usage when an account-bound
+banked reset is available. An active automatic choice or pending request keeps
+its management controls available. The options separate **Use now** from
+one-shot automatic use; unavailable choices stay visible with an explanation.
+Opening the options does not spend a reset or authorize automatic use.
+
+For ChatGPT, **Use now** requires at least 90% weekly usage and an available
+banked reset; the server applies the same floor. This is Headroom's conservative
+near-the-limit policy, not the OpenAI API minimum. [OpenAI's published rules](https://help.openai.com/en/articles/20001498-how-resets-work-in-codex)
+allow manual use when a covered allowance has less than 80% remaining, and
+assistant use at 10% remaining or less. A reset counts only when it restores a
+qualifying allowance. The provider can still refuse a request; Headroom does not retry.
+
 The automatic choice authorizes one reset for the current account, connection,
-and weekly window. Headroom checks the server's usage snapshot every 15 seconds
-while armed and submits once when it reports 100%; the server's provider polling
+and weekly window. It is offered independently of immediate-use permission,
+with fresh account-bound credits and a known future weekly reset deadline.
+Headroom checks the server's usage snapshot every 15 seconds while armed and
+submits once when it reports 100% and the reset is still permitted. The provider polling
 cadence still determines when new usage becomes available. Connection failures
 back that cadence off to at most five minutes, and the arm is retired as soon as
 its weekly window ends, even while the server stays unreachable. Keep Headroom
 running: quitting cancels the choice. **Auto at 100%…** reopens the dialog to
-use it now or cancel. Account, connection, or weekly-window changes, usage below
-95%, no credits, or an existing reset request cancel the choice. Provider errors
-pause it. It never rearms itself or carries over to another week. Both choices
+use it now or cancel. Account, connection, or weekly-window changes, a valid
+reading below 90%, no credits, or an existing reset request cancel the choice.
+Provider errors pause monitoring; cancellation remains available while paused
+or offline. It never rearms itself or carries over to another week. Both choices
 use the selected backend transport. Each confirmed request is submitted once,
-without retries. The button stays disabled after submission, including after a
-connection failure or app restart, until fresh usage for the same account falls
-below 95%. Headroom schedules read-only usage refreshes after submission to pick
-up the reset's effect. The button can appear again when weekly usage
-subsequently reaches 95%. Both the desktop and server must support resets.
+without retries. Both spending choices stay disabled after submission,
+including after a connection failure or app restart, until usage for the same
+account falls below 90%; readings at 90–94.99% do not release the pending request.
+The options explain that pending state without offering another spend.
+Headroom schedules read-only usage refreshes after submission to pick up the
+reset's effect. A later rise to 90% can permit another explicit choice when a
+banked reset is available. Update both the desktop and server for these rules.
+
+Claude uses the same confirmation and selected Local, HTTP(S), or SSH transport.
+Its **Reset options…** button appears with an account-bound banked reset when Anthropic
+reports that it can be used now, or when session or weekly usage reaches 90%.
+**Use now** requires Anthropic's explicit `usable_now: true`; an unknown or false
+value blocks immediate use with an explanation, but does not block planning
+automatic use. **Use automatically at limit** authorizes one reset when a fresh
+reading reports session or weekly usage at 100% and
+`usable_now: true`. Automatic use requires a known future weekly reset deadline,
+so authorization cannot survive an unknown window. The same 15-second cache polling, weekly-window expiry,
+identity checks, and cancellation on connection/account changes, exhausted credits,
+or an existing request apply. Provider errors pause monitoring, with cancellation
+still available. Unlike ChatGPT, Claude does not cancel merely because usage falls below a floor.
+Only one provider can have an active confirmation, submission, or automatic choice
+at a time. Spending a reset cannot be undone. A durable Claude receipt prevents
+another request until the server reports durably reconciled evidence for that
+exact request UUID and account. The server compares a fresh bank status GET
+against its final pre-submission balance, persists the resolution, and exposes
+`reconciled_request_ids` through normal usage reads. Desktop count changes and
+ordinary usage timestamps cannot release the receipt. Update both desktop and
+server; older servers without that evidence leave pending receipts protected.
+An `unavailable` result
+means Anthropic declined the reset and no reset was used; it retains the same
+receipt protection as other non-consuming terminal results until usage updates.
+Old receipts without a provider remain ChatGPT receipts. Reset submission and
+automatic firing are deliberately excluded from executable verification; the
+reset-prohibited suite stays disabled and skip-only.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies

@@ -10,6 +10,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QUuid>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -94,17 +95,25 @@ private slots:
         QCOMPARE(buckets.first().toMap()["id"].toString(), QString("weekly"));
         QCOMPARE(buckets.first().toMap()["utilization"].toDouble(), 0.0);
     }
+    void bankedResetNotificationsObserveSnapshotsOnly_data() {
+        QTest::addColumn<QString>("provider");
+        QTest::newRow("ChatGPT") << QString("Codex");
+        QTest::newRow("Claude") << QString("Claude");
+    }
     void bankedResetNotificationsObserveSnapshotsOnly() {
+        QFETCH(QString, provider);
         QTemporaryDir dir;
         const auto reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
         auto payload = [&](int count, const QString &fingerprint = QString(64, 'a'),
                            bool failed = false, bool missing = false) {
-            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, count, reset)).array();
-            auto codex = providers[1].toObject();
-            if (missing) codex.remove("rate_limit_reset_credits");
-            else codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
-            if (failed) { codex["is_success"] = false; codex["error"] = "Unavailable"; }
-            providers[1] = codex;
+            auto providers = QJsonDocument::fromJson(provider == "Claude" ? TestUsage::snapshot()
+                : TestUsage::snapshotWithCodex(0, 41, count, reset)).array();
+            const int index = provider == "Claude" ? 0 : 1;
+            auto reading = providers[index].toObject();
+            if (missing) reading.remove("rate_limit_reset_credits");
+            else reading["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
+            if (failed) { reading["is_success"] = false; reading["error"] = "Unavailable"; }
+            providers[index] = reading;
             return QJsonDocument(providers).toJson();
         };
         ControllerFixture controller(dir.filePath("settings.json"), payload(3));
@@ -219,6 +228,209 @@ private slots:
         controller.refresh();
         QCOMPARE(alerts.size(), 2);
     }
+    void claudeResetMetadataAndEligibilityAreReadOnly() {
+        QTemporaryDir dir;
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithClaude(40, 60, 3, true));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        for (const auto &value : {QJsonValue(true), QJsonValue(false), QJsonValue(QJsonValue::Null),
+                                  QJsonValue("true"), QJsonValue(1), QJsonValue(QJsonObject{})}) {
+            controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, 60, 3, value));
+            const auto credits = controller.providers().first().toMap()["rate_limit_reset_credits"].toMap();
+            QVERIFY(credits.contains("usable_now"));
+            QCOMPARE(credits["usable_now"].isNull(), !value.isBool());
+            if (value.isBool()) QCOMPARE(credits["usable_now"].toBool(), value.toBool());
+            QCOMPARE(controller.resetState("Claude")["eligible"].toBool(), value.isBool() && value.toBool());
+            QCOMPARE(controller.resetState("Claude")["visible"].toBool(), value.isBool() && value.toBool());
+        }
+        for (const auto &used : {QPair<double, double>{95, 40}, {40, 95}, {100, 40}, {40, 100}}) {
+            controller.replaceSnapshot(TestUsage::snapshotWithClaude(used.first, used.second, 3, false));
+            QVERIFY(controller.resetState("Claude")["visible"].toBool());
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
+            QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        }
+        controller.replaceSnapshot(TestUsage::snapshotWithClaude(100, 100, 0, true));
+        QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        QVERIFY(!controller.resetState("Claude")["visible"].toBool());
+        controller.replaceSnapshot(TestUsage::snapshotWithClaude(100, 100, 3, true, "invalid"));
+        QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        QVERIFY(!controller.resetState("Claude")["visible"].toBool());
+        auto readings = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(100, 100, 3, true)).array();
+        auto claude = readings[0].toObject();
+        for (const int skew : {-3600, 3600}) {
+            claude["fetch_status"] = QJsonObject{{"fetched_at", QDateTime::currentDateTimeUtc().addSecs(skew).toString(Qt::ISODateWithMs)},
+                {"credential_epoch", "sample-epoch"}, {"failure_kind", QJsonValue::Null}};
+            readings[0] = claude;
+            controller.replaceSnapshot(QJsonDocument(readings).toJson());
+            QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
+        }
+        for (const bool missing : {true, false}) {
+            if (missing) claude.remove("fetch_status");
+            else claude["fetch_status"] = QJsonValue::Null;
+            readings[0] = claude;
+            controller.replaceSnapshot(QJsonDocument(readings).toJson());
+            // Without a fetch anchor the options still open for information; nothing may be used.
+            QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
+        }
+        claude["error"] = "Unavailable"; claude["is_success"] = false; readings[0] = claude;
+        controller.replaceSnapshot(QJsonDocument(readings).toJson());
+        QVERIFY(controller.providers().first().toMap()["rate_limit_reset_credits"].isNull());
+        QVERIFY(!controller.resetState("Claude")["visible"].toBool());
+    }
+    void claudeReceiptRequiresDurableServerEvidence() {
+        // Read-only: seeds a receipt file and never prepares, confirms, or submits a reset.
+        QTemporaryDir dir;
+        const QString settings = dir.filePath("settings.json");
+        const QString fingerprint(64, QLatin1Char('b'));
+        const QString receiptPath = settings + ".reset-claude-account-" + fingerprint + ".json";
+        const auto submittedAt = QDateTime::currentDateTimeUtc();
+        const auto baseline = submittedAt.addSecs(-3600);
+        QFile receipt(receiptPath);
+        QVERIFY(receipt.open(QIODevice::WriteOnly));
+        QJsonObject metadata{{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"completed", false}, {"account_fingerprint", fingerprint}, {"provider", "Claude"},
+            {"available_count", 3}, {"submitted_at", submittedAt.toString(Qt::ISODateWithMs)},
+            {"reading_fetched_at", baseline.toString(Qt::ISODateWithMs)},
+            {"weekly_resets_at", QJsonValue::Null}};
+        const auto receiptBytes = QJsonDocument(metadata).toJson(QJsonDocument::Compact);
+        QCOMPARE(receipt.write(receiptBytes), receiptBytes.size());
+        receipt.close();
+        const auto refused = [](const QJsonValue &fetchedAt, const QJsonArray &evidence = {}) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 60, 3, false)).array();
+            auto claude = providers[0].toObject();
+            auto credits = claude["rate_limit_reset_credits"].toObject();
+            if (!evidence.isEmpty()) credits["reconciled_request_ids"] = evidence;
+            claude["rate_limit_reset_credits"] = credits;
+            if (fetchedAt.isString()) claude["fetch_status"] = QJsonObject{{"fetched_at", fetchedAt},
+                {"failure_kind", QJsonValue::Null}, {"credential_epoch", QJsonValue::Null}};
+            else claude.remove("fetch_status");
+            providers[0] = claude;
+            return QJsonDocument(providers).toJson();
+        };
+        const auto fetchedAt = [&](const ControllerFixture &controller) {
+            return controller.providers().first().toMap()["fetch_status"].toMap()["fetched_at"].toString();
+        };
+
+        ControllerFixture controller(settings, refused(QJsonValue::Null));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QTRY_COMPARE(fetchedAt(controller), QString());
+        QVERIFY(QFileInfo::exists(receiptPath));
+        for (const auto &stamp : {baseline, baseline.addSecs(-30), baseline.addSecs(30)}) {
+            const QString older = stamp.toString(Qt::ISODateWithMs);
+            controller.replaceSnapshot(refused(older));
+            QTRY_COMPARE(fetchedAt(controller), older);
+            QVERIFY(QFileInfo::exists(receiptPath));
+            QVERIFY(controller.resetState("Claude")["awaitingUsage"].toBool());
+            // A pending receipt keeps the options reachable for information only.
+            QCOMPARE(controller.resetState("Claude")["phase"].toString(), QString("reconciling"));
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
+            QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        }
+        // Durable request evidence is already causal, even in an old cached
+        // usage snapshot. Ordinary fetch timestamps cannot replace it.
+        controller.replaceSnapshot(refused(baseline.toString(Qt::ISODateWithMs), QJsonArray{metadata["request_id"]}));
+        QTRY_VERIFY(!QFileInfo::exists(receiptPath));
+        QVERIFY(!controller.resetState("Claude")["awaitingUsage"].toBool());
+        QCOMPARE(controller.resetState("Claude")["phase"].toString(), QString("hidden"));
+
+        metadata.remove("reading_fetched_at");
+        QVERIFY(receipt.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        const auto legacyBytes = QJsonDocument(metadata).toJson(QJsonDocument::Compact);
+        QCOMPARE(receipt.write(legacyBytes), legacyBytes.size());
+        receipt.close();
+        const QString newer = submittedAt.addSecs(30).toString(Qt::ISODateWithMs);
+        controller.replaceSnapshot(refused(newer));
+        QTRY_COMPARE(fetchedAt(controller), newer);
+        QVERIFY(QFileInfo::exists(receiptPath));
+        QVERIFY(controller.resetState("Claude")["awaitingUsage"].toBool());
+    }
+    void claudeReceiptReconciliationSnapshots_data() {
+        QTest::addColumn<bool>("known");
+        QTest::addColumn<int>("count");
+        QTest::addColumn<bool>("usable");
+        QTest::addColumn<QString>("fingerprint");
+        QTest::addColumn<QString>("evidence");
+        QTest::addColumn<bool>("release");
+        const QString account(64, QLatin1Char('b'));
+        QTest::newRow("old server zero") << true << 0 << false << account << QStringLiteral("none") << false;
+        QTest::newRow("old server refusal") << true << 3 << false << account << QStringLiteral("none") << false;
+        QTest::newRow("displayed three final two later two") << true << 2 << true << account << QStringLiteral("none") << false;
+        QTest::newRow("unchanged") << true << 3 << true << account << QStringLiteral("none") << false;
+        QTest::newRow("exact durable UUID") << true << 3 << true << account << QStringLiteral("matching") << true;
+        QTest::newRow("older receipt after later request") << true << 2 << true << account << QStringLiteral("multiple") << true;
+        QTest::newRow("different UUID") << true << 0 << false << account << QStringLiteral("different") << false;
+        QTest::newRow("malformed evidence") << true << 0 << false << account << QStringLiteral("malformed") << false;
+        QTest::newRow("unknown malformed status") << false << 0 << false << account << QStringLiteral("matching") << false;
+        QTest::newRow("unbound zero") << true << 0 << false << QString() << QStringLiteral("matching") << false;
+        QTest::newRow("another account zero") << true << 0 << false << QString(64, QLatin1Char('c')) << QStringLiteral("matching") << false;
+    }
+    void claudeReceiptReconciliationSnapshots() {
+        // Read-only: seed a receipt and accept synthetic snapshots. Never
+        // prepare, schedule, consume, invoke a reset route, or submit a POST.
+        QFETCH(bool, known); QFETCH(int, count); QFETCH(bool, usable);
+        QFETCH(QString, fingerprint); QFETCH(QString, evidence); QFETCH(bool, release);
+        QTemporaryDir dir;
+        const QString settings = dir.filePath("settings.json");
+        const QString account(64, QLatin1Char('b'));
+        const QString path = settings + ".reset-claude-account-" + account + ".json";
+        const auto baseline = QDateTime::currentDateTimeUtc().addSecs(-60);
+        const QString requestID = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const QString differentID = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto snapshot = [&](bool valid, int available, bool usableNow, const QString &binding, const QDateTime &at) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 100, available, usableNow)).array();
+            auto provider = providers[0].toObject();
+            auto credits = provider["rate_limit_reset_credits"].toObject();
+            credits["account_fingerprint"] = binding.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(binding);
+            if (evidence == "matching") credits["reconciled_request_ids"] = QJsonArray{requestID};
+            if (evidence == "multiple") credits["reconciled_request_ids"] = QJsonArray{differentID, requestID};
+            if (evidence == "different") credits["reconciled_request_ids"] = QJsonArray{differentID};
+            if (evidence == "malformed") credits["reconciled_request_ids"] = QJsonArray{requestID, 7};
+            provider["rate_limit_reset_credits"] = valid ? QJsonValue(credits) : QJsonValue(QJsonValue::Null);
+            provider["fetch_status"] = QJsonObject{{"fetched_at", at.toString(Qt::ISODateWithMs)}};
+            providers[0] = provider;
+            return QJsonDocument(providers).toJson();
+        };
+        ControllerFixture controller(settings, snapshot(true, 3, true, account, baseline));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QFile receipt(path);
+        QVERIFY(receipt.open(QIODevice::WriteOnly));
+        const auto bytes = QJsonDocument(QJsonObject{{"request_id", requestID},
+            {"completed", false}, {"provider", "Claude"}, {"account_fingerprint", account},
+            {"available_count", 3}, {"reading_fetched_at", baseline.toString(Qt::ISODateWithMs)}}).toJson();
+        QCOMPARE(receipt.write(bytes), bytes.size()); receipt.close();
+        controller.replaceSnapshot(snapshot(known, count, usable, fingerprint, baseline.addSecs(30)));
+        QCOMPARE(QFileInfo::exists(path), !release);
+        if (release) {
+            // Replenishment at the same count must not resurrect a retired receipt.
+            controller.replaceSnapshot(snapshot(true, 3, true, account, baseline.addSecs(60)));
+            QVERIFY(!controller.resetState("Claude")["awaitingUsage"].toBool());
+            QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+        }
+    }
+    void claudeReconciliationEvidenceIsBoundedAndSanitized() {
+        const QString id = QStringLiteral("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        const auto parse = [&](const QJsonValue &evidence) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(100, 100, 2, true)).array();
+            auto provider = providers[0].toObject();
+            auto credits = provider["rate_limit_reset_credits"].toObject();
+            credits["reconciled_request_ids"] = evidence;
+            provider["rate_limit_reset_credits"] = credits;
+            providers[0] = provider;
+            QVariantList parsed;
+            if (!Usage::parse(QJsonDocument(providers).toJson(), parsed)) return QVariantMap{};
+            return parsed.first().toMap()["rate_limit_reset_credits"].toMap();
+        };
+        QCOMPARE(parse(QJsonArray{id})["reconciled_request_ids"].toStringList(), QStringList{id});
+        for (const auto &invalid : {QJsonValue("uuid"), QJsonValue(QJsonArray{id, id}),
+             QJsonValue(QJsonArray{id.toUpper()}), QJsonValue(QJsonArray{"not-a-uuid"}),
+             QJsonValue(QJsonArray{id, QJsonValue::Null})}) {
+            QVERIFY(!parse(invalid).contains("reconciled_request_ids"));
+        }
+        QJsonArray tooMany;
+        for (int i = 0; i < 1025; ++i) tooMany.append(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        QVERIFY(!parse(tooMany).contains("reconciled_request_ids"));
+    }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
         const QString fingerprint(64, QLatin1Char('a'));
@@ -236,6 +448,8 @@ private slots:
                 QCOMPARE(credits["available_count"].toLongLong(), expected);
                 QCOMPARE(credits["account_fingerprint"].toString(), expectedFingerprint);
                 QVERIFY(credits.contains("account_fingerprint"));
+                QVERIFY(credits.contains("usable_now"));
+                QVERIFY(credits["usable_now"].isNull());
                 QCOMPARE(credits["account_fingerprint"].isNull(), expectedFingerprint.isEmpty());
             }
         };
