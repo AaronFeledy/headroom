@@ -71,7 +71,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
+    controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp resetaction.cpp resetpolicy.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -269,6 +269,14 @@ if(BUILD_TESTING)
         ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)
     add_test(NAME headroom-platformmotion-tests COMMAND headroom-platformmotion-tests)
     set_tests_properties(headroom-platformmotion-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    # Pure banked-reset policy: facts in, capabilities out. No controller,
+    # transport, receipt, or timer code is linked.
+    qt_add_executable(headroom-resetpolicy-tests tests/test_resetpolicy.cpp resetpolicy.cpp)
+    set_target_properties(headroom-resetpolicy-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_include_directories(headroom-resetpolicy-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(headroom-resetpolicy-tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME headroom-resetpolicy-tests COMMAND headroom-resetpolicy-tests
+        -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-resetpolicy-tests.xml,junitxml")
     # DO NOT enable/implement reset action tests: they can burn a valuable reset.
     qt_add_executable(headroom-reset-prohibited-tests tests/test_reset_prohibited.cpp)
     set_target_properties(headroom-reset-prohibited-tests PROPERTIES WIN32_EXECUTABLE FALSE)
