@@ -133,18 +133,22 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
 		return
 	}
+	request.RequestID = strings.ToLower(request.RequestID)
 	if resetCtx.Err() != nil {
+		finalizeResetRejection(provider, resetter, request)
 		writeError(w, http.StatusRequestTimeout, "reset request timed out")
 		return
 	}
 
 	if !h.resetMu.TryLock() {
+		finalizeResetRejection(provider, resetter, request)
 		writeError(w, http.StatusConflict, "another reset request is in progress")
 		return
 	}
 	defer h.resetMu.Unlock()
 	known, blocked := resetter.ResetAttemptStatus(request.RequestID)
 	if blocked {
+		finalizeResetRejection(provider, resetter, request)
 		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
 		return
 	}
@@ -152,6 +156,7 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 	if !known {
 		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
 		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
+			finalizeResetRejection(provider, resetter, request)
 			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
 			return
 		}
@@ -165,11 +170,28 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		if ambiguous {
 			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
 		} else {
+			finalizeResetRejection(provider, resetter, request)
 			writeError(w, http.StatusBadGateway, "reset request unavailable")
 		}
 		return
 	}
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
+}
+
+// Only use after validated rejection, and after a consumer has returned when
+// one ran. A lost or ambiguous response is never proof of non-submission.
+func finalizeResetRejection(provider string, resetter ProviderResetter, request codexResetRequest) {
+	if provider != "claude" {
+		return
+	}
+	finalizer, ok := resetter.(ProviderResetRejectionFinalizer)
+	if !ok {
+		return
+	}
+	// Wait synchronously for durable evidence even after client cancellation or
+	// the response deadline. Healthy contention must not abandon this UUID.
+	// A crash or failed durable write still leaves the receipt latched.
+	_ = finalizer.RecordResetNotSubmitted(context.Background(), request.RequestID, request.AccountFingerprint)
 }
 
 func (h *handler) scheduleResetUsageRefresh(provider string) {

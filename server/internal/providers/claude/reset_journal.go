@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
@@ -142,6 +143,11 @@ func uniqueJournalValue(decoder *json.Decoder, depth int) error {
 			return err
 		}
 	}
+	// Zero is meaningful for a not-submitted tombstone, so it must never be
+	// supplied implicitly by a missing baseline field.
+	if depth == 2 && !seen["available_before"] {
+		return errResetUnavailable
+	}
 	if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
 		return errResetUnavailable
 	}
@@ -171,7 +177,7 @@ func validateResetJournal(journal *resetJournal) error {
 	}
 	pending := make(map[string]bool)
 	for id, attempt := range journal.Attempts {
-		if !validRequestID(id) || !fingerprintPattern.MatchString(attempt.AccountFingerprint) || attempt.AvailableBefore <= 0 {
+		if !validRequestID(id) || !fingerprintPattern.MatchString(attempt.AccountFingerprint) {
 			return errResetUnavailable
 		}
 		switch attempt.Outcome {
@@ -181,11 +187,21 @@ func validateResetJournal(journal *resetJournal) error {
 		}
 		switch attempt.Phase {
 		case "pending":
+			if attempt.AvailableBefore <= 0 {
+				return errResetUnavailable
+			}
 			if pending[attempt.AccountFingerprint] {
 				return errResetUnavailable
 			}
 			pending[attempt.AccountFingerprint] = true
 		case "reconciled":
+			if attempt.AvailableBefore <= 0 {
+				return errResetUnavailable
+			}
+		case "not_submitted":
+			if attempt.AvailableBefore != 0 || attempt.Outcome != "unavailable" {
+				return errResetUnavailable
+			}
 		default:
 			return errResetUnavailable
 		}
@@ -241,6 +257,105 @@ func (journal *resetJournal) pending() bool {
 	return false
 }
 
+// This transition only records that a validated request was rejected before
+// submission. An existing entry may belong to an uncertain attempt in another
+// process: never replace it, even when its account matches this request.
+// Call only under resetMu -> bankMu -> journal lock; publish a copy after commit.
+func recordResetNotSubmitted(journal *resetJournal, requestID, fingerprint string, commit func(*resetJournal) error) error {
+	if !validRequestID(requestID) || !fingerprintPattern.MatchString(fingerprint) || validateResetJournal(journal) != nil {
+		return errResetUnavailable
+	}
+	if _, exists := journal.Attempts[requestID]; exists {
+		return nil
+	}
+	if len(journal.Attempts) >= maxRememberedResetAttempts {
+		return errResetUnavailable
+	}
+	updated := resetJournal{Version: journal.Version, Attempts: make(map[string]resetAttempt, len(journal.Attempts)+1)}
+	for id, attempt := range journal.Attempts {
+		updated.Attempts[id] = attempt
+	}
+	updated.Attempts[requestID] = resetAttempt{AccountFingerprint: fingerprint, Phase: "not_submitted", Outcome: "unavailable"}
+	if err := commit(&updated); err != nil {
+		return err
+	}
+	*journal = updated
+	return nil
+}
+
+// RecordResetNotSubmitted has no provider or credential access. It can finalize
+// a validated rejection only after all possible submission code has returned.
+// Missing or damaged existing state must never become evidence of non-submission.
+func (c *Client) RecordResetNotSubmitted(ctx context.Context, requestID, fingerprint string) error {
+	if lockResetRejection(ctx, &c.resetMu) != nil {
+		return errResetUnavailable
+	}
+	defer c.resetMu.Unlock()
+	if lockResetRejection(ctx, &c.bankMu) != nil {
+		return errResetUnavailable
+	}
+	defer c.bankMu.Unlock()
+	return c.recordResetNotSubmittedLocked(ctx, requestID, fingerprint)
+}
+
+// Storage-only rejection transition, under resetMu -> bankMu. Keeping the
+// guarded first-use open here lets isolated storage tests cover the same path.
+func (c *Client) recordResetNotSubmittedLocked(ctx context.Context, requestID, fingerprint string) error {
+	// A validated rejection can be the first Claude reset operation when a
+	// different provider owns the shared handler lock. Create only a never-used
+	// namespace; openResetJournal rejects missing or damaged existing ledgers.
+	journal, lock, err := c.openResetJournal(ctx, true)
+	if err != nil {
+		return errResetUnavailable
+	}
+	if ctx.Err() != nil {
+		err = errResetUnavailable
+	} else {
+		err = recordResetNotSubmitted(journal, requestID, fingerprint, c.commitResetJournal)
+	}
+	if closeErr := lock.Close(); closeErr != nil {
+		c.resetJournalFailed.Store(true)
+		return errResetUnavailable
+	}
+	return err
+}
+
+// Wait in this caller, never in a background worker. HTTP rejection finalization
+// uses Background so healthy contention cannot abandon its durable evidence.
+// Other callers can still cancel while waiting; no work continues after return.
+func lockResetRejection(ctx context.Context, mutex *sync.Mutex) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return errResetUnavailable
+		}
+		if mutex.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errResetUnavailable
+		case <-ticker.C:
+		}
+	}
+}
+
+// Pure replay policy: every remembered UUID is terminal for submission. A
+// not-submitted UUID can never be promoted into a new pending attempt.
+func resetAttemptResult(attempt resetAttempt) (outcome string, ambiguous bool, err error) {
+	if attempt.Phase == "not_submitted" {
+		return "unavailable", false, nil
+	}
+	if attempt.Outcome == "" {
+		return "", true, errResetUnavailable
+	}
+	if attempt.Outcome == "reset" {
+		return "already_redeemed", false, nil
+	}
+	return attempt.Outcome, false, nil
+}
+
 // Only call under resetMu -> bankMu -> journal lock, after a successful fresh
 // bank GET made while holding those locks. No clock or cached usage can prove
 // causality. Change a copy and publish only after the durable commit succeeds.
@@ -279,7 +394,7 @@ func (c *Client) reconciledResetRequests(fingerprint string) []string {
 	}
 	var ids []string
 	for id, attempt := range journal.Attempts {
-		if attempt.Phase == "reconciled" && attempt.AccountFingerprint == fingerprint {
+		if (attempt.Phase == "reconciled" || attempt.Phase == "not_submitted") && attempt.AccountFingerprint == fingerprint {
 			ids = append(ids, id)
 		}
 	}

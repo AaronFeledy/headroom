@@ -67,6 +67,12 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 			ambiguous = true
 		}
 	}()
+	if previous, exists := journal.Attempts[requestID]; exists && previous.Phase == "not_submitted" {
+		if previous.AccountFingerprint != expectedAccountFingerprint {
+			return "", false, errResetUnavailable
+		}
+		return resetAttemptResult(previous)
+	}
 	c.selectBankToken(creds.accessToken)
 	accountID, err := c.bankAccount(ctx, creds.accessToken)
 	if err != nil || !matchesAccountFingerprint(accountID, expectedAccountFingerprint) || expectedAccountID != "" && expectedAccountID != accountID {
@@ -76,13 +82,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 		if !matchesAccountFingerprint(accountID, previous.AccountFingerprint) {
 			return "", false, errResetUnavailable
 		}
-		if previous.Outcome == "" {
-			return "", true, errResetUnavailable
-		}
-		if previous.Outcome == "reset" {
-			return "already_redeemed", false, nil
-		}
-		return previous.Outcome, false, nil
+		return resetAttemptResult(previous)
 	}
 	if journal.pending() {
 		return "", false, errDifferentResetPending

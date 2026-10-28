@@ -93,7 +93,8 @@ type RateLimitResetCredits struct {
 	AccountFingerprint *string `json:"account_fingerprint"`
 	UsableNow          *bool   `json:"usable_now"`
 	// ReconciledRequests revalidates durable provider evidence at serialization
-	// time, so cached snapshots cannot retain evidence after journal damage.
+	// time, including requests proved not submitted. Cached snapshots cannot
+	// retain evidence after journal damage.
 	ReconciledRequests func() []string `json:"-"`
 }
 

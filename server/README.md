@@ -185,7 +185,13 @@ uploads are single-shot, non-rewindable, and never redirected or retried.
 
 Successful usage can include optional
 `rate_limit_reset_credits.reconciled_request_ids`, containing the current
-account's durably reconciled UUIDs (up to 1024). The journal is revalidated on
+account's durably resolved UUIDs (up to 1024): reconciled attempts and validated
+requests proved not submitted. A rejection is recorded as `not_submitted` with
+the request's fingerprint, an explicit zero baseline, and outcome `unavailable`.
+It is inserted only when the UUID is absent under the same provider and
+cross-process locks; an existing uncertain attempt is never replaced. Replaying
+that UUID remains terminal and cannot submit a reset. Ambiguous responses never
+create this evidence. The journal is revalidated on
 every usage serialization, including cached snapshots. A desktop retires its
 Claude receipt only when its provider, account fingerprint, and exact request
 UUID match this evidence. This also lets a lagging desktop reconcile an older
