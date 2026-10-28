@@ -156,7 +156,11 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			// A canceled bank attachment has no trustworthy reset binding.
 			// Let the poller retain last-good display data as a failed fetch so
 			// armed actions pause rather than treating missing binding as success.
-			return data, ctx.Err()
+			if err := ctx.Err(); err != nil {
+				failure = usage.TransportFailure(err)
+				return data, failure
+			}
+			return data, nil
 		}
 		failure = statusErr.failure
 		if statusErr.statusCode == http.StatusUnauthorized {

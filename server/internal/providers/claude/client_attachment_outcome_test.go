@@ -89,6 +89,10 @@ func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t
 	if got := <-transport.closed; got != 1 {
 		t.Fatalf("first usage GET = %d, want 1", got)
 	}
+	if first.Data.CredentialEpoch == nil || first.Data.FetchStatus == nil || first.Data.FetchStatus.FailureKind != nil {
+		t.Fatal("seeded first poll has no successful credential epoch")
+	}
+	goodEpoch := *first.Data.CredentialEpoch
 	c.resetMu.Lock()
 	release := sync.OnceFunc(c.resetMu.Unlock)
 	defer release()
@@ -131,6 +135,14 @@ func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t
 		if !got.ok || got.err != nil || !errors.Is(provider.lastErr, wantErr) {
 			t.Fatalf("attachment failure not propagated: ok=%t poll=%v fetch=%v", got.ok, got.err, provider.lastErr)
 		}
+		var typed *usage.FetchFailure
+		if !errors.As(provider.lastErr, &typed) || typed.Kind != usage.FailureTransient ||
+			provider.lastData.FetchFailure != typed || !errors.Is(typed, wantErr) {
+			t.Fatalf("raw fetch lost transient context failure: err=%v failure=%+v", provider.lastErr, provider.lastData.FetchFailure)
+		}
+		if provider.lastData.CredentialEpoch == nil || *provider.lastData.CredentialEpoch != goodEpoch {
+			t.Fatal("failed fetch lost its current credential epoch")
+		}
 		if provider.lastData.RateLimitResetCredits != nil || provider.lastData.ProviderAccountID != "" {
 			t.Fatal("failed fresh attachment retained reset metadata or binding")
 		}
@@ -138,21 +150,32 @@ func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t
 			got.entry.Data.RateLimitResetCredits == nil || got.entry.Data.RateLimitResetCredits.AvailableCount != 2 {
 			t.Fatal("poller replaced last good instead of overlaying a failed fetch")
 		}
+		if got.entry.Data.FetchFailure == nil || got.entry.Data.FetchFailure.Kind != usage.FailureTransient ||
+			got.entry.Data.FetchStatus == nil || got.entry.Data.FetchStatus.FailureKind == nil ||
+			*got.entry.Data.FetchStatus.FailureKind != usage.FailureTransient ||
+			got.entry.Data.FetchStatus.CredentialEpoch == nil || *got.entry.Data.FetchStatus.CredentialEpoch != goodEpoch {
+			t.Fatalf("poller did not preserve current transient epoch: status=%+v failure=%+v", got.entry.Data.FetchStatus, got.entry.Data.FetchFailure)
+		}
 		encoded, err := json.Marshal(got.entry.Data)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var wire struct {
-			IsSuccess bool              `json:"is_success"`
-			Error     *string           `json:"error"`
-			Credits   json.RawMessage   `json:"rate_limit_reset_credits"`
-			Buckets   []json.RawMessage `json:"buckets"`
+			IsSuccess bool               `json:"is_success"`
+			Error     *string            `json:"error"`
+			Credits   json.RawMessage    `json:"rate_limit_reset_credits"`
+			Buckets   []json.RawMessage  `json:"buckets"`
+			Status    *usage.FetchStatus `json:"fetch_status"`
 		}
 		if err := json.Unmarshal(encoded, &wire); err != nil {
 			t.Fatal(err)
 		}
 		if wire.IsSuccess || wire.Error == nil || string(wire.Credits) != "null" || len(wire.Buckets) != 0 {
 			t.Fatalf("failed wire reading exposed spendable evidence: %s", encoded)
+		}
+		if wire.Status == nil || wire.Status.FailureKind == nil || *wire.Status.FailureKind != usage.FailureTransient ||
+			wire.Status.CredentialEpoch == nil || *wire.Status.CredentialEpoch != goodEpoch {
+			t.Fatalf("failed wire reading lost transient epoch: %s", encoded)
 		}
 	}
 	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), time.Second)
@@ -164,7 +187,9 @@ func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t
 	release()
 	recovered, ok, err := p.PollProvider(context.Background(), "Claude")
 	if !ok || err != nil || provider.lastErr != nil || recovered.Data.Error != nil || recovered.Data.Current.Utilization != 97 ||
-		recovered.Data.RateLimitResetCredits == nil || recovered.Data.RateLimitResetCredits.AvailableCount != 2 {
+		recovered.Data.RateLimitResetCredits == nil || recovered.Data.RateLimitResetCredits.AvailableCount != 2 ||
+		recovered.Data.FetchFailure != nil || recovered.Data.FetchStatus == nil || recovered.Data.FetchStatus.FailureKind != nil ||
+		recovered.Data.FetchStatus.CredentialEpoch == nil || *recovered.Data.FetchStatus.CredentialEpoch != goodEpoch {
 		t.Fatalf("healthy poll did not recover after attachment failure: ok=%t poll=%v fetch=%v", ok, err, provider.lastErr)
 	}
 	if got := <-transport.closed; got != 4 {
