@@ -1045,19 +1045,22 @@ private slots:
             }
             QTRY_COMPARE(button()->isVisible(), weekly >= 90);
         }
-        // ChatGPT shows the button from 90% but Use now still requires 95% weekly usage.
-        struct Reading { double weekly; int count; QString fingerprint; bool visible, eligible; };
-        const QList<Reading> readings{{89.99, 3, QString(64, 'c'), false, false}, {90, 3, QString(64, 'c'), true, false},
-            {94.99, 3, QString(64, 'c'), true, false}, {95, 3, QString(64, 'c'), true, true}, {100, 3, QString(64, 'c'), true, true},
-            {95, 0, QString(64, 'c'), false, false}, {95, 3, "invalid", false, false}};
+        // ChatGPT offers its options from 90% weekly usage. With a fresh bound
+        // reading the same floor permits immediate use, so the entry opens choices.
+        struct Reading { double weekly; int count; QString fingerprint; bool offered; };
+        const QList<Reading> readings{{89.99, 3, QString(64, 'c'), false}, {90, 3, QString(64, 'c'), true},
+            {94.99, 3, QString(64, 'c'), true}, {95, 3, QString(64, 'c'), true}, {99.99, 3, QString(64, 'c'), true},
+            {100, 3, QString(64, 'c'), true}, {95, 0, QString(64, 'c'), false}, {95, 3, "invalid", false}};
         for (const auto &reading : readings) {
             controller.replaceSnapshot(bound(reading.weekly, reading.count, reading.fingerprint));
-            QVERIFY(button()); QTRY_COMPARE(button()->isVisible(), reading.visible);
-            QTRY_COMPARE(button()->isEnabled(), reading.eligible);
+            QVERIFY(button()); QTRY_COMPARE(button()->isVisible(), reading.offered);
+            QTRY_COMPARE(button()->isEnabled(), reading.offered);
+            if (reading.offered) QCOMPARE(button()->property("text").toString(), QString("Reset options…"));
             const auto state = controller.resetState("Codex");
-            QCOMPARE(state.value("visible").toBool(), reading.visible);
-            QCOMPARE(state.value("enabled").toBool(), reading.eligible);
-            QCOMPARE(state.value("eligible").toBool(), reading.eligible);
+            QCOMPARE(state.value("visible").toBool(), reading.offered);
+            QCOMPARE(state.value("enabled").toBool(), reading.offered);
+            QCOMPARE(state.value("eligible").toBool(), reading.offered);
+            QCOMPARE(state.value("phase").toString(), reading.offered ? QString("choices") : QString("hidden"));
         }
     }
     void preservesAndDisplaysCustomInterval() {

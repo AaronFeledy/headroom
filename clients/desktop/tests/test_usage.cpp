@@ -269,8 +269,9 @@ private slots:
             else claude["fetch_status"] = QJsonValue::Null;
             readings[0] = claude;
             controller.replaceSnapshot(QJsonDocument(readings).toJson());
+            // Without a fetch anchor the options still open for information; nothing may be used.
             QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
-            QVERIFY(!controller.resetState("Claude")["enabled"].toBool());
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
         }
         claude["error"] = "Unavailable"; claude["is_success"] = false; readings[0] = claude;
         controller.replaceSnapshot(QJsonDocument(readings).toJson());
@@ -318,10 +319,15 @@ private slots:
             QTRY_COMPARE(fetchedAt(controller), older);
             QVERIFY(QFileInfo::exists(receiptPath));
             QVERIFY(controller.resetState("Claude")["awaitingUsage"].toBool());
+            // A pending receipt keeps the options reachable for information only.
+            QCOMPARE(controller.resetState("Claude")["phase"].toString(), QString("reconciling"));
+            QVERIFY(controller.resetState("Claude")["enabled"].toBool());
+            QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
         }
         controller.replaceSnapshot(refused(baseline.addSecs(30).toString(Qt::ISODateWithMs)));
         QTRY_VERIFY(!QFileInfo::exists(receiptPath));
         QVERIFY(!controller.resetState("Claude")["awaitingUsage"].toBool());
+        QCOMPARE(controller.resetState("Claude")["phase"].toString(), QString("hidden"));
 
         metadata.remove("reading_fetched_at");
         QVERIFY(receipt.open(QIODevice::WriteOnly | QIODevice::Truncate));

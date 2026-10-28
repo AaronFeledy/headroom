@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "usage.h"
+#include "resetpolicy.h"
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -51,6 +52,21 @@ bool validFingerprint(const QString &value) {
 QString canonicalWindow(const QVariantMap &weekly) {
     const auto reset = QDateTime::fromString(weekly.value("resets_at").toString(), Qt::ISODateWithMs);
     return reset.isValid() ? reset.toUTC().toString(Qt::ISODateWithMs) : QString();
+}
+
+ResetPolicy::Window windowState(const QString &canonical) {
+    const auto deadline = QDateTime::fromString(canonical, Qt::ISODateWithMs);
+    if (!deadline.isValid()) return ResetPolicy::Window::Unknown;
+    return deadline > QDateTime::currentDateTimeUtc() ? ResetPolicy::Window::Future : ResetPolicy::Window::Ended;
+}
+
+ResetPolicy::Provider providerKind(const QString &provider) {
+    return provider == "Claude" ? ResetPolicy::Provider::Claude : ResetPolicy::Provider::Codex;
+}
+
+QString receiptPrefix(const QString &settingsPath, const QString &provider) {
+    // Preserve old Codex receipt paths. Claude has a separate provider namespace.
+    return settingsPath + (provider == "Claude" ? ".reset-claude-account-" : ".reset-account-");
 }
 
 bool readReceipt(const QString &path, QJsonObject &receipt) {
@@ -110,20 +126,49 @@ bool Controller::resetReadingFresh(const QString &provider) const {
         && (provider != "Claude" || fetchedAt.isValid());
 }
 
-bool Controller::resetEligible(const QString &provider) const {
-    const auto weekly = resetReading(provider);
-    return resetReadingFresh(provider) && !m_resetBusy
-        && (provider == "Claude" ? weekly.value("usable_now").metaType().id() == QMetaType::Bool
-                && weekly.value("usable_now").toBool() : weekly.value("utilization").toDouble() >= 95)
-        && weekly.value("available_count").toDouble() > 0
-        && validFingerprint(weekly.value("account_fingerprint").toString())
-        && !resetAwaitingUsage(provider);
+ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
+    // Facts only: the pure policy decides what they permit. Unknown values
+    // stay unknown rather than defaulting to a permissive reading.
+    ResetPolicy::Facts facts;
+    facts.provider = providerKind(provider);
+    const auto reading = resetReading(provider);
+    if (provider == "Codex" || provider == "Claude") {
+        for (const auto &value : m_providers) {
+            const auto current = value.toMap();
+            if (current.value("provider_name").toString() != provider) continue;
+            facts.readingAvailable = current.value("is_success").toBool();
+            break;
+        }
+    }
+    facts.fresh = resetReadingFresh(provider);
+    if (reading.contains("available_count")) facts.availableCount = reading.value("available_count").toLongLong();
+    bool validUsage = false;
+    const double utilization = reading.value("utilization").toDouble(&validUsage);
+    if (facts.readingAvailable && validUsage) facts.utilization = utilization;
+    if (reading.value("usable_now").metaType().id() == QMetaType::Bool) facts.usableNow = reading.value("usable_now").toBool();
+    facts.accountBound = validFingerprint(reading.value("account_fingerprint").toString());
+    const QString window = canonicalWindow(reading);
+    facts.window = windowState(window);
+    // Keep an unverifiable pending request visible for its provider, without
+    // treating missing account metadata as permission or proof of recovery.
+    facts.awaitingUsage = resetAwaitingUsage(provider) || (!facts.accountBound
+        && (provider == "Codex" || provider == "Claude")
+        && m_resetBlockedReceipt.startsWith(receiptPrefix(m_settingsService.path(), provider)));
+    facts.busy = m_resetBusy;
+    facts.owner = provider == m_resetProvider;
+    facts.confirmed = !m_resetConfirmation.isEmpty();
+    facts.confirmationCurrent = facts.confirmed && m_resetConfirmation == resetConnectionIdentity();
+    facts.armed = !m_autoResetConnection.isEmpty();
+    facts.armIdentityCurrent = facts.armed && m_autoResetConnection == resetConnectionIdentity();
+    facts.armWindowCurrent = facts.armed && window == m_autoResetWindow;
+    facts.armWindow = windowState(m_autoResetWindow);
+    return facts;
 }
 
 bool Controller::resetAwaitingUsage(const QString &provider) const {
     const QString path = resetReceiptPath(provider);
     // Any submitted request stays latched, including an uncertain result or
-    // an app restart. Never offer another spend while usage is still >= 95%.
+    // an app restart. Never offer another spend while usage is still >= 90%.
     return !path.isEmpty() && (m_resetBlockedReceipt == path || QFileInfo::exists(path)
         || (provider == "Codex" && !legacyResetReceiptPaths().isEmpty()));
 }
@@ -142,8 +187,7 @@ QString Controller::resetReceiptPath(const QString &provider) const {
     // an account across local launches, transports, and equivalent addresses.
     const QString fingerprint = resetReading(provider).value("account_fingerprint").toString();
     if (!validFingerprint(fingerprint)) return {};
-    // Preserve old Codex receipt paths. Claude has a separate provider namespace.
-    return m_settingsService.path() + (provider == "Claude" ? ".reset-claude-account-" : ".reset-account-") + fingerprint + ".json";
+    return receiptPrefix(m_settingsService.path(), provider) + fingerprint + ".json";
 }
 
 QStringList Controller::legacyResetReceiptPaths() const {
@@ -163,70 +207,52 @@ QStringList Controller::legacyResetReceiptPaths() const {
 }
 
 QVariantMap Controller::resetState(const QString &provider) const {
-    const auto reading = resetReading(provider);
-    const bool selected = provider == m_resetProvider;
-    const bool automatic = selected && !m_autoResetConnection.isEmpty();
-    const bool occupied = m_resetBusy || !m_resetConfirmation.isEmpty() || !m_autoResetConnection.isEmpty();
-    const bool visible = automatic || (reading.value("available_count").toLongLong() > 0
-        && validFingerprint(reading.value("account_fingerprint").toString())
-        && (reading.value("utilization").toDouble() >= 90
-            || (provider == "Claude" && reading.value("usable_now").metaType().id() == QMetaType::Bool
-                && reading.value("usable_now").toBool())));
-    const bool canPrepare = provider == "Claude" ? visible && resetReadingFresh(provider) && !m_resetBusy
-        && !resetAwaitingUsage(provider) : resetEligible(provider);
-    return {{"automatic", automatic}, {"awaitingUsage", resetAwaitingUsage(provider)},
-        {"enabled", (!occupied || selected) && (automatic || canPrepare)},
-        {"eligible", resetEligible(provider)}, {"visible", visible}};
+    const auto facts = resetFacts(provider);
+    const auto capabilities = ResetPolicy::evaluate(facts);
+    using ResetPolicy::Phase;
+    const bool armed = capabilities.phase == Phase::Armed || capabilities.phase == Phase::Paused;
+    return {{"automatic", armed}, {"awaitingUsage", facts.awaitingUsage}, {"enabled", capabilities.canOpen},
+        {"eligible", capabilities.canUseNow}, {"visible", capabilities.visible},
+        {"managing", capabilities.visible && capabilities.phase != Phase::Choices},
+        {"phase", ResetPolicy::phaseName(capabilities.phase)},
+        {"openReason", ResetPolicy::reasonText(capabilities.openReason, facts.provider)}};
 }
 
 QVariantMap Controller::resetAction() const {
-    const bool automatic = !m_autoResetConnection.isEmpty();
-    const bool canConfirm = !m_resetConfirmation.isEmpty()
-        && m_resetConfirmation == resetConnectionIdentity() && resetEligible(m_resetProvider);
-    const auto windowEnd = QDateTime::fromString(canonicalWindow(resetReading(m_resetProvider)), Qt::ISODateWithMs);
-    const auto state = resetState(m_resetProvider);
-    const bool canSchedule = !m_resetConfirmation.isEmpty() && m_resetConfirmation == resetConnectionIdentity()
-        && !m_resetBusy && state.value("visible").toBool() && !resetAwaitingUsage(m_resetProvider)
-        && resetReadingFresh(m_resetProvider) && (m_resetProvider != "Codex" || canConfirm);
-    return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", automatic},
-        {"awaitingUsage", resetAwaitingUsage(m_resetProvider)},
-        {"enabled", automatic || (m_resetConfirmation.isEmpty() && resetEligible(m_resetProvider))},
-        {"canConfirm", canConfirm},
-        {"canSchedule", canSchedule && !automatic && windowEnd.isValid() && windowEnd > QDateTime::currentDateTimeUtc()}};
+    const auto facts = resetFacts(m_resetProvider);
+    const auto capabilities = ResetPolicy::evaluate(facts);
+    const bool armed = !m_autoResetConnection.isEmpty();
+    return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", armed},
+        {"availableCount", facts.availableCount ? QVariant::fromValue(*facts.availableCount) : QVariant()},
+        {"awaitingUsage", facts.awaitingUsage},
+        {"enabled", armed || (m_resetConfirmation.isEmpty() && capabilities.canUseNow)},
+        {"phase", ResetPolicy::phaseName(capabilities.phase)},
+        {"canConfirm", capabilities.canConfirm}, {"canSchedule", capabilities.canSchedule},
+        {"canCancel", capabilities.canCancelArm},
+        {"useNowReason", ResetPolicy::reasonText(capabilities.useNowReason, facts.provider)},
+        {"automaticReason", ResetPolicy::reasonText(capabilities.armReason, facts.provider)},
+        {"windowEndsAt", armed ? m_autoResetWindow : canonicalWindow(resetReading(m_resetProvider))}};
 }
 
 bool Controller::prepareReset(const QString &provider) {
+    // Opens one provider's options. The policy alone grants permission to
+    // use or arm; this binds the options to the current account/connection
+    // identity and explains a pending receipt. It never sends a request.
     if (provider != "Codex" && provider != "Claude") return false;
-    if (m_resetBusy || (provider != m_resetProvider && (!m_resetConfirmation.isEmpty() || !m_autoResetConnection.isEmpty()))) return false;
+    if (!ResetPolicy::evaluate(resetFacts(provider)).canOpen) return false;
     m_resetProvider = provider;
     m_resetConfirmation.clear();
     m_resetMessage.clear();
-    const char *const claudeAwaitingUsageMessage = "A reset has already been requested. Waiting for updated Claude usage.";
-    const bool canPrepare = resetEligible(provider) || (provider == "Claude" && resetState(provider).value("visible").toBool()
-        && resetReadingFresh(provider) && !resetAwaitingUsage(provider));
-    if (!canPrepare) {
-        m_resetMessage = resetAwaitingUsage(provider)
-            ? "A reset has already been requested. Waiting for weekly usage to drop below 95%."
-            : "Refresh usage before using a reset. Weekly usage must be at least 95% and a banked reset must be available.";
-        if (provider == "Claude") m_resetMessage = resetAwaitingUsage(provider)
-            ? claudeAwaitingUsageMessage
-            : "Refresh usage before using a reset. Claude must allow a reset and a banked reset must be available.";
-        emit changed(); return false;
-    }
-    const auto weekly = resetReading(provider);
-    const QString fingerprint = weekly.value("account_fingerprint").toString();
+    const QString fingerprint = resetReading(provider).value("account_fingerprint").toString();
     const QString receiptPath = resetReceiptPath(provider);
     QJsonObject receipt;
     if (!readReceipt(receiptPath, receipt)) {
         m_resetMessage = QString("The previous reset request could not be read safely. Check your usage in %1.").arg(displayName(provider));
-        emit changed(); return false;
-    }
-    if (!receipt.isEmpty() && (receipt.value("account_fingerprint").toString() != fingerprint
+    } else if (!receipt.isEmpty() && (receipt.value("account_fingerprint").toString() != fingerprint
         || receipt.value("provider").toString("Codex") != provider)) {
         m_resetMessage = QString("The previous reset request is not bound to this %1 account. Check your usage in %1.").arg(displayName(provider));
-        emit changed(); return false;
     }
-    for (const QString &legacyPath : provider == "Codex" ? legacyResetReceiptPaths() : QStringList{}) {
+    for (const QString &legacyPath : provider == "Codex" && m_resetMessage.isEmpty() ? legacyResetReceiptPaths() : QStringList{}) {
         QJsonObject legacy;
         if (!readReceipt(legacyPath, legacy)) {
             m_resetMessage = "The previous reset request could not be read safely. Check your usage in ChatGPT.";
@@ -236,22 +262,21 @@ bool Controller::prepareReset(const QString &provider) {
             m_resetBlockedReceipt = legacyPath;
             m_resetMessage = "A reset was already used. Waiting for updated weekly usage.";
         }
-        emit changed(); return false;
+        break;
     }
-    if (receipt.value("completed").toBool()) {
+    if (m_resetMessage.isEmpty() && receipt.value("completed").toBool()) {
         m_resetBlockedReceipt = receiptPath;
         m_resetMessage = provider == "Claude" ? "A reset was already used. Waiting for updated Claude usage."
             : "A reset was already used. Waiting for updated weekly usage.";
-        emit changed(); return false;
-    }
-    if (!receipt.isEmpty()) {
+    } else if (m_resetMessage.isEmpty() && !receipt.isEmpty()) {
         m_resetBlockedReceipt = receiptPath;
-        m_resetMessage = provider == "Claude" ? claudeAwaitingUsageMessage
-            : "A reset has already been requested. Waiting for weekly usage to drop below 95%.";
-        emit changed(); return false;
+        m_resetMessage = ResetPolicy::awaitingUsageText(providerKind(provider), false);
     }
+    // The confirmation identity binds these options to the account and
+    // connection they were opened for; permission still comes from the policy.
     m_resetConfirmation = resetConnectionIdentity();
-    emit changed(); return true;
+    emit changed();
+    return true;
 }
 
 void Controller::cancelResetConfirmation() {
@@ -282,7 +307,15 @@ void Controller::clearScheduledReset() {
 void Controller::cancelScheduledReset() {
     if (m_autoResetConnection.isEmpty()) return;
     clearScheduledReset();
-    m_resetMessage = "Automatic reset canceled. No reset was requested.";
+    m_resetMessage = ResetPolicy::cancellationText(ResetPolicy::Reason::None);
+    emit changed();
+}
+
+void Controller::retireScheduledReset(ResetPolicy::Reason reason) {
+    // Disarm without I/O and say why. Nothing was requested.
+    clearScheduledReset();
+    m_resetMessage = ResetPolicy::cancellationText(reason);
+    if (m_notifications) m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
     emit changed();
 }
 
@@ -291,71 +324,36 @@ void Controller::expireScheduledReset() {
     // weekly window ended while the backend was unreachable. Submission still
     // requires an accepted snapshot: this never reads usage or performs I/O.
     if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
-    const auto windowEnd = QDateTime::fromString(m_autoResetWindow, Qt::ISODateWithMs);
-    if (windowEnd.isValid() && windowEnd > QDateTime::currentDateTimeUtc()) return;
-    const QString cancellation = "Automatic reset canceled because the weekly window ended.";
-    clearScheduledReset();
-    m_resetMessage = cancellation;
-    if (m_notifications) m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", cancellation);
-    emit changed();
+    const auto expiry = ResetPolicy::armExpiry(windowState(m_autoResetWindow));
+    if (expiry != ResetPolicy::Reason::None) retireScheduledReset(expiry);
 }
 
 void Controller::observeScheduledReset() {
     // DO NOT TEST: this path can spend a reset after explicit one-shot consent.
     // Unarmed polling remains read-only. Errors never imply exhaustion.
     if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
-    // An ended window retires the arm even when this snapshot is the first in a
-    // while; the clock applies the same check when no snapshot arrives at all.
-    expireScheduledReset();
-    if (m_autoResetConnection.isEmpty()) return;
-    const auto weekly = resetReading(m_resetProvider);
-    QString cancellation;
-    // A temporary provider error pauses monitoring. A successful response
-    // with a different/missing identity or window invalidates authorization.
-    bool successful = false;
-    for (const auto &value : m_providers) {
-        const auto provider = value.toMap();
-        if (provider.value("provider_name").toString() == m_resetProvider)
-            successful = provider.value("is_success").toBool();
-    }
-    if (!successful) return;
-    if (resetConnectionIdentity() != m_autoResetConnection
-        || canonicalWindow(weekly) != m_autoResetWindow) {
-        cancellation = "Automatic reset canceled because the account, connection, or weekly window changed.";
-    } else {
-        bool validUsage = false;
-        const double utilization = weekly.value("utilization").toDouble(&validUsage);
-        if (!validUsage || !std::isfinite(utilization) || utilization < 0) return;
-        if (m_resetProvider == "Codex" && utilization < 95) cancellation = "Automatic reset canceled because weekly usage is below 95%.";
-        else if (weekly.value("available_count").toLongLong() <= 0)
-            cancellation = "Automatic reset canceled because no banked resets are available.";
-        else if (resetAwaitingUsage(m_resetProvider))
-            cancellation = "Automatic reset canceled because a reset has already been requested.";
-        else if (utilization >= 100 && resetEligible(m_resetProvider)) {
-            const QString authorization = m_autoResetConnection;
-            // Disarm before any I/O, including receipt creation. A failure
-            // or ambiguous result must never schedule another attempt.
-            clearScheduledReset();
-            m_resetConfirmation = authorization;
-            // Claude also requires usable_now == true. DO NOT TEST or invoke this path.
-            submitReset(true);
-            if (!m_resetBusy && m_notifications && !m_resetMessage.isEmpty())
-                m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
-            return;
-        }
-    }
-    if (cancellation.isEmpty()) return;
+    // The policy decides: an ended window retires the arm even on a late
+    // snapshot, a provider error pauses, a changed identity or window, a
+    // reading below the floor, no credits, or a pending request cancels.
+    const auto decision = ResetPolicy::observeArm(resetFacts(m_resetProvider));
+    if (decision.outcome == ResetPolicy::ArmOutcome::Cancel) { retireScheduledReset(decision.reason); return; }
+    if (decision.outcome != ResetPolicy::ArmOutcome::Submit) return;
+    const QString authorization = m_autoResetConnection;
+    // Disarm before any I/O, including receipt creation. A failure
+    // or ambiguous result must never schedule another attempt.
     clearScheduledReset();
-    m_resetMessage = cancellation;
-    if (m_notifications) m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", cancellation);
-    emit changed();
+    m_resetConfirmation = authorization;
+    // Claude also requires usable_now == true. DO NOT TEST or invoke this path.
+    submitReset(true);
+    if (!m_resetBusy && m_notifications && !m_resetMessage.isEmpty())
+        m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
 }
 
 void Controller::observeResetUsage() {
     // Read-only usage polling never sends a redemption. Only a successful
-    // reading below 95% releases the account-bound latch. A different reset
-    // timestamp, missing/zero credits, an error, or an uncertain response does
-    // not prove that the usage reset has been observed.
+    // reading below the manual floor releases the account-bound latch. A
+    // different reset timestamp, missing/zero credits, an error, or an
+    // uncertain response does not prove that the usage reset has been observed.
     if (m_resetBusy) return;
     for (const QString provider : {QStringLiteral("Codex"), QStringLiteral("Claude")}) {
         const auto weekly = resetReading(provider);
@@ -379,7 +377,7 @@ void Controller::observeResetUsage() {
             && ((weekly.value("usable_now").metaType().id() == QMetaType::Bool && !weekly.value("usable_now").toBool())
                 || (receipt.value("available_count").isDouble() && weekly.contains("available_count")
                     && weekly.value("available_count").toLongLong() < receipt.value("available_count").toInteger()))
-            : validUsage && std::isfinite(utilization) && utilization >= 0 && utilization < 95;
+            : ResetPolicy::releasesCodexReceipt(validUsage ? std::optional<double>(utilization) : std::nullopt);
         if (released && QFile::remove(path)) {
             if (m_resetBlockedReceipt == path) m_resetBlockedReceipt.clear();
             if (m_resetProvider == provider) m_resetMessage = provider == "Claude" ? "Claude usage has been updated." : "Weekly usage has been updated.";
@@ -396,9 +394,7 @@ void Controller::cancelResetRequest() {
     disconnect(m_resetReply, nullptr, this, nullptr);
     m_resetReply->abort(); m_resetReply->deleteLater(); m_resetReply.clear();
     m_resetBusy = false;
-    m_resetMessage = m_resetProvider == "Claude"
-        ? "The reset result is unknown. Waiting for updated Claude usage before allowing another reset."
-        : "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
+    m_resetMessage = ResetPolicy::awaitingUsageText(providerKind(m_resetProvider), true);
     if (automatic && m_notifications)
         m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
     // Leave the durable receipt intact, including when the app quits mid-request.
@@ -415,7 +411,7 @@ void Controller::consumeReset() {
 void Controller::submitReset(bool automatic) {
     // Only explicit immediate or one-shot scheduled consent reaches here.
     // Never retry automatically, follow redirects, or offer another request
-    // until usage below 95% has released the durable account latch.
+    // until usage below 90% has released the durable account latch.
     if (!resetAction().value("canConfirm").toBool()) return;
     // DO NOT TEST: both Codex and Claude submissions spend real banked resets.
     const QString receiptPath = resetReceiptPath(m_resetProvider);
@@ -484,7 +480,7 @@ void Controller::submitReset(bool automatic) {
         const bool terminal = outcome == "reset" || outcome == "already_redeemed" || outcome == "nothing_to_reset" || outcome == "no_credit" || outcome == "unavailable";
         if (!redirected && error == QNetworkReply::NoError && status == 200 && terminal) {
             // Retain the submitted window as receipt metadata, never as a
-            // reason to release the latch while usage remains at or above 95%.
+            // reason to release the latch while usage remains at or above 90%.
             if (outcome == "reset") receipt.insert("weekly_resets_at",
                 requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow));
             receipt.insert("completed", true);
@@ -498,9 +494,7 @@ void Controller::submitReset(bool automatic) {
         } else if (status == 404) m_resetMessage = QString("Update your usage server to use resets here, or open %1's usage page.").arg(displayName(m_resetProvider));
         else if (status == 409) m_resetMessage = QString("The server could not safely proceed. Refresh usage or check the previous reset in %1.").arg(displayName(m_resetProvider));
         else if (status == 401 || status == 403) m_resetMessage = QString("The reset request was rejected. Check your connection and %1 sign-in.").arg(displayName(m_resetProvider));
-        else m_resetMessage = m_resetProvider == "Claude"
-            ? "The reset result is unknown. Waiting for updated Claude usage before allowing another reset."
-            : "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
+        else m_resetMessage = ResetPolicy::awaitingUsageText(providerKind(m_resetProvider), true);
         if (automatic && m_notifications)
             m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
         emit changed();

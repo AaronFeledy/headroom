@@ -15,6 +15,7 @@
 #include "credentialservice.h"
 #include "sshnetwork.h"
 #include "tlsproof.h"
+#include "resetpolicy.h"
 
 class Controller : public QObject {
     Q_OBJECT
@@ -138,7 +139,7 @@ private:
     void verifyRemote(bool upgrade);
     QVariantMap resetReading(const QString &provider) const;
     bool resetReadingFresh(const QString &provider) const;
-    bool resetEligible(const QString &provider) const;
+    ResetPolicy::Facts resetFacts(const QString &provider) const;
     bool resetAwaitingUsage(const QString &provider) const;
     QString resetConnectionIdentity() const;
     QString resetReceiptPath(const QString &provider) const;
@@ -147,6 +148,7 @@ private:
     void observeScheduledReset();
     void expireScheduledReset();
     void clearScheduledReset();
+    void retireScheduledReset(ResetPolicy::Reason reason);
     void submitReset(bool automatic);
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
