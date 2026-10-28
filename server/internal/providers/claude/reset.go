@@ -19,10 +19,18 @@ var errResetUnavailable = errors.New("reset request unavailable")
 var errDifferentResetPending = errors.New("a different reset request is awaiting usage confirmation")
 
 func (c *Client) ResetAttemptStatus(requestID string) (known, blocked bool) {
-	c.resetMu.Lock()
-	defer c.resetMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
+	return c.resetAttemptStatus(ctx, requestID)
+}
+
+// The status deadline also bounds a wait behind an earlier rejection's durable
+// finalizer, which may be waiting indefinitely for journal storage to recover.
+func (c *Client) resetAttemptStatus(ctx context.Context, requestID string) (known, blocked bool) {
+	if lockResetMutex(ctx, &c.resetMu) != nil {
+		return false, true
+	}
+	defer c.resetMu.Unlock()
 	journal, lock, err := c.openResetJournal(ctx, true)
 	if err != nil {
 		return false, true
@@ -41,10 +49,24 @@ func (c *Client) ResetAttemptStatus(requestID string) (known, blocked bool) {
 // method, the endpoint it calls, or code that may trigger it: even a test can
 // consume a real reset. The skipped safety test is intentional, not a TODO.
 func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAccountID, expectedAccountFingerprint string) (outcome string, ambiguous bool, err error) {
-	c.resetMu.Lock()
+	if lockResetMutex(ctx, &c.resetMu) != nil {
+		return "", false, errResetUnavailable
+	}
 	defer c.resetMu.Unlock()
+	if ctx.Err() != nil {
+		return "", false, errResetUnavailable
+	}
 	requestID = strings.ToLower(requestID)
 	if !validRequestID(requestID) {
+		return "", false, errResetUnavailable
+	}
+	// Acquire both provider locks before any credential or bank I/O. A deadline
+	// while queued behind a finalizer is a definite pre-submission rejection.
+	if lockResetMutex(ctx, &c.bankMu) != nil {
+		return "", false, errResetUnavailable
+	}
+	defer c.bankMu.Unlock()
+	if ctx.Err() != nil {
 		return "", false, errResetUnavailable
 	}
 	creds, err := c.currentCredentials(ctx)
@@ -55,8 +77,6 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	if err != nil {
 		return "", false, errResetUnavailable
 	}
-	c.bankMu.Lock()
-	defer c.bankMu.Unlock()
 	journal, lock, err := c.openResetJournal(ctx, true)
 	if err != nil {
 		return "", false, errResetUnavailable

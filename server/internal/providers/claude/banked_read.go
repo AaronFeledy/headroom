@@ -110,9 +110,23 @@ func matchesAccountFingerprint(accountID, expected string) bool {
 func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, data *usage.UsageData) {
 	// All paths that can reconcile or submit use this order. The cross-process
 	// lock is acquired before any bank GET that may reconcile a pending attempt.
-	c.resetMu.Lock()
+	data.RateLimitResetCredits = nil
+	data.ProviderAccountID = ""
+	// A timed-out attachment must never expose cached reset metadata or a
+	// reconciliation callback as fresh evidence for a manual reset.
+	defer func() {
+		if ctx.Err() != nil {
+			data.RateLimitResetCredits = nil
+			data.ProviderAccountID = ""
+		}
+	}()
+	if lockResetMutex(ctx, &c.resetMu) != nil {
+		return
+	}
 	defer c.resetMu.Unlock()
-	c.bankMu.Lock()
+	if lockResetMutex(ctx, &c.bankMu) != nil {
+		return
+	}
 	defer c.bankMu.Unlock()
 	journal, lock, journalErr := c.openResetJournal(ctx, false)
 	if lock != nil {

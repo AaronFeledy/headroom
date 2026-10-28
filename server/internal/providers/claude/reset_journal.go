@@ -287,11 +287,11 @@ func recordResetNotSubmitted(journal *resetJournal, requestID, fingerprint strin
 // a validated rejection only after all possible submission code has returned.
 // Missing or damaged existing state must never become evidence of non-submission.
 func (c *Client) RecordResetNotSubmitted(ctx context.Context, requestID, fingerprint string) error {
-	if lockResetRejection(ctx, &c.resetMu) != nil {
+	if lockResetMutex(ctx, &c.resetMu) != nil {
 		return errResetUnavailable
 	}
 	defer c.resetMu.Unlock()
-	if lockResetRejection(ctx, &c.bankMu) != nil {
+	if lockResetMutex(ctx, &c.bankMu) != nil {
 		return errResetUnavailable
 	}
 	defer c.bankMu.Unlock()
@@ -322,8 +322,8 @@ func (c *Client) recordResetNotSubmittedLocked(ctx context.Context, requestID, f
 
 // Wait in this caller, never in a background worker. HTTP rejection finalization
 // uses Background so healthy contention cannot abandon its durable evidence.
-// Other callers can still cancel while waiting; no work continues after return.
-func lockResetRejection(ctx context.Context, mutex *sync.Mutex) error {
+// Status checks use a deadline; no work continues after a canceled wait.
+func lockResetMutex(ctx context.Context, mutex *sync.Mutex) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {

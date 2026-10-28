@@ -181,7 +181,7 @@ func Test_ResetJournal_rejection_waits_for_healthy_contention_then_survives_rest
 	go func() {
 		defer close(finished)
 		close(started)
-		if err := lockResetRejection(context.Background(), &c.resetMu); err != nil {
+		if err := lockResetMutex(context.Background(), &c.resetMu); err != nil {
 			done <- err
 			return
 		}
@@ -189,7 +189,7 @@ func Test_ResetJournal_rejection_waits_for_healthy_contention_then_survives_rest
 		// Bound the remaining fixture lock waits and cancel them during cleanup.
 		storageCtx, storageCancel := context.WithTimeout(ctx, 3*time.Second)
 		defer storageCancel()
-		if err := lockResetRejection(storageCtx, &c.bankMu); err != nil {
+		if err := lockResetMutex(storageCtx, &c.bankMu); err != nil {
 			done <- err
 			return
 		}
@@ -236,6 +236,43 @@ func Test_ResetJournal_rejection_waits_for_healthy_contention_then_survives_rest
 	closeErr := lock.Close()
 	if closeErr != nil || journal.Attempts[journalFixtureID] != pendingJournal(journalAccount, 2).Attempts[journalFixtureID] || !journal.pending() {
 		t.Fatalf("queued rejection changed the unrelated pending attempt: close=%v", closeErr)
+	}
+}
+
+func Test_ResetJournal_status_deadline_covers_finalizer_mutex_wait(t *testing.T) {
+	// Seeded storage and a held mutex only: no consumer, preparation, arming,
+	// production finalizer, or reset route is invoked.
+	c := New(Options{})
+	seedPendingJournal(t, c, journalAccount, 2)
+	c.resetMu.Lock()
+	release := sync.OnceFunc(c.resetMu.Unlock)
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	type status struct{ known, blocked bool }
+	done := make(chan status, 1)
+	go func() {
+		known, blocked := c.resetAttemptStatus(ctx, journalFixtureID)
+		done <- status{known, blocked}
+	}()
+	select {
+	case got := <-done:
+		if got.known || !got.blocked {
+			t.Fatalf("status behind a held finalizer mutex = (%t, %t), want (false, true)", got.known, got.blocked)
+		}
+	case <-time.After(time.Second):
+		release() // Let a regressed blocking read exit before failing.
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		t.Fatal("status mutex wait exceeded its deadline")
+	}
+	release()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if known, blocked := c.resetAttemptStatus(ctx, journalFixtureID); !known || blocked {
+		t.Fatalf("seeded known status = (%t, %t), want (true, false)", known, blocked)
 	}
 }
 

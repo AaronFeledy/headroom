@@ -145,10 +145,11 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "another reset request is in progress")
 		return
 	}
-	defer h.resetMu.Unlock()
+	releaseResetGate := sync.OnceFunc(h.resetMu.Unlock)
+	defer releaseResetGate()
 	known, blocked := resetter.ResetAttemptStatus(request.RequestID)
 	if blocked {
-		finalizeResetRejection(provider, resetter, request)
+		finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
 		return
 	}
@@ -156,7 +157,7 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 	if !known {
 		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
 		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
-			finalizeResetRejection(provider, resetter, request)
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
 			return
 		}
@@ -170,12 +171,19 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		if ambiguous {
 			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
 		} else {
-			finalizeResetRejection(provider, resetter, request)
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 			writeError(w, http.StatusBadGateway, "reset request unavailable")
 		}
 		return
 	}
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
+}
+
+// The provider finalizer keeps its own mutex and durable journal lock while it
+// waits. Release the cross-provider gate first so another provider can proceed.
+func finalizeResetRejectionAfterGate(releaseGate func(), finalize func()) {
+	releaseGate()
+	finalize()
 }
 
 // Only use after validated rejection, and after a consumer has returned when
