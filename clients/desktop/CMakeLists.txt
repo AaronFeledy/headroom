@@ -132,7 +132,7 @@ endif()
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
-    qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/MeterToolTip.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
+    qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/ResetOptions.qml qml/Meter.qml qml/MeterToolTip.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
     RESOURCES headroom.svg qml/loading.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
     ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
@@ -277,6 +277,15 @@ if(BUILD_TESTING)
     target_link_libraries(headroom-resetpolicy-tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME headroom-resetpolicy-tests COMMAND headroom-resetpolicy-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-resetpolicy-tests.xml,junitxml")
+    # The presentational reset options rendered from synthetic policy output:
+    # no controller, transport, or action connections, and nothing is activated.
+    qt_add_executable(headroom-resetoptions-tests tests/test_resetoptions.cpp)
+    set_target_properties(headroom-resetoptions-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-resetoptions-tests PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Test)
+    target_compile_definitions(headroom-resetoptions-tests PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME headroom-resetoptions-tests COMMAND headroom-resetoptions-tests
+        -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-resetoptions-tests.xml,junitxml")
+    set_tests_properties(headroom-resetoptions-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
     # DO NOT enable/implement reset action tests: they can burn a valuable reset.
     qt_add_executable(headroom-reset-prohibited-tests tests/test_reset_prohibited.cpp)
     set_target_properties(headroom-reset-prohibited-tests PROPERTIES WIN32_EXECUTABLE FALSE)
