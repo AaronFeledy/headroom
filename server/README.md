@@ -80,7 +80,7 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one of `cookie` or `access_token`. Cookies may include `source_name` (trimmed, 1–40 characters, no controls); access tokens may not.
 - `GET /api/v1/tls/proof?nonce=<64 hex>` - unauthenticated TLS identity proof; available only over HTTPS when a bearer token is configured.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
-- `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
+- `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 90% and an available banked reset. Browser-origin requests are rejected.
 - `POST /api/v1/providers/claude/reset` - explicitly confirmed banked reset for Claude. Uses the same three JSON fields and browser-origin rejection as the Codex route. New requests require fresh successful Claude usage, a positive available count, `usable_now: true`, and a matching account fingerprint.
 
 ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
@@ -93,26 +93,32 @@ banked-reset count. It contains `available_count` and a nullable, opaque
 `account_fingerprint` that binds a confirmed action to the observed account
 without exposing the provider account ID. The field is `null` when the count is
 unknown or on provider errors. The additive `usable_now` field is `null` for
-Codex; its existing weekly-at-least-95% eligibility rule is unchanged.
+Codex; its weekly eligibility floor is 90%. This is Headroom's conservative
+near-the-limit policy, not the OpenAI API minimum. [OpenAI's published rules](https://help.openai.com/en/articles/20001498-how-resets-work-in-codex)
+allow manual use when a covered allowance has less than 80% remaining; a reset
+counts only when it restores a qualifying allowance. OpenAI can still refuse a
+submitted request; the server does not retry.
 
 The reset response contains `outcome`: `reset`, `already_redeemed`,
 `nothing_to_reset`, or `no_credit`. Reset submission is a single attempt: no
 automatic or manual retry, upload replay, redirect, or transport fallback. The
 desktop saves its request ID before sending through the selected local, HTTP(S),
-or SSH transport and keeps the button disabled across restarts. Only a successful
-weekly reading below 95% releases that account's lock; the button becomes eligible
-again when weekly usage later reaches 95% and a banked reset is available.
+or SSH transport and keeps spending blocked across restarts. Only a successful
+weekly reading below 90% releases that account's lock; readings at 90–94.99% do
+not. The options remain available for information while spending is blocked.
+Another explicit reset can become eligible when weekly usage later reaches 90%
+and a banked reset is available.
 
 Reset requests reject browser-origin headers and require JSON, the configured
 bearer authentication (or the trusted SSH peer), a fresh weekly reading of at
-least 95%, a positive credit count, and the same account fingerprint for
+least 90%, a positive credit count, and the same account fingerprint for
 eligibility and consumption. The fingerprint is checked against current
 credentials immediately before every provider request. Repeated request IDs return
 the recorded result or an error without another OpenAI reset request. The server
 remembers attempted IDs for its process lifetime; the saved desktop receipt and
 upstream UUID retain their protection across server restarts. Every submitted
 attempt blocks further new requests in that process until the same account's
-usage below 95% has been observed, including while a successful reset propagates.
+usage below 90% has been observed, including while a successful reset propagates.
 
 After submission, the server waits three seconds and performs one read-only OpenAI
 usage fetch. The desktop checks the usage cache after 5, 12, and 25 seconds while
