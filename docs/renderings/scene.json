@@ -10,7 +10,7 @@
     "padding": 24,
     "tray_scale": 0.625,
     "gap": 24,
-    "ui_scale": 1.5
+    "ui_scale": 1.25
   },
   "providers": [
     {

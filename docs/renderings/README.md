@@ -3,7 +3,7 @@
 The README overview is generated from the current desktop QML at a compact
 539-pixel width, with synthetic readings and a platform-neutral tray. The panel
 height is fitted to all four providers, so no meters are hidden by scrolling.
-The composition enlarges the panel to 150% and draws the tray at 62.5% of its
+The composition enlarges the panel to 125% and draws the tray at 62.5% of its
 standalone size. This brings the provider icons and text into proportion with
 the tray. The app keeps its original compact layout.
 
@@ -77,7 +77,7 @@ All outputs are written to `docs/images/` after successful generation:
 The surrounding canvas is transparent for light and dark README themes. The
 combined SVG embeds the UI as a PNG; it is not a fully vector UI. To increase UI
 resolution, change `scale` in the scene and regenerate.
-The panel is rendered at scale multiplied by composition.ui_scale (3x with the
+The panel is rendered at scale multiplied by composition.ui_scale (2.5x with the
 default settings), so composition zoom never enlarges a lower-resolution bitmap.
 The final overview remains a 2x export.
 

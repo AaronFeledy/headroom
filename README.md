@@ -13,8 +13,6 @@ includes a live CLI dashboard.
 
 <img src="docs/images/headroom-overview.png" width="744" alt="Headroom showing Claude, ChatGPT, Cursor, and Grok usage with reset countdowns and a system-tray meter">
 
-*Illustrative readings and platform-neutral tray. Available meters depend on your provider and plan.*
-
 ## Why Headroom?
 
 - **One place for your limits.** Track session, weekly, model, and credit meters
