@@ -1,326 +1,180 @@
 # Headroom
 
-Headroom is a cross-platform tray app and terminal dashboard for monitoring
-Claude, ChatGPT, Cursor, and Grok usage. The shared Qt interface shows every
-usage meter returned by the bundled Go server, keeps the chosen provider order,
-estimates pace within reset windows, and alerts when usage moves into Warning or
-Critical.
+**Know how much AI usage you have left, without checking four dashboards.**
+
+Headroom brings Claude, ChatGPT, Cursor, and Grok usage into one tray app for
+Windows, macOS, and Linux. See your remaining allowance, when limits reset, and
+whether you're on pace to run out. Prefer the terminal? The same installation
+includes a live CLI dashboard.
 
 [![Build](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/headroom)](https://github.com/AaronFeledy/headroom/releases/latest)
 [![License](https://img.shields.io/github/license/AaronFeledy/headroom)](LICENSE)
 
-<img src="docs/images/headroom-overview.png" width="744" alt="The compact Headroom usage panel for Claude, ChatGPT, Cursor, and Grok, rendered above a platform-neutral system tray">
+<img src="docs/images/headroom-overview.png" width="744" alt="Headroom showing Claude, ChatGPT, Cursor, and Grok usage with reset countdowns and a system-tray meter">
 
-*Illustrative readings and platform-neutral tray. Available meters vary by provider and plan. [Rendering sources and regeneration guide](docs/renderings/README.md).*
+*Illustrative readings and platform-neutral tray. Available meters depend on your provider and plan.*
 
-## Supported desktop packages
+## Why Headroom?
 
-| Package | Tested baseline | Connection default |
-| --- | --- | --- |
-| Windows x64 | Windows 10 1809 or newer | Local managed server |
-| Windows ARM64 | Windows 11 ARM64 | Local managed server |
-| Linux x86_64 | Ubuntu 22.04 desktop ABI; X11 and Wayland plugins | Local managed server |
-| macOS Apple Silicon | macOS 14.4+; native ARM64 | Local managed server |
-| macOS Intel | macOS 14.4+; native x86_64 | Local managed server |
-
-Official packages bundle Qt 6.12.0 LTS, the matching `usage-server`, and the stable
-launcher/package manager. They also include the unified `headroom` CLI. CLI-only
-packages support all five desktop targets plus Linux ARM64 without installing Qt.
-Linux uses baseline system graphics, desktop, C++,
-glibc, D-Bus, and OpenSSL libraries; the exact package list is in the
-[package contract](packaging/README.md). Source builds require Qt 6.12 or newer.
-
-## Stream Deck
-
-The optional [Stream Deck plugin](clients/streamdeck/README.md) adds usage keys
-for Claude, ChatGPT, Cursor, and Grok, plus a key to open Headroom. It follows
-the running desktop's selected connection and needs no separate credentials.
-See the plugin guide for build and installation instructions.
+- **One place for your limits.** Track session, weekly, model, and credit meters
+  as reported by each provider.
+- **A glance instead of a dashboard visit.** Keep your preferred provider's usage
+  in the tray; drag provider rows to change the order.
+- **A warning before you run out.** See reset countdowns and estimated usage pace,
+  with desktop alerts when usage enters Warning or Critical.
+- **Desktop or terminal, local or remote.** Use your existing sign-ins on this
+  computer, or monitor a server over SSH or HTTPS.
 
 ## Install
 
-The per-user installers select only the exact package for the current OS and
-CPU, verify the release manifest, archive size, SHA-256 digest, inner manifest,
-and every packaged file before changing the active installation.
+The installer selects the latest stable package for your OS and CPU, verifies
+it, and installs it for your user. Desktop packages include the app, local usage
+server, and CLI; no separate Qt or Go installation is needed.
 
-Windows PowerShell 5.1 or newer:
+### Windows
+
+Run in PowerShell 5.1 or newer:
 
 ```powershell
 irm https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.ps1 | iex
 ```
 
-Linux x86_64 or macOS (Apple Silicon and Intel):
+### macOS and Linux
 
-The shell installer requires `curl`, `tar`, and Python 3. On a Mac without
-Python 3, install it first (for example, through Apple Command Line Tools or
-your existing package manager).
+Requires `curl`, `tar`, and Python 3. On macOS, install Python 3 first if it isn't
+available, using Apple Command Line Tools or your package manager.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh
 ```
 
-Current Headroom packages are available from
-[v2.0.0](https://github.com/AaronFeledy/headroom/releases/tag/v2.0.0) onward.
-Historical v1.x release records and tags remain for changelog history, but their
-binary assets have been retired. The installers require a Headroom release
-manifest and do not accept legacy executable releases. Existing Claude Usage
-Widget users should follow the [upgrade guide](docs/upgrading-to-headroom.md)
-for the one-time transition.
+| Platform | Desktop support |
+| --- | --- |
+| Windows | x64: Windows 10 1809+; ARM64: Windows 11 |
+| macOS | Apple Silicon and Intel, macOS 14.4+ |
+| Linux | x86_64, Ubuntu 22.04-compatible desktop libraries; X11 and Wayland |
 
-The published v2.0.0 app predates the repository rename, and its in-app updater
-does not follow GitHub's redirect from the former release API. If **Check for
-updates** reports that it did not complete, quit Headroom and run the current
-installer above once to move to v2.0.1 or newer, then reopen it. Subsequent builds
-use the canonical Headroom release endpoint.
-See [desktop build instructions](clients/desktop/README.md) for source builds.
+Linux ARM64 is supported by the [CLI-only package](#cli-only-installation).
+macOS packages are ad-hoc signed, **not Developer ID signed or Apple-notarized**.
+Use the installer rather than moving the internal app bundle out of a release archive.
+See [releases](https://github.com/AaronFeledy/headroom/releases/latest) for
+downloads and [packaging](packaging/README.md) for custom paths and Linux runtime
+dependencies.
 
-Windows installs under `%LOCALAPPDATA%\Headroom`, adds a Start menu shortcut,
-and puts its `cli` directory on the current user's PATH.
-Linux installs under `${XDG_DATA_HOME:-$HOME/.local/share}/headroom`, places the
-CLI at `~/.local/bin/headroom`, and adds an application-menu entry pointing to
-the separate desktop launcher.
-macOS installs its managed files under `~/Library/Application Support/Headroom`
-and creates a stable `~/Applications/Headroom.app` entry for Finder and login
-startup. Mac packages are ad-hoc signed for code integrity; they are not yet
-Developer ID signed or notarized by Apple. Use the installer for the managed
-application rather than dragging the internal versioned bundle out of its archive.
-Custom roots are supported by the installer options documented in
-[packaging](packaging/README.md).
+If you reinstall while Headroom is open, quit and reopen it afterward.
 
-After installation, the installer starts the stable entry and accepts success
-only when the selected immutable generation reports its exact executable,
-version, PID, and private readiness nonce. If Headroom was already running, its
-existing primary process remains untouched and the installer tells you to quit
-that window and reopen the stable entry. `--no-launch`/`-NoLaunch` always prints
-the same restart instruction and performs no activation attempt.
+## Get started
 
-## Local and remote operation
+1. **Open Headroom.** The installer launches the desktop app. Later, open it from
+   the Windows Start menu, `~/Applications/Headroom.app` on macOS, or the Linux
+   application menu. You can also run `headroom desktop`.
+2. **Keep Local mode for this computer.** Headroom connects to a compatible local
+   server or starts its bundled server automatically. No server setup is needed
+   for the usual desktop installation.
+3. **Check your sign-ins.** Headroom reads existing provider credentials on the
+   computer running the server. If a provider needs attention, follow its sign-in
+   prompt; run any suggested command yourself on that computer.
 
-Run `headroom` for terminal usage, `headroom desktop` for the tray app,
-`headroom serve` for the server, or `headroom update` to update the installation.
-See the [CLI guide](docs/cli.md) for flags, CLI-only installation, and coordinated
-Windows/WSL updates.
+| Provider | Where Headroom looks for a sign-in |
+| --- | --- |
+| Claude | Claude Code credentials, with an OpenCode fallback |
+| ChatGPT | Codex CLI credentials, with an OpenCode fallback |
+| Cursor | cursor-agent, the Cursor app, or supported browser sign-ins |
+| Grok | Grok CLI credentials, with a browser sign-in fallback |
 
-```text
-Local mode (default on Windows, macOS, and Linux)
+Windows desktop packages can share supported Cursor and Grok browser sign-ins
+with the server. Control this with **Share browser sign-ins with the server** in
+Settings. The [provider guide](server/README.md#configuration) covers credential
+locations, WSL discovery, and disabling providers you don't use. ChatGPT is named
+`Codex` in server configuration and the API.
 
-  Headroom ── verified TLS when bundled ──> usage-server on localhost
-      │                                  │
-      │ starts and owns it only          └── provider credential files/APIs
-      │ when no compatible server exists
-      └── Windows helper may forward Cursor/Grok browser cookies in memory
+Click the tray icon to see your meters. Drag your main provider to the top to use
+it for the tray meter, and enable **Start Headroom when I sign in** in Settings
+if you'd like it available at login. Usage pace is an estimate; the
+[desktop guide](clients/desktop/README.md) explains the indicators and alerts.
 
-Remote mode
+## Use it in the terminal
 
-  Headroom or Home Assistant ── HTTP(S) + optional bearer token ──>
-      usage-server on WSL, a LAN host, NAS, Raspberry Pi, or container
+With the desktop open or a server already running:
+
+```sh
+headroom                 # live dashboard in a terminal
+headroom --once          # one snapshot
+headroom --json          # one snapshot as JSON
 ```
 
-Headroom probes the local endpoint without sending saved tokens. When it starts
-the bundled server, the two processes establish a private session with a fresh
-TLS certificate and bearer token. Headroom verifies that certificate on every
-connection before sending authenticated requests or browser cookies. Session
-secrets stay in memory and travel between parent and child through private pipes.
-An existing plain HTTP server can supply usage without receiving a saved token
-or browser cookies. To connect to an independently managed server that requires
-a token, configure it explicitly in HTTP(S) settings; direct browser recovery
-requires HTTPS. Off-loopback servers answer HTTPS on the same port with a
-generated certificate. Headroom verifies it with your access token, pins it, and
-switches a saved `http://` address to `https://` automatically. The SSH connection
-described below provides another encrypted transport for Linux/WSL servers.
+With no explicit address, the CLI uses the running desktop's selected connection
+and provider order. If no desktop is running, it tries `127.0.0.1:7823`.
+**Displaying usage does not start a server.** Piped output prints once by default.
 
-Headroom stops or hands off only a server process it started; attached and remote
-servers remain independently owned. The standalone server binds to
-`127.0.0.1:7823` by default and refuses any non-loopback bind without a bearer
-token. Its existing HTTP API and configuration remain compatible.
+On Windows, open a new terminal after installation to pick up the CLI on PATH.
+On Linux and macOS, ensure `~/.local/bin` is on your PATH.
 
-Windows, macOS, and Linux start in Local mode at `http://127.0.0.1:7823`. Existing saved
-connection settings take precedence over the default. **SSH is the recommended
-remote option**; **HTTP(S)** remains available for direct connections. Browser
-credential forwarding to a direct remote server requires HTTPS.
+### CLI-only installation
 
-For a Linux or WSL backend with SSH access, choose **SSH** and use an address such
-as `ssh://usageuser@server.example`. Headroom uses your existing OpenSSH keys and
-trusted host configuration. Usage, version checks, and browser credential updates
-travel through the encrypted connection to the running server's private socket;
-no HTTPS certificate setup is needed for this mode. Enable `ssh_access: true` on
-the backend first. See the [SSH setup guide](docs/ssh.md) for account requirements
-and supported platforms. Headroom remembers the selected mode and never falls
-back from SSH to HTTP.
+For a terminal, WSL, or a server without a desktop, install the CLI-only package.
+It includes the usage server without Qt, and supports Windows
+x64/ARM64, Linux x86_64/ARM64, and macOS Intel/Apple Silicon.
 
-## Migrate from Claude Usage Widget
-
-Run the Headroom Windows installer once to switch from the old app. Its built-in
-updater only recognizes `ClaudeUsageWidget-*.exe` assets and cannot install a
-Headroom package. After this transition, Headroom's own package updater handles
-future releases. The [upgrade guide](docs/upgrading-to-headroom.md) covers the
-steps, preserved settings, server compatibility, and rollback.
-
-On the first normal Windows launch, Headroom imports the legacy schema 0–3 file
-at `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new Headroom
-settings file and previous nested Headroom file do not exist. It keeps the old
-file untouched and writes a create-once backup beside the new settings. An empty
-legacy API URL remains Local mode; a configured URL remains a direct HTTP(S)
-connection. The installer
-stops the legacy executable at its standard installation path before launching
-Headroom; quit portable or custom-path copies yourself.
-
-Legacy settings and server paths, Go module/import paths, the `usage-server`
-binary name, API provider value `Codex`, and API field names stay compatible.
-The former `AaronFeledy/claude-usage-widget` repository URL redirects to the
-canonical [AaronFeledy/headroom](https://github.com/AaronFeledy/headroom)
-repository. Headroom displays `Codex` as **ChatGPT** while preserving the wire
-identifier so existing servers, Home Assistant sensors, and saved order continue
-to work. The [WinForms client](clients/windows/README.md) remains for reference
-and rollback; it is not the default packaged UI.
-
-## Settings, startup, and updates
-
-Headroom stores settings atomically at:
-
-- Windows: `%APPDATA%\Headroom\settings.json`
-- Linux and macOS: `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/settings.json`
-
-This is the same folder as the server's `config.yaml`. Normal launches copy a
-previous settings file once if the new file is absent, keeping the source and
-leaving backup siblings in place. Previous locations are
-`${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json` on Linux,
-`~/Library/Application Support/Headroom/Headroom/settings.json` on macOS, and
-`%APPDATA%\Headroom\Headroom\settings.json` on Windows. If copying fails, the
-session loads and saves at the previous location and records a token-free
-diagnostic notice. Single-instance and CLI bridge identity stays on the previous
-path so updates find the same running app. Explicit `--config` and screenshot
-sessions do not copy or import settings automatically.
-
-The file contains a remote bearer token in plaintext. Linux and macOS write it and its
-migration backups with mode `0600`; Windows uses the current user's roaming app
-data and inherited Windows access controls. Diagnostics retain at most 500
-controlled, redacted events in memory and never record raw requests, response
-bodies, tokens, URLs, provider credentials, or account output.
-
-**Start Headroom when I sign in** registers the stable launcher, so an update
-does not rewrite startup configuration. It uses the current user's Run entry on
-Windows, an XDG autostart file on Linux, and a current-user LaunchAgent plist
-on macOS. The Mac setting takes effect at the next login and never quits the
-running app when disabled.
-
-An official per-user install performs one delayed startup update check. When a
-newer stable release exists, it automatically downloads and fully verifies the
-matching package, then offers **Restart to apply**. Restart switches to a new
-immutable generation, checks native readiness, and rolls back on failure. A
-CLI-initiated update uses the same operation for the local desktop and server.
-An explicitly paired Windows desktop and WSL server stage the same release on
-both sides before applying it. For SSH connections, **Update server** in
-**About & Updates** invokes the remote managed CLI and verifies the server's
-version after restart. Direct HTTP(S) servers are updated manually on their
-own host; the desktop shows a notice when it is newer than the connected server. A
-trusted installation with a missing server or Windows credential helper can
-stage an exact-version repair. Capture and explicit-config sessions do not
-contact the public release service. Source
-installs show the local rebuild guide; system packages defer to their package
-manager.
-
-## Providers and credentials
-
-The server reads credentials on the host where it runs. All providers are
-enabled by default and can be disabled in server YAML or environment settings.
-
-- Claude: `~/.claude/.credentials.json`, Windows WSL discovery, or the OpenCode
-  auth fallback.
-- ChatGPT (`Codex` on the API): `CODEX_HOME/auth.json`, `~/.codex/auth.json`,
-  Windows WSL discovery, or the OpenCode auth fallback.
-- Cursor: cursor-agent login, the Cursor app's login, then Firefox sign-ins on
-  the server machine (a WSL server also checks Windows), then browser sign-ins
-  shared by the desktop. Chrome, Edge, and Brave profiles on the server are
-  detected but not decrypted.
-- Grok: `~/.grok/auth.json` or Windows WSL auth for the CLI billing endpoint;
-  an in-memory browser `sso` cookie is a fallback.
-
-Official Windows packages include a current-user credential helper for Cursor
-and Grok browser cookies from supported Chrome, Edge, Brave, and Firefox
-profiles. It uses the current Windows user's browser encryption context and
-returns only the requested cookie over a bounded private child-process channel.
-It cannot read another user's profile or bypass unsupported newer encrypted
-values. Headroom forwards a result only to its verified bundled server session,
-an HTTPS server whose certificate is system-trusted or verified with your token,
-or the SSH receiver, and never persists it. Turn sharing off with **Share browser
-sign-ins with the server** in Settings. Linux and macOS do not include this
-helper; their servers read cursor-agent, Cursor app, and Firefox sign-ins
-directly.
-
-## Interface behavior
-
-Provider rows retain the server's labels, subtitles, status text, and up to 12
-meters. Drag rows to reorder them; the first provider controls the tray ring and
-tooltip. The shared warning state uses expected elapsed-window pace, remaining
-allowance, low-capacity guards, and recovery thresholds. Reset times are known,
-but period starts are not, so five-hour session, seven-day weekly, Cursor
-30-day, and Grok calendar-month durations are labeled estimates. See the
-[desktop guide](clients/desktop/README.md) for tray behavior, warning thresholds,
-keyboard shortcuts, diagnostics, and disconnected behavior.
-
-## Server and integrations
-
-The server API remains compatible at `GET /api/v1/usage`; `current` and `weekly`
-are retained fields and `buckets` carries variable provider meters. Details,
-configuration precedence, flags, environment variables, and deployment samples
-are in the [server guide](server/README.md).
-
-- [Windows and Linux desktop](clients/desktop/README.md)
-- [Package and updater contract](packaging/README.md)
-- [Desktop parity and intentional differences](docs/desktop-parity.md)
-- [WSL service deployment](server/deploy/wsl/README.md)
-- [Home Assistant REST sensors](docs/home-assistant.md) — configuration only;
-  this repository does not contain a Home Assistant add-on
-
-## Build and verify
-
-```bash
-cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build clients/desktop/build --parallel
-ctest --test-dir clients/desktop/build --output-on-failure -E headroom-reset-prohibited-tests
-
-cd packaging/headroom-manager
-go build ./...
-go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
-cd ../..
-
-cd server
-go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
-go vet ./...
-go build ./...
+```sh
+curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh -s -- --cli
 ```
 
-The reusable package workflow builds and smoke-tests five desktop targets and
-six CLI targets from one validated version. It also retains the legacy C#
-harness and server Go/race/vet/build/Docker workflows. See
-[AGENTS.md](AGENTS.md) for the full contributor verification matrix.
+On Windows, download [install.ps1](install.ps1), then run `./install.ps1 -CLI`
+in PowerShell.
 
-## Troubleshooting
+CLI-only installation does not start a server. To monitor this computer, run:
 
-- If Local mode cannot start, open diagnostics and check whether Headroom
-  attached to the loopback server, exhausted bounded restart attempts, or found
-  a missing package component. An official trusted install offers
-  **Repair installation** for a missing server or Windows helper; a source build
-  needs a matching adjacent `usage-server`.
-- A remote authorization error means the Headroom bearer token and server
-  `auth_token`/`USAGE_AUTH_TOKEN` do not match. The app retains last good usage
-  while retrying; saving corrected connection settings cancels old requests.
-- **Copy sign-in command** only copies the server's suggested command (for
-  Claude, `claude auth login`); it runs nothing. Run it as the user whose
-  credentials the server reads, on the server host. For a Windows desktop using
-  a WSL server, run it in WSL, not in a Windows terminal.
-- If Linux starts without a tray, Headroom stays visible as a normal frameless
-  window. Missing loader libraries should be compared with the Ubuntu 22.04
-  runtime list in the [package contract](packaging/README.md).
-- **Restart to apply** appears only for a complete verified stage. A failed
-  candidate is stopped and the prior generation is restored; a
-  `recovery_required` message means the next launch will retry recovery. If it
-  remains, rerun the matching official installer, then quit and reopen Headroom.
-- Diagnostics are session-local. Copy the redacted log before quitting if it is
-  needed for a report; do not add bearer tokens or provider credentials.
+```sh
+headroom serve
+```
+
+Leave it running, then use `headroom` in another terminal. The server reads your
+existing provider sign-ins and listens on `127.0.0.1:7823` by default. For automatic
+startup, see the [Linux/WSL service setup](docs/cli.md#linux-and-wsl-automatic-server-startup).
+The [CLI guide](docs/cli.md) covers filtering, scripting, and connection options.
+
+## Connect to another computer
+
+Run the usage server where your provider credentials live, then choose its
+connection in desktop Settings. **SSH is recommended for Linux and WSL servers**;
+it uses your OpenSSH keys and trusted hosts. Follow the [SSH setup guide](docs/ssh.md).
+Direct HTTP(S) connections are also available; use HTTPS for remote access.
+
+The server requires an access token before listening beyond localhost. Saved
+direct-connection tokens are stored in the desktop settings file, so treat it as
+sensitive. Browser sign-ins are shared only with a verified bundled local server,
+an HTTPS server with a verified certificate, or an SSH connection. See the
+[server guide](server/README.md) for configuration and deployment details.
+
+## Help
+
+- **A provider asks for sign-in:** sign in on the server's computer, as the user
+  running it. For a WSL server, run the suggested command inside WSL.
+- **No usage in the terminal:** open the desktop or start `headroom serve`, then
+  check the provider sign-in status.
+- **The desktop can't connect:** check Settings and diagnostics. An official
+  installation can offer **Repair installation** for a missing bundled component.
+- **Need to report a problem?** [Open an issue](https://github.com/AaronFeledy/headroom/issues)
+  with your OS, Headroom version, and redacted diagnostics. Never include tokens,
+  provider credentials, or browser cookies.
+
+## Documentation
+
+| Guide | What's inside |
+| --- | --- |
+| [Desktop](clients/desktop/README.md) | Settings, shortcuts, notifications, troubleshooting, and source builds |
+| [CLI](docs/cli.md) | Terminal options, services, source builds, and Windows/WSL pairing |
+| [Server](server/README.md) | Provider configuration, API, Docker, and deployment |
+| [SSH](docs/ssh.md) | Remote server setup and authentication |
+| [Home Assistant](docs/home-assistant.md) | REST sensors; no add-on required or supplied |
+| [Stream Deck](clients/streamdeck/README.md) | Build and install the optional plugin from source |
+| [Packaging](packaging/README.md) | Install locations and runtime dependencies |
+
+Building or contributing? Start with the component guides above and the
+[repository guidelines](AGENTS.md) for the verification matrix.
 
 ## License
 
-MIT
+[MIT](LICENSE)
