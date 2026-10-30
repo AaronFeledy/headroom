@@ -154,7 +154,8 @@ func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usag
 	}
 	if failure != nil && (failure.Kind == usage.FailureRateLimited || !failure.RetryAfter.IsZero() || failure.RateLimitFallback) {
 		cooldown := max(0, failure.RetryAfter.Sub(now))
-		if failure.RetryAfter.IsZero() || failure.RateLimitFallback {
+		// Zero or elapsed deadlines must not turn a 429 into a rapid retry loop.
+		if cooldown == 0 || failure.RateLimitFallback {
 			s.rateDelay = min(max(s.interval, 5*time.Minute), max(max(s.interval, time.Minute), s.rateDelay*2))
 			cooldown = max(cooldown, s.rateDelay)
 		}
