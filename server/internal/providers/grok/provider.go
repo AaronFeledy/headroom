@@ -35,13 +35,17 @@ var (
 )
 
 type Options struct {
-	CredentialsPath string
-	HTTPClient      *http.Client
-	BillingURL      string
-	SettingsURL     string
-	WebBillingURL   string
-	TokenURL        string
-	Now             func() time.Time
+	CredentialsPath   string
+	HTTPClient        *http.Client
+	BillingURL        string
+	SettingsURL       string
+	WebBillingURL     string
+	TokenURL          string
+	PlainBillingURL   string
+	UserURL           string
+	AutoTopUpURL      string
+	ResetInventoryURL string
+	Now               func() time.Time
 }
 
 type Provider struct {
@@ -55,6 +59,8 @@ type Provider struct {
 	store           credentialStore
 	webMu           sync.RWMutex
 	webCookie       string
+	extras          extraCache
+	extraURLs       [4]string
 }
 
 func NewProvider(opts Options) (*Provider, error) {
@@ -78,6 +84,7 @@ func NewProvider(opts Options) (*Provider, error) {
 	if provider.now == nil {
 		provider.now = func() time.Time { return time.Now().UTC() }
 	}
+	provider.extraURLs = optionalURLs(opts)
 	return provider, nil
 }
 
@@ -135,6 +142,7 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 		return data, webErr
 	}
 	if webAdded {
+		data.UsageDetails = nil
 		if source == nil {
 			state = "signed_in"
 			source = &usage.AuthSource{Kind: "desktop", Name: "browser"}
@@ -209,6 +217,9 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 		return data, err
 	}
 	p.populateSettings(ctx, creds, &data)
+	if p.webCookieHeader() == "" || hasWeekly(data) {
+		p.populateExtras(ctx, creds, &data)
+	}
 	return data, nil
 }
 
@@ -252,14 +263,5 @@ func reauth(data usage.UsageData) usage.UsageData {
 	data.NeedsReauth = true
 	return data
 }
-
-func defaultString(value string, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
-func strPtr(value string) *string { return &value }
 
 var _ usage.Provider = (*Provider)(nil)

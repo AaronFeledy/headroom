@@ -37,6 +37,7 @@ void Controller::markBackendUnavailable(bool outage, const QString &message) {
         provider[QStringLiteral("error")] = error;
         provider[QStringLiteral("buckets")] = QVariantList{};
         provider[QStringLiteral("rate_limit_reset_credits")] = QVariant::fromValue(nullptr);
+        provider[QStringLiteral("usage_details")] = QVariant::fromValue(nullptr);
         value = provider;
     }
     m_backendOutage = outage;

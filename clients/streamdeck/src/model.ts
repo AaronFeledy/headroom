@@ -3,13 +3,15 @@ import { pacing, statusOnly, warningColors, warningLevel, type WarningState } fr
 export const providers = { Claude: "Claude", Codex: "ChatGPT", Cursor: "Cursor", Grok: "Grok" } as const;
 export type ProviderID = keyof typeof providers;
 export type Settings = { provider?: string; bucket?: string; display?: string; cliPath?: string };
-export type Bucket = { id: string; label: string; utilization: number; resets_at: string | null; starts_at?: unknown; status_text?: unknown };
+export type Bucket = { id: string; label: string; utilization: number; resets_at: string | null; starts_at?: unknown; status_text?: unknown; measurement?: unknown };
 export type Provider = {
   provider_name: string;
   error: string | null;
   is_success: boolean;
   needs_reauth: boolean;
   auth?: { state: string };
+  primary_status_text?: unknown;
+  secondary_status_text?: unknown;
   buckets: Bucket[];
   fetch_status?: { failure_kind?: string | null; credential_epoch?: string | null };
 };
@@ -38,13 +40,18 @@ export function decodeUsage(text: string): Provider[] {
         !Array.isArray(p.buckets) || p.buckets.length > 12) throw new Error("Invalid provider");
     names.add(p.provider_name);
     const ids = new Set<string>();
-    for (const b of p.buckets) {
+    for (const [index, b] of p.buckets.entries()) {
       if (!b || typeof b.id !== "string" || !b.id || ids.has(b.id) || typeof b.label !== "string" ||
           typeof b.utilization !== "number" || !Number.isFinite(b.utilization) || b.utilization < 0 || b.utilization > 100 ||
           !(b.resets_at === null || typeof b.resets_at === "string" && Number.isFinite(Date.parse(b.resets_at)))) {
         throw new Error("Invalid meter");
       }
       ids.add(b.id);
+      if (typeof b.status_text !== "string" || b.status_text.trim() === "") {
+        const id = b.id.toLowerCase();
+        if ((id === "api" || index === 0 && id !== "auto") && typeof p.primary_status_text === "string") b.status_text = p.primary_status_text;
+        else if (id === "weekly" || id === "on_demand") b.status_text = p.secondary_status_text;
+      }
     }
   }
   return data;

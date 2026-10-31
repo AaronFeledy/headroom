@@ -42,7 +42,7 @@ func Test_Provider_requestRefresh_classifies_HTTP_failures_by_status_and_OAuth_c
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			t.Cleanup(server.Close)
-			provider, err := NewProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: server.Client(), TokenURL: server.URL})
+			provider, err := newIsolatedProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: server.Client(), TokenURL: server.URL})
 			if err != nil {
 				t.Fatalf("NewProvider: %v", err)
 			}

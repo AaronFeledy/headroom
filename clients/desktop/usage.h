@@ -7,6 +7,7 @@
 #include <QLocale>
 #include <QVariantMap>
 namespace Usage {
+bool isPercent(const QVariantMap &bucket);
 bool parse(const QByteArray &json, QVariantList &providers);
 QUrl endpoint(const QString &base);
 // POST target for an explicit provider refresh: the usage endpoint plus "/refresh".

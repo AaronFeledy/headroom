@@ -149,6 +149,7 @@ void Notifications::observeUsage(const QVariantList &providers, bool enabled, co
         QHash<QString, UsageSample> readings;
         for (const auto &item : provider.value("buckets").toList()) {
             const auto bucket = item.toMap();
+            if (!Usage::isPercent(bucket)) continue;
             const auto id = bucket.value("id").toString();
             bool valid = false;
             const double used = bucket.value("utilization").toDouble(&valid);

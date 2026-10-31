@@ -1,4 +1,5 @@
 #include "usagefixture.h"
+#include "richusagefixture.h"
 #include "controller.h"
 #include "usage.h"
 #include "startup.h"
@@ -60,6 +61,99 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void richReadOnlyDetails() {
+        QTemporaryDir dir;
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::richSnapshot());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(460, 800); window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 2);
+        for (const auto &name : {"Cursor", "Grok"}) {
+            auto card = findItem(window->contentItem(), "providerCard_" + QString(name)); QVERIFY(card);
+            QVERIFY(!card->property("hasResetCount").toBool());
+            QVERIFY(card->property("usageUrl").toString().isEmpty());
+            auto details = findItem(window->contentItem(), "usageDetails_" + QString(name)); QVERIFY(details);
+            QVERIFY(details->isVisible());
+            auto toggle = findItem(window->contentItem(), "usageDetailsToggle_" + QString(name)); QVERIFY(toggle);
+            QVERIFY(!details->property("expanded").toBool());
+            toggle->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+            QTRY_VERIFY(details->property("expanded").toBool());
+            QVERIFY(findItem(window->contentItem(), "usageDetail_" + QString(name) + "_0"));
+            QTest::keyClick(window, Qt::Key_Space);
+            QTRY_VERIFY(!details->property("expanded").toBool());
+        }
+        auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
+        auto flick = scroll->property("contentItem").value<QQuickItem *>(); QVERIFY(flick);
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        for (const auto &state : {QString("ok"), QString("stale")}) {
+            controller.replaceSnapshot(TestUsage::richSnapshot(state));
+            for (bool expanded : {false, true}) {
+            for (const auto &name : {QString("Cursor"), QString("Grok")})
+                findItem(window->contentItem(), "usageDetails_" + name)->setProperty("expanded", expanded);
+            for (const auto &size : {QSize(460, 800), QSize(630, 800), QSize(900, 860), QSize(1180, 800)}) {
+                window->resize(size); flick->setProperty("contentY", 0); QTest::qWait(100);
+                for (const auto &name : {"Cursor", "Grok"}) {
+                    auto card = findItem(window->contentItem(), "providerCard_" + QString(name)); QVERIFY(card);
+                    QVERIFY(card->width() <= scroll->width());
+                    auto details = findItem(window->contentItem(), "usageDetails_" + QString(name)); QVERIFY(details);
+                    QVERIFY(details->width() > 0); QVERIFY(details->width() <= card->width());
+                }
+                if (!capture.isEmpty()) {
+                    QDir().mkpath(capture);
+                    const auto prefix = QString("rich-%1-%2%3").arg(state).arg(size.width()).arg(expanded ? "-expanded" : "");
+                    QVERIFY(window->grabWindow().save(QDir(capture).filePath(prefix + "-top.png")));
+                    const double end = qMax(0.0, flick->property("contentHeight").toDouble() - flick->height());
+                    int frame = 1;
+                    for (double y = qMax(1.0, flick->height() * 0.8); y < end; y += flick->height() * 0.8) {
+                        flick->setProperty("contentY", y); QTest::qWait(50);
+                        QVERIFY(window->grabWindow().save(QDir(capture).filePath(prefix + QString("-scroll-%1.png").arg(frame++))));
+                    }
+                    flick->setProperty("contentY", end); QTest::qWait(50);
+                    QVERIFY(window->grabWindow().save(QDir(capture).filePath(prefix + "-end.png")));
+                }
+            }
+            }
+        }
+        auto summaryOnly = QJsonDocument::fromJson(TestUsage::richSnapshot()).array();
+        auto cursor = summaryOnly[0].toObject();
+        cursor["usage_details"] = QJsonObject{{"quotas", QJsonArray{QJsonObject{{"state", "ok"}, {"bucket_id", "weekly_grok_bot"},
+            {"has_available_usage", QJsonValue::Null}, {"scope", QJsonObject{{"shared_pool", true}}}}}}};
+        summaryOnly[0] = cursor;
+        controller.replaceSnapshot(QJsonDocument(summaryOnly).toJson());
+        QTest::qWait(50);
+        for (const auto &value : controller.providers()) {
+            const auto provider = value.toMap(); if (provider["provider_name"] != "Cursor") continue;
+            QVERIFY(controller.detailRows(provider).isEmpty()); QCOMPARE(controller.detailSummary(provider).size(), 1);
+        }
+        QTRY_VERIFY(findItem(window->contentItem(), "usageDetails_Cursor")->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "usageDetailsToggle_Cursor")->isVisible());
+        auto payload = QJsonDocument::fromJson(TestUsage::richSnapshot()).array();
+        auto p = payload[0].toObject(); auto bs = p["buckets"].toArray();
+        auto b = bs[0].toObject(); b["measurement"] = "status"; b["utilization"] = 100; bs[0] = b;
+        b = bs[1].toObject(); b["measurement"] = "unrecognized"; b["utilization"] = 100; bs[1] = b;
+        b = bs[3].toObject(); b["measurement"] = "percent"; b["utilization"] = 0; bs[3] = b;
+        p["buckets"] = bs; payload[0] = p;
+        controller.replaceSnapshot(QJsonDocument(payload).toJson());
+        QTest::qWait(50);
+        QVERIFY(!findItem(window->contentItem(), "usageGraph_Cursor_weekly")->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "usageGraph_Cursor_api")->isVisible());
+        QVERIFY(findItem(window->contentItem(), "usageGraph_Cursor_on_demand")->isVisible());
+        QCOMPARE(findItem(window->contentItem(), "meterPercent_Cursor_on_demand")->property("text").toString(), QString("0%"));
+        QCOMPARE(controller.concern("Cursor", controller.providers()[0].toMap()["buckets"].toList()[0].toMap())["severity"].toInt(), 0);
+    }
     void qt612ActionsAndContextMenus() {
         QTemporaryDir dir;
         const auto samples = QJsonDocument::fromJson(TestUsage::snapshot()).array();

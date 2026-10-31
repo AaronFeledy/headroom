@@ -12,6 +12,7 @@ function timestamp(value: unknown): number {
   return typeof value === "string" ? Date.parse(value) : NaN;
 }
 export function statusOnly(bucket: Bucket): boolean {
+  if (bucket.measurement !== undefined && bucket.measurement !== null) return bucket.measurement !== "percent";
   return bucket.id.toLowerCase() === "on_demand" && bucket.utilization <= 0 &&
     typeof bucket.status_text === "string" && bucket.status_text.length > 0 && !bucket.status_text.includes(" / ");
 }

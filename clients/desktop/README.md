@@ -339,6 +339,33 @@ Keyboard shortcuts: **Ctrl+R** refreshes, **Ctrl+,** opens settings, **Ctrl+Q** 
 and **Escape** closes an open overlay, or hides the window to the tray when one is available.
 On macOS, Qt maps those Control shortcuts to the standard Command key.
 
+## Read-only provider details and compatibility
+
+The display policy is to show known, meaningful provider metadata alongside the
+existing meters, not invent extra quotas. Additive `usage_details` can describe
+plans, quota availability, monetary balances/caps, restricted grants, product
+breakdowns, and Grok reset inventory. Unknown values stay unknown; explicit zero
+and known-empty results are not missing readings. Stale sections keep their
+observation time and must not appear fresh. Missing structured details preserve
+the legacy `detail_text` fallback and older bucket/header payloads.
+
+Reported dollar balances are separate from provider credits. Restricted grants
+retain their individual expiry and scope rather than being added to prepaid
+balance. Product percentages are a reported breakdown, not independent quota
+bars or a sum. A reported shared pool describes only its own row; Cursor Grok
+Bot and standalone Grok remain separate without explicit cross-provider proof.
+Grok reset inventory shows count/validity/expiry only, with no redemption action;
+it is not Claude's or ChatGPT's `rate_limit_reset_credits` control.
+
+Explicit bucket `measurement: "percent"` permits percent presentation;
+`"status"` or an unrecognized explicit value suppresses percent bars, rings,
+and pace. Missing/null measurement keeps the legacy heuristic, including
+status-only on-demand rows. Numeric `utilization` remains in the API for older
+clients, but must not turn a balance or unknown measurement into a percent.
+See the [server contract](../../server/README.md#read-only-usage-details) for
+nullable fields, observation states, and provider selection rules. These details
+do not add sign-in settings or change authentication and reset permissions.
+
 ## Desktop settings and diagnostics
 
 **Start Headroom when I sign in** enables an XDG autostart entry on Linux or the
@@ -439,11 +466,13 @@ never appears as just Monday on a Monday, even when it is less than 168 hours
 away. Dates in another year include the year; times follow the system's 12- or
 24-hour format. Missing reset timestamps have no date tooltip.
 
-The current API exposes reset times but not period starts. Following the Windows
-client's pacing conventions, Headroom estimates five hours for Claude/ChatGPT
-sessions, seven days for weekly buckets (including model-specific and Grok Bot
-buckets), 30 days for Cursor billing pools, and the previous calendar month for
-Grok credits. These are pacing estimates, not provider-guaranteed rate forecasts.
+The API can expose a validated `starts_at` with `resets_at`; a reported period
+takes precedence over a duration estimate. Without it, the legacy pacing
+conventions estimate five hours for Claude/ChatGPT sessions, seven days for
+weekly buckets (including model-specific and Grok Bot buckets), 30 days for
+legacy Cursor billing pools, and the previous calendar month for legacy Grok
+credit buckets. Grok's primary weekly allowance uses the weekly window, not a
+monetary ledger's billing period. Estimates are not provider-guaranteed forecasts.
 A Claude weekly fallback labeled “Weekly” uses seven days even in a session slot.
 Meters with no reset, unknown duration, a reset outside the expected window, or
 an expired window show “Pace unavailable.” Status-only billing rows have no
@@ -549,8 +578,10 @@ connections, pacing calculations, and provider preferences.
 Meter notches represent hours in five-hour windows, days in weekly windows,
 and seven-day boundaries in monthly windows. Monthly meters leave a shorter
 final segment after day 28 when needed. Hover a notch to see its boundary.
-The notches and pacing marker use the same period calculation. Cursor uses a
-30-day billing estimate; Grok monthly meters use a calendar-month estimate.
+The notches and pacing marker use the same period calculation, preferring a
+validated reported start/end. Legacy Cursor monthly meters use a 30-day billing
+estimate; legacy Grok monthly meters use a calendar-month estimate. Weekly
+allowances retain weekly divisions independently of monetary ledger periods.
 Unknown periods have no time notches.
 
 See the [desktop parity audit](../../docs/desktop-parity.md) for restored features,

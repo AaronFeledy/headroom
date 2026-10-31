@@ -1,5 +1,11 @@
 package cursor
 
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
 type cursorUsageSummary struct {
 	BillingCycleStart *string                `json:"billingCycleStart"`
 	IsUnlimited       *bool                  `json:"isUnlimited"`
@@ -8,6 +14,34 @@ type cursorUsageSummary struct {
 	MembershipType    *string                `json:"membershipType"`
 	IndividualUsage   *cursorIndividualUsage `json:"individualUsage"`
 	TeamUsage         *cursorTeamUsage       `json:"teamUsage"`
+	PlanName          string                 `json:"planName"`
+	BillingBrand      string                 `json:"billingBrand"`
+	OnDemandSettings  *onDemandSettings      `json:"onDemandSettings"`
+}
+
+func (s *cursorUsageSummary) UnmarshalJSON(body []byte) error {
+	type summaryAlias cursorUsageSummary
+	var parsed summaryAlias
+	wire := struct {
+		*summaryAlias
+		PlanName         json.RawMessage `json:"planName"`
+		BillingBrand     json.RawMessage `json:"billingBrand"`
+		OnDemandSettings json.RawMessage `json:"onDemandSettings"`
+	}{summaryAlias: &parsed}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return fmt.Errorf("decode core summary: %w", err)
+	}
+	if err := json.Unmarshal(wire.PlanName, &parsed.PlanName); err != nil {
+		parsed.PlanName = ""
+	}
+	if err := json.Unmarshal(wire.BillingBrand, &parsed.BillingBrand); err != nil {
+		parsed.BillingBrand = ""
+	}
+	if err := json.Unmarshal(wire.OnDemandSettings, &parsed.OnDemandSettings); err != nil {
+		parsed.OnDemandSettings = nil
+	}
+	*s = cursorUsageSummary(parsed)
+	return nil
 }
 
 type cursorIndividualUsage struct {
@@ -52,10 +86,22 @@ type cursorPooledUsage struct {
 }
 
 type cursorSandUsage struct {
-	CurrentPeriodStart      string  `json:"currentPeriodStart"`
-	NextResetTimestampUtc   string  `json:"nextResetTimestampUtc"`
-	UsagePercent            float64 `json:"usagePercent"`
-	HasNonZeroIncludedLimit bool    `json:"hasNonZeroIncludedLimit"`
+	CurrentPeriodStart            string            `json:"currentPeriodStart"`
+	NextResetTimestampUtc         string            `json:"nextResetTimestampUtc"`
+	UsagePercent                  float64           `json:"usagePercent"`
+	HasNonZeroIncludedLimit       bool              `json:"hasNonZeroIncludedLimit"`
+	HasAvailableUsage             *bool             `json:"hasAvailableUsage"`
+	UsesPooledEnterpriseAllowance *bool             `json:"usesPooledEnterpriseAllowance"`
+	GrokPlanLabel                 string            `json:"grokPlanLabel"`
+	OnDemandSettings              *onDemandSettings `json:"onDemandSettings"`
+	percentReported               bool
+	observedAt                    *time.Time
+	stale                         bool
+}
+
+type onDemandSettings struct {
+	Enabled          *bool `json:"enabled"`
+	AutoTopUpEnabled *bool `json:"autoTopUpEnabled"`
 }
 
 type cursorUserInfo struct {

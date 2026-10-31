@@ -10,3 +10,5 @@ clients/linux/build/
 clients/linux/build-*/
 clients/desktop/build/
 clients/desktop/build-*/
+
+**/.cache/clangd/

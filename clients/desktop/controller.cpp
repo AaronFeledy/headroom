@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "usage.h"
+#include "usagedetails.h"
 #include "logincopy.h"
 #include <QClipboard>
 #include <QGuiApplication>
@@ -451,8 +452,12 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
 }
 
 QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {
+    if (!Usage::isPercent(bucket)) return Usage::concern(provider, bucket);
     return m_concerns.value(qMakePair(provider, bucket["id"].toString()));
 }
+bool Controller::isPercent(const QVariantMap &bucket) const { return Usage::isPercent(bucket); }
+QStringList Controller::detailRows(const QVariantMap &provider) const { return Usage::detailRows(provider); }
+QStringList Controller::detailSummary(const QVariantMap &provider) const { return Usage::detailSummary(provider); }
 QString Controller::warningColor(int severity) const { return Usage::warningColor(Usage::WarningLevel(qBound(0, severity, 3))); }
 void Controller::updateMeterStates() {
     // Don't infer recovery from old usage readings during a connection outage.
@@ -467,6 +472,10 @@ void Controller::updateMeterStates() {
         for (const auto &item : provider["buckets"].toList()) {
             const auto bucket = item.toMap();
             const MeterKey key(name, bucket["id"].toString());
+            if (!Usage::isPercent(bucket)) {
+                m_warningStates.remove(key); m_concerns.remove(key);
+                continue;
+            }
             present.insert(key);
             auto assessment = Usage::concern(name, bucket, now);
             const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs);

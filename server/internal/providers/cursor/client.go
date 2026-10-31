@@ -31,6 +31,7 @@ var (
 
 type Options struct {
 	BaseURL            string
+	RPCBaseURL         string
 	AuthPath           string
 	HTTPClient         *http.Client
 	Discovery          *Discovery
@@ -40,6 +41,9 @@ type Options struct {
 
 type Client struct {
 	baseURL        string
+	rpcBaseURL     string
+	optional       optionalCache
+	weeklyKnown    bool
 	authPath       string
 	httpClient     *http.Client
 	secret         secretStore
@@ -82,9 +86,17 @@ func NewClient(opts Options) *Client {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	rpcBaseURL := strings.TrimRight(opts.RPCBaseURL, "/")
+	if rpcBaseURL == "" {
+		rpcBaseURL = "https://api2.cursor.sh"
+		if baseURL != defaultBaseURL {
+			rpcBaseURL = baseURL
+		}
+	}
 	return &Client{
 		discovery: discovery, logger: logger, stamps: map[string]fileStamp{},
 		baseURL:    baseURL,
+		rpcBaseURL: rpcBaseURL,
 		authPath:   opts.AuthPath,
 		httpClient: httpClient,
 	}

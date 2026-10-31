@@ -76,9 +76,7 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
         for (const auto &entry : buckets) {
             const auto bucket = entry.toMap();
             const double used = bucket["utilization"].toDouble();
-            const QString status = bucket["status_text"].toString();
-            const bool statusOnly = bucket["id"] == "on_demand" && used <= 0 && !status.isEmpty() && !status.contains(" / ");
-            if (statusOnly) continue;
+            if (!Usage::isPercent(bucket)) continue;
             const auto severity = level(assessment(primary, bucket));
             if (!primaryAssigned) {
                 primaryAssigned = true;

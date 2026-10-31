@@ -49,7 +49,7 @@ func Test_Provider_Fetch_adds_weekly_bucket_from_web_credits_config(t *testing.T
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: authPath,
 		HTTPClient:      server.Client(),
 		BillingURL:      server.URL + "/v1/billing",
@@ -100,7 +100,7 @@ func Test_Provider_Fetch_returns_web_weekly_when_cli_credentials_are_missing(t *
 		writeLiveWebUsageFixture(t, w)
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: t.TempDir() + "/missing-auth.json",
 		HTTPClient:      server.Client(),
 		WebBillingURL:   server.URL,
@@ -142,7 +142,7 @@ func Test_Provider_Fetch_clears_web_cookie_when_grpc_trailer_is_unauthenticated(
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

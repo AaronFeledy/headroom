@@ -30,7 +30,7 @@ func Test_Provider_refresh_adopts_completed_sibling_rotation_without_token_call(
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -118,7 +118,7 @@ func Test_Provider_Fetch_retries_coded_transient_token_error(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -151,7 +151,7 @@ func Test_Provider_Fetch_does_not_retry_invalid_grant(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -187,7 +187,7 @@ func Test_Provider_Fetch_does_not_retry_invalid_client(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: server.Client(), TokenURL: server.URL + "/oauth2/token", Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

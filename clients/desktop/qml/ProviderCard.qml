@@ -31,12 +31,13 @@ Rectangle {
         ? resetCredits.account_fingerprint : ""
     property bool hasResetAccountBinding: resetAccountFingerprint.length === 64
         && /^[0-9a-f]{64}$/.test(resetAccountFingerprint)
-    property bool hasResetCount: !failed && resetCredits !== null
+    readonly property bool resetProvider: name === "Claude" || name === "Codex"
+    property bool hasResetCount: resetProvider && !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count >= 0
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
     readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
     readonly property bool managingReset: resetState.managing === true
-    readonly property string usageUrl: name === "Claude" ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage"
+    readonly property string usageUrl: name === "Claude" ? "https://claude.ai/settings/usage" : name === "Codex" ? "https://chatgpt.com/codex/settings/usage" : ""
     property var clock: backend.state
     property var weeklyBucket: {
         for (let bucket of provider.buckets || []) if (bucket.id === "weekly") return bucket
@@ -60,7 +61,7 @@ Rectangle {
                 Text {
                     id: resetLabel
                     anchors.fill: parent
-                    function openUsage() { Qt.openUrlExternally(card.usageUrl) }
+                    function openUsage() { if (card.resetProvider) Qt.openUrlExternally(card.usageUrl) }
                     objectName: "bankedResets_" + card.name
                     visible: card.hasBankedResets
                     textFormat: Text.PlainText
@@ -137,7 +138,7 @@ Rectangle {
                 objectName: "useBankedReset_" + card.name
                 // A failed or stale card keeps only the management of an owned
                 // arm, submission, or pending request; fresh choices wait.
-                visible: card.resetState.visible && (!card.failed || card.managingReset)
+                visible: card.resetProvider && card.resetState.visible && (!card.failed || card.managingReset)
                 enabled: card.resetState.enabled
                 text: {
                     switch (card.resetState.phase) {
@@ -299,6 +300,11 @@ Rectangle {
                         }
                     }
                 }
+            }
+            UsageDetails {
+                Layout.fillWidth: true
+                provider: card.provider
+                clock: card.clock
             }
             ColumnLayout {
                 objectName: "providerStaleNotice_" + card.name

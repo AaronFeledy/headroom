@@ -28,7 +28,7 @@ func Test_Provider_Fetch_sends_Grok_CLI_billing_query_and_auth_headers(t *testin
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing?existing=value", SettingsURL: server.URL + "/v1/settings"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing?existing=value", SettingsURL: server.URL + "/v1/settings"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -75,7 +75,7 @@ func Test_Provider_Fetch_uses_CLI_weekly_period_without_browser_fallback(t *test
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -125,7 +125,7 @@ func Test_Provider_Fetch_uses_zero_for_omitted_CLI_weekly_utilization_without_br
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -160,7 +160,7 @@ func Test_Provider_Fetch_uses_coherent_weekly_legacy_fields_with_CLI_weekly(t *t
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -201,7 +201,7 @@ func Test_Provider_Fetch_calls_browser_fallback_when_CLI_weekly_period_is_absent
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -238,7 +238,7 @@ func Test_Provider_Fetch_calls_browser_fallback_when_CLI_weekly_reset_is_invalid
 		}
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", WebBillingURL: server.URL + "/web"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

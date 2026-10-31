@@ -22,7 +22,7 @@ func Test_Bucket_MarshalJSON_emits_ordered_contract_with_UTC_reset(t *testing.T)
 	if err != nil {
 		t.Fatalf("MarshalJSON returned error: %v", err)
 	}
-	want := `{"id":"five_hour","label":"5-Hour","utilization":42.5,"resets_at":"2026-07-12T22:30:00Z","status_text":null,"starts_at":null,"detail_text":null}`
+	want := `{"id":"five_hour","label":"5-Hour","utilization":42.5,"resets_at":"2026-07-12T22:30:00Z","status_text":null,"starts_at":null,"detail_text":null,"measurement":null}`
 	if string(encoded) != want {
 		t.Fatalf("JSON = %s, want %s", encoded, want)
 	}

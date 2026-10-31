@@ -33,7 +33,7 @@ func Test_Provider_ShowSecondary_is_false_for_base_success_reauth_and_error_stat
 
 func fetchGrokUsageForShowSecondary(t *testing.T, authJSON string, server *httptest.Server) usage.UsageData {
 	t.Helper()
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: writeAuthFile(t, authJSON),
 		HTTPClient:      server.Client(),
 		BillingURL:      server.URL + "/v1/billing",

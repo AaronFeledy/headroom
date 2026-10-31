@@ -20,7 +20,7 @@ func Test_Provider_Fetch_returns_close_error_when_billing_response_close_fails(t
 			Header:     make(http.Header),
 		}, nil
 	})}
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: client, BillingURL: "https://example.test/billing", SettingsURL: "https://example.test/settings", TokenURL: "https://example.test/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: client, BillingURL: "https://example.test/billing", SettingsURL: "https://example.test/settings", TokenURL: "https://example.test/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -45,7 +45,7 @@ func Test_Provider_Fetch_closes_settings_body_once_when_settings_close_fails(t *
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
 	})}
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: client, BillingURL: "https://example.test/billing", SettingsURL: "https://example.test/settings", TokenURL: "https://example.test/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: client, BillingURL: "https://example.test/billing", SettingsURL: "https://example.test/settings", TokenURL: "https://example.test/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

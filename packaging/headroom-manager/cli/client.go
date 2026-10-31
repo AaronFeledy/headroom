@@ -52,7 +52,7 @@ func fetchUsage(ctx context.Context, options Options, flags dashboardFlags) (Loc
 		for index := range providers {
 			filtered := providers[index].Buckets[:0]
 			for _, bucket := range providers[index].Buckets {
-				if bucket.ID == "weekly" || strings.HasPrefix(bucket.ID, "weekly_") {
+				if weeklyBucket(providers[index].ProviderName, bucket) {
 					filtered = append(filtered, bucket)
 				}
 			}
@@ -73,6 +73,12 @@ func filterWeeklyJSON(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	for _, provider := range providers {
+		var name string
+		if raw := provider["provider_name"]; raw != nil {
+			if err := json.Unmarshal(raw, &name); err != nil {
+				return nil, err
+			}
+		}
 		var buckets []json.RawMessage
 		if raw, ok := provider["buckets"]; ok {
 			if err := json.Unmarshal(raw, &buckets); err != nil {
@@ -80,13 +86,11 @@ func filterWeeklyJSON(body []byte) ([]byte, error) {
 			}
 			filtered := make([]json.RawMessage, 0, len(buckets))
 			for _, bucket := range buckets {
-				var identity struct {
-					ID string `json:"id"`
-				}
+				var identity Bucket
 				if err := json.Unmarshal(bucket, &identity); err != nil {
 					return nil, err
 				}
-				if identity.ID == "weekly" || strings.HasPrefix(identity.ID, "weekly_") {
+				if weeklyBucket(name, identity) {
 					filtered = append(filtered, bucket)
 				}
 			}

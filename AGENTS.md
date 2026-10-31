@@ -124,6 +124,38 @@ duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
 `credits`, `weekly`, `weekly_<slug>`, `extra`, and `on_demand`. Cursor Grok Bot
 is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
+Additive `usage_details` and nullable bucket `measurement` are defined in
+`server/internal/usage/details.go` and `types.go`. Preserve legacy fields, stable
+IDs, `current`/`weekly`, and `detail_text` fallbacks. Missing/null measurement
+keeps legacy heuristics; explicit `status` or an unrecognized value must suppress
+percent bars/rings and pace despite numeric legacy `utilization`. Unknown detail
+values/lists stay null, known-empty lists stay empty, and explicit zero stays
+zero. Preserve `ok`/`stale`/`unknown`/`unsupported` and original `observed_at`.
+Ordinary usage errors expose null details; optional enrichment failure must not
+change auth. Keep enrichment bounded and caches credential/context-scoped.
+
+Cursor's known weekly context requires authoritative current-period usage with
+checked epoch-millisecond/RFC3339 source timestamps; never substitute a stale
+monthly zero on failure. Preserve legacy monthly/request mappings for older
+accounts and payloads. Grok weekly credits and its optional monetary ledger have
+independent periods; never attribute historical spend to the active week.
+Reported USD minor units are not provider credits. Restricted grants never join
+prepaid balance; preserve individual expiry and unknown scope. Product-reported
+percentages are breakdowns, not independent quotas or a sum. `shared_pool` is
+only its row's explicit pool context: do not join Cursor Grok Bot to standalone
+Grok from percentages, labels, or `isUnifiedBillingUser`. Absent proof, keep
+scope unknown and allowances separate. Show only known, meaningful metadata;
+do not add banking/billing mutations or change auth flows.
+
+Grok `usage_details.reset_inventory` is strictly read-only count, validity, and
+expiry metadata, never `RateLimitResetCredits`, eligibility, or redemption.
+Never retain or log redemption handle IDs. Read-only inventory decoder/status
+tests are allowed; consume methods, HTTP reset routes, and SSH reset executions
+remain forbidden even against fakes. Never enable live provider test flags.
+CLI JSON must preserve unknown additive fields; text uses balances/status, not
+quota rings. Stream Deck ignores detail metadata and uses real stable meter IDs,
+not invented financial key modes.
+
 Claude and Codex may expose read-only `rate_limit_reset_credits`; `usable_now`
 is a nullable boolean (Codex leaves it null). Claude's confirmed reset uses
 token-bound account/organization identity and a fresh banked-status GET.
