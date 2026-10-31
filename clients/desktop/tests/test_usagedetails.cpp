@@ -37,6 +37,19 @@ private slots:
         QVERIFY(Usage::parse(TestUsage::richSnapshot("stale"), ps));
         QVERIFY(Usage::detailSummary(ps[1].toMap()).join('\n').contains("Previously reported: Reset inventory (read-only): 3 reported"));
     }
+    void zeroValueGrantsStayOutOfSummary() {
+        QVariantList ps; QVERIFY(Usage::parse(TestUsage::richSnapshot(), ps));
+        auto cursor = ps[0].toMap(); QCOMPARE(cursor["provider_name"].toString(), QString("Cursor"));
+        QVERIFY(Usage::detailSummary(cursor).join('\n').contains("2 restricted grants reported"));
+        auto d = cursor["usage_details"].toMap(); auto grants = d["credit_grants"].toMap(); auto items = grants["items"].toList();
+        auto spent = items[1].toMap(); spent["remaining_minor"] = 0; spent["total_minor"] = 0; items[1] = spent;
+        grants["items"] = items; d["credit_grants"] = grants; cursor["usage_details"] = d;
+        QVERIFY(Usage::detailSummary(cursor).join('\n').contains("1 restricted grant reported"));
+        QVERIFY(!Usage::detailRows(cursor).join('\n').contains("Expired restricted grant"));
+        auto first = items[0].toMap(); first["remaining_minor"] = 0; first["total_minor"] = QVariant(); items[0] = first;
+        grants["items"] = items; d["credit_grants"] = grants; cursor["usage_details"] = d;
+        QVERIFY(!Usage::detailSummary(cursor).join('\n').contains("restricted grant"));
+    }
     void legacyAndRich() {
         QVariantList ps;
         QVERIFY(Usage::parse(TestUsage::snapshot(), ps));

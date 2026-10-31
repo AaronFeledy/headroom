@@ -10,7 +10,7 @@ ColumnLayout {
     readonly property var rows: { details.clock; return backend.detailRows(provider) }
     readonly property var summary: { details.clock; return backend.detailSummary(provider) }
     objectName: "usageDetails_" + provider.provider_name
-    visible: rows.length > 0
+    visible: rows.length > 0 || summary.length > 0
     spacing: 6
     Repeater {
         model: details.summary

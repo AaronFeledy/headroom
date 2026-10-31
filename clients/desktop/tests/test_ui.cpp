@@ -127,6 +127,19 @@ private slots:
             }
             }
         }
+        auto summaryOnly = QJsonDocument::fromJson(TestUsage::richSnapshot()).array();
+        auto cursor = summaryOnly[0].toObject();
+        cursor["usage_details"] = QJsonObject{{"quotas", QJsonArray{QJsonObject{{"state", "ok"}, {"bucket_id", "weekly_grok_bot"},
+            {"has_available_usage", QJsonValue::Null}, {"scope", QJsonObject{{"shared_pool", true}}}}}}};
+        summaryOnly[0] = cursor;
+        controller.replaceSnapshot(QJsonDocument(summaryOnly).toJson());
+        QTest::qWait(50);
+        for (const auto &value : controller.providers()) {
+            const auto provider = value.toMap(); if (provider["provider_name"] != "Cursor") continue;
+            QVERIFY(controller.detailRows(provider).isEmpty()); QCOMPARE(controller.detailSummary(provider).size(), 1);
+        }
+        QTRY_VERIFY(findItem(window->contentItem(), "usageDetails_Cursor")->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "usageDetailsToggle_Cursor")->isVisible());
         auto payload = QJsonDocument::fromJson(TestUsage::richSnapshot()).array();
         auto p = payload[0].toObject(); auto bs = p["buckets"].toArray();
         auto b = bs[0].toObject(); b["measurement"] = "status"; b["utilization"] = 100; bs[0] = b;

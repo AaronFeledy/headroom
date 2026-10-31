@@ -40,10 +40,14 @@ QStringList Usage::detailSummary(const QVariantMap &provider, const QDateTime &n
         }
     }
     const auto grants = details["credit_grants"].toMap();
-    const auto items = grants["items"].toList();
-    if (visible(grants) && !items.isEmpty())
-        rows << historical(grants, items.size() == 1 ? QStringLiteral("1 restricted grant reported")
-            : QStringLiteral("%1 restricted grants reported").arg(items.size()));
+    qsizetype grantCount = 0;
+    for (const auto &value : grants["items"].toList()) {
+        const auto item = value.toMap();
+        if (item["remaining_minor"].toLongLong() > 0 || item["total_minor"].toLongLong() > 0) ++grantCount;
+    }
+    if (visible(grants) && grantCount > 0)
+        rows << historical(grants, grantCount == 1 ? QStringLiteral("1 restricted grant reported")
+            : QStringLiteral("%1 restricted grants reported").arg(grantCount));
     const auto inventory = details["reset_inventory"].toMap();
     if (provider["provider_name"] == "Grok" && visible(inventory) && inventory["reported_count"].toLongLong() > 0) {
         const qint64 count = inventory["reported_count"].toLongLong();
