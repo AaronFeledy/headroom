@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,7 +25,33 @@ func newTestClient(t *testing.T, options Options) *Client {
 		options.Discovery = &Discovery{Environment: winprofile.Environment{GOOS: "linux", Home: t.TempDir(), Root: t.TempDir(), Env: func(string) string { return "" }}, Now: time.Now, BrowserCredentials: true}
 	}
 	options.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	if options.BaseURL == "" {
+		options.BaseURL = "http://127.0.0.1:1"
+	}
+	if options.RPCBaseURL == "" {
+		options.RPCBaseURL = options.BaseURL
+	}
+	client := &http.Client{}
+	if options.HTTPClient != nil {
+		*client = *options.HTTPClient
+	}
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = localOnlyTransport{transport}
+	options.HTTPClient = client
 	return NewClient(options)
+}
+
+type localOnlyTransport struct{ base http.RoundTripper }
+
+func (l localOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	ip := net.ParseIP(r.URL.Hostname())
+	if ip == nil || !ip.IsLoopback() {
+		return nil, ErrInvalidToken
+	}
+	return l.base.RoundTrip(r)
 }
 
 func tokenWithExpiry(expiry int64) string {

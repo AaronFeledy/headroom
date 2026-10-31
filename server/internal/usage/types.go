@@ -37,6 +37,7 @@ type Bucket struct {
 	StatusText  *string
 	StartsAt    *time.Time
 	DetailText  *string
+	Measurement string `json:"measurement"`
 }
 
 func (b Bucket) MarshalJSON() ([]byte, error) {
@@ -48,6 +49,7 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 		StatusText  *string `json:"status_text"`
 		StartsAt    *string `json:"starts_at"`
 		DetailText  *string `json:"detail_text"`
+		Measurement *string `json:"measurement"`
 	}
 	var resetsAt *string
 	if b.ResetsAt != nil {
@@ -59,7 +61,11 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 		formatted := start.Format(time.RFC3339)
 		startsAt = &formatted
 	}
-	return json.Marshal(bucketJSON{StartsAt: startsAt, DetailText: b.DetailText, ID: b.ID, Label: b.Label, Utilization: b.Utilization, ResetsAt: resetsAt, StatusText: b.StatusText})
+	var measurement *string
+	if b.Measurement != "" {
+		measurement = &b.Measurement
+	}
+	return json.Marshal(bucketJSON{StartsAt: startsAt, DetailText: b.DetailText, ID: b.ID, Label: b.Label, Utilization: b.Utilization, ResetsAt: resetsAt, StatusText: b.StatusText, Measurement: measurement})
 }
 
 type UsageData struct {
@@ -81,6 +87,7 @@ type UsageData struct {
 	Error                 *string
 	NeedsReauth           bool
 	RateLimitResetCredits *RateLimitResetCredits
+	UsageDetails          *UsageDetails `json:"usage_details"`
 	// ProviderAccountID binds sensitive provider actions to the account whose
 	// usage was checked. It is internal-only and must never enter API JSON.
 	ProviderAccountID string `json:"-"`
@@ -182,14 +189,17 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		IsSuccess             bool                   `json:"is_success"`
 		RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 		Auth                  Auth                   `json:"auth"`
+		UsageDetails          *UsageDetails          `json:"usage_details"`
 	}
 	buckets := d.Buckets
 	if d.Error != nil || buckets == nil {
 		buckets = []Bucket{}
 	}
 	resetCredits := d.RateLimitResetCredits
+	details := d.UsageDetails
 	if d.Error != nil {
 		resetCredits = nil
+		details = nil
 	}
 	auth := d.Auth
 	if auth.State == "" {
@@ -213,6 +223,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		NeedsReauth:           d.NeedsReauth,
 		IsSuccess:             d.Error == nil,
 		RateLimitResetCredits: resetCredits,
+		UsageDetails:          details,
 	})
 }
 

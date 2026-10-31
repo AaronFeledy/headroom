@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
@@ -17,36 +18,60 @@ const (
 )
 
 func grokBotBucket(sand *cursorSandUsage) (usage.Bucket, bool) {
-	if sand == nil {
+	if sand == nil || sand.stale {
+		return usage.Bucket{}, false
+	}
+	if sand.UsesPooledEnterpriseAllowance != nil && *sand.UsesPooledEnterpriseAllowance {
 		return usage.Bucket{}, false
 	}
 	if !sand.HasNonZeroIncludedLimit && sand.UsagePercent <= 0 {
 		return usage.Bucket{}, false
+	}
+	measurement := usage.MeasurementPercent
+	if !sand.percentReported && sand.UsagePercent == 0 {
+		measurement = usage.MeasurementStatus
 	}
 	reset := parseDate(&sand.NextResetTimestampUtc)
 	return usage.Bucket{
 		ID:          grokBotBucketID,
 		Label:       "Grok Bot",
 		Utilization: clampPercent(sand.UsagePercent),
+		Measurement: measurement,
 		ResetsAt:    reset,
 		StartsAt:    usage.ValidPeriodStart(parseDate(&sand.CurrentPeriodStart), reset),
 	}, true
 }
 
 func (c *Client) fetchSandUsage(ctx context.Context, cookieHeader string) *cursorSandUsage {
-	resp, err := c.postJSON(ctx, sandUsagePath, cookieHeader, []byte("{}"))
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
+	entry := c.optionalRead(ctx, cookieHeader, sandUsagePath)
 	var sand cursorSandUsage
-	if err := json.NewDecoder(resp.Body).Decode(&sand); err != nil {
+	if err := json.Unmarshal(entry.body, &sand); err != nil {
 		return nil
 	}
+	sand.observedAt = &entry.observed
+	sand.stale = c.discovery.Now().Sub(entry.observed) >= 5*time.Minute
 	return &sand
+}
+
+func (s *cursorSandUsage) UnmarshalJSON(body []byte) error {
+	type sandAlias cursorSandUsage
+	var parsed sandAlias
+	wire := struct {
+		*sandAlias
+		Percent *float64 `json:"usagePercent"`
+	}{sandAlias: &parsed}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return err
+	}
+	if wire.Percent != nil {
+		if !validPercent(wire.Percent) {
+			return errOptionalBody
+		}
+		parsed.UsagePercent = *wire.Percent
+		parsed.percentReported = true
+	}
+	*s = cursorSandUsage(parsed)
+	return nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, cookieHeader string, body []byte) (*http.Response, error) {

@@ -20,7 +20,7 @@ ColumnLayout {
     property color usageColor: concern.color || Theme.purple
     property var clock: backend.state
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
-    property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
+    property bool statusOnly: !backend.isPercent(bucket)
     readonly property string providerDetails: bucket.detail_text || ""
     readonly property string usageDetails: (meter.stale
         ? "Shown from the last successful reading. Pacing and warning colors resume when a fresh reading arrives."

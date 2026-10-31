@@ -38,6 +38,29 @@ only a reset timestamp. Positive banked-reset counts from Claude or ChatGPT are
 read-only metadata; the CLI never consumes them. Claude's `usable_now` signal is
 separate from its available count and does not trigger an automatic action.
 
+## Read-only details and older servers
+
+The compatibility policy keeps provider keys, stable meter IDs, and legacy
+`current`/`weekly` headers. Missing structured details retain `detail_text`
+fallbacks; missing/null bucket `measurement` retains the older percent/status
+heuristic. Explicit `percent` denotes a percent meter; `status` or an unknown
+explicit measurement must not produce a percent bar, ring, or pace estimate,
+even though legacy numeric `utilization` is still present.
+
+`usage_details` is nullable, additive metadata. Text presentation uses balances
+and status for meaningful reported details, not new quota rings. Unknown amounts
+are not zero, stale observations are not fresh, restricted grants stay separate
+from prepaid funds, and product percentage breakdowns are not summed. Grok reset
+inventory is read-only count/validity/expiry information, never a redeemable CLI
+action. These details do not change authentication or authorize billing changes.
+
+JSON output preserves unknown additive fields for scripts, including
+`usage_details`; consumers should tolerate absent/null sections from older
+servers. See the [API contract](../server/README.md#read-only-usage-details) for
+observation states and Cursor weekly/legacy selection. The Stream Deck client
+ignores detail metadata and continues to use real stable meter IDs; financial
+details do not introduce new key modes.
+
 ## Connections
 
 SSH uses system OpenSSH, trusted host keys, and key/agent authentication. The

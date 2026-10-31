@@ -255,6 +255,78 @@ the TLS proof endpoint require
 `Authorization: Bearer <token>`. The protected SSH socket authenticates the local
 OS account and supplies that token internally; an SSH client does not need it.
 
+## Read-only usage details
+
+The canonical API contract is in `internal/usage/details.go` and `types.go`.
+Each usage entry includes nullable, additive `usage_details`, independent of
+percent meters and reset actions. Its sections are:
+
+- `plan`: reported plan label, unlimited status, and scope.
+- `quotas`: metadata linked to real meters by `bucket_id`, including reported
+  availability and plan context.
+- `finances`: separate monetary ledger items with their own reported periods,
+  included usage, prepaid balance, extra-spend cap, and enabled/top-up status.
+- `credit_grants`: individual grants with reported amounts, product restrictions,
+  expiry, and scope. Restricted grants are never combined with prepaid balance.
+- `reset_inventory`: reported count, nullable currently valid count, and validity/
+  expiry windows. This is inventory, not permission to redeem a reset.
+- `product_usage`: provider-reported percentage breakdown, optionally linked by
+  `parent_bucket_id`. These are not independent quotas and must not be summed
+  into a new usage meter.
+
+Sections (each quota row for `quotas`) carry `state`: `ok`, `stale`, `unknown`,
+or `unsupported`, plus nullable `observed_at`. Stale data retains its original
+observation time; unknown and unsupported do not mean zero. Unknown sections,
+lists, and optional values are `null`; a known empty list is `[]`, and an
+explicit zero remains zero. Monetary `*_minor` fields are exact integer minor
+units with a reported currency (`USD` in these adapters), not provider credits
+or a conversion from credit percentages. Individual grant expiry and unknown
+scope remain separate rather than being inferred or collapsed into a total.
+
+Scope describes only its containing row. `kind` is `unknown`, `personal`, or
+`team`; nullable `shared_pool` records only explicit provider-reported pool
+context. Matching percentages, labels, or `isUnifiedBillingUser` do not prove
+that Cursor Grok Bot and standalone Grok share an account or allowance. Without
+that proof they remain unknown or separate, never joined across providers.
+
+Buckets also include nullable `measurement`. `percent` explicitly identifies a
+percent meter; `status` identifies a status-only row. Missing/null preserves
+older clients' bucket heuristics. Clients must suppress percentage bars and
+pace for `status` or an unrecognized explicit measurement, rather than infer a
+percentage from numeric `utilization`. That numeric field remains for legacy
+compatibility. Provider keys, stable bucket IDs (including `weekly_grok_bot`),
+`current`/`weekly` headers, authentication, and error contracts are unchanged:
+`is_success` follows `error == null`, errors have empty `buckets`, and failed
+ordinary usage has `usage_details: null`.
+
+### Cursor and Grok selection
+
+Cursor uses authoritative current weekly usage when its credential context is
+known to use weekly allowances. Source timestamps accept checked numeric epoch
+milliseconds (including numeric strings) or RFC3339 timestamps; API times are
+normalized to UTC. Older monthly and request-based mappings remain available for
+legacy accounts and payloads. Once weekly usage is known, a failed or missing
+current-period reading must not fall back to a stale monthly zero; it reports
+unavailable usage instead. Clients may retain a labelled stale reading only
+under their existing credential-bound stale-data policy.
+
+Grok's credit-based primary allowance is weekly. Optional plain monetary billing
+is a separate ledger with its own reported period; historical spend is never
+guessed into the active week. Optional enrichment uses bounded requests and
+credential/context-scoped caches, normally refreshed five minutes apart with
+last-good observations retained for at most 15 minutes. Failed enrichment can
+leave details stale or unknown without failing ordinary usage or changing auth.
+This does not make Cursor's authoritative weekly reading optional once that
+context is known.
+
+Grok reset inventory is strictly read-only: count, validity, and expiry only.
+It never populates `rate_limit_reset_credits`, exposes a redemption action, or
+stores or logs redemption handle IDs. Read-only inventory decoder/status tests
+are allowed. Consume methods, HTTP reset routes, and SSH reset forwarding remain
+forbidden to execute even against fakes, and live provider test flags must never
+be enabled for validation. These details introduce no banking or billing
+mutations and no authentication-flow changes.
+
 ## Configuration
 
 Config is applied in this order: defaults, YAML, environment variables, then CLI flags.

@@ -189,7 +189,7 @@ func assertAuthFileEntry(t *testing.T, path string, entryKey string, wantKey str
 
 func newTestProvider(t *testing.T, authPath string, server *grokTestServer) *Provider {
 	t.Helper()
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: authPath,
 		HTTPClient:      server.Client(),
 		BillingURL:      server.URL + "/v1/billing",

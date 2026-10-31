@@ -23,6 +23,8 @@ type Bucket struct {
 	ResetsAt    *time.Time `json:"resets_at"`
 	StatusText  *string    `json:"status_text"`
 	StartsAt    *time.Time `json:"starts_at"`
+	DetailText  *string    `json:"detail_text"`
+	Measurement *string    `json:"measurement"`
 }
 
 // Timing metadata is optional; a malformed start must not hide usable meters.
@@ -30,12 +32,22 @@ func (bucket *Bucket) UnmarshalJSON(data []byte) error {
 	type bucketJSON Bucket
 	var decoded struct {
 		bucketJSON
-		StartsAt json.RawMessage `json:"starts_at"`
+		StartsAt    json.RawMessage `json:"starts_at"`
+		DetailText  json.RawMessage `json:"detail_text"`
+		Measurement json.RawMessage `json:"measurement"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
 	*bucket = Bucket(decoded.bucketJSON)
+	if len(decoded.Measurement) > 0 && string(decoded.Measurement) != "null" {
+		measurement := "unknown"
+		if err := json.Unmarshal(decoded.Measurement, &measurement); err != nil {
+			measurement = "unknown"
+		}
+		bucket.Measurement = &measurement
+	}
+	bucket.DetailText = optionalDetail[string](decoded.DetailText)
 	var start time.Time
 	if json.Unmarshal(decoded.StartsAt, &start) == nil && !start.IsZero() {
 		bucket.StartsAt = &start
@@ -60,6 +72,7 @@ type Provider struct {
 	NeedsReauth           bool                   `json:"needs_reauth"`
 	IsSuccess             bool                   `json:"is_success"`
 	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
+	UsageDetails          *UsageDetails          `json:"usage_details"`
 }
 
 type ProviderAuth struct {
@@ -137,6 +150,7 @@ func decodeUsage(body []byte) ([]Provider, error) {
 		if provider.Error != nil {
 			provider.Buckets = []Bucket{}
 			provider.RateLimitResetCredits = nil
+			provider.UsageDetails = nil
 		}
 		if provider.Error == nil && !hasBuckets {
 			if strings.TrimSpace(provider.PrimaryLabel) == "" {
@@ -249,7 +263,7 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 	if duration <= 0 || remaining > duration {
 		return pace{label: "Pace unavailable"}
 	}
-	if id == "on_demand" && bucket.Utilization <= 0 && bucket.StatusText != nil && *bucket.StatusText != "" && !strings.Contains(*bucket.StatusText, " / ") {
+	if statusOnly(bucket) {
 		return pace{label: "Pace unavailable"}
 	}
 	expected := 100 * float64(duration-remaining) / float64(duration)
@@ -326,6 +340,7 @@ var warningNames = [...]string{"Normal", "Watch", "Warning", "Critical"}
 
 func validateUniqueJSON(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	if err := validateJSONValue(decoder, 0); err != nil {
 		return err
 	}

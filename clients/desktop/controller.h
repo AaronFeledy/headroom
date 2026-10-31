@@ -88,6 +88,9 @@ public:
     Q_INVOKABLE QVariantMap loginCopy(const QVariantMap &provider) const;
     Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {}, bool shareBrowserSignIns = true);
     Q_INVOKABLE QVariantMap concern(const QString &provider, const QVariantMap &bucket) const;
+    Q_INVOKABLE bool isPercent(const QVariantMap &bucket) const;
+    Q_INVOKABLE QStringList detailRows(const QVariantMap &provider) const;
+    Q_INVOKABLE QStringList detailSummary(const QVariantMap &provider) const;
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantMap pacing(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QString countdown(const QString &timestamp) const;

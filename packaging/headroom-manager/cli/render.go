@@ -61,9 +61,19 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		}
 		if len(provider.Buckets) == 0 {
 			output.WriteString("  No usage meters.\n")
-			continue
 		}
 		for _, bucket := range provider.Buckets {
+			if statusOnly(bucket) {
+				fmt.Fprintf(&output, "  %s", terminalText(bucket.Label))
+				if bucket.StatusText != nil {
+					fmt.Fprintf(&output, ": %s", terminalText(*bucket.StatusText))
+				}
+				output.WriteByte('\n')
+				if bucket.DetailText != nil && !hasRichEquivalent(provider.UsageDetails, *bucket.DetailText) {
+					fmt.Fprintf(&output, "    %s\n", terminalText(*bucket.DetailText))
+				}
+				continue
+			}
 			pace := pacing(provider.ProviderName, bucket, now.UTC())
 			key := strings.ToLower(provider.ProviderName) + "\x00" + bucket.ID
 			window := ""
@@ -108,7 +118,11 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 				parts = append(parts, terminalText(*bucket.StatusText))
 			}
 			fmt.Fprintf(&output, "  %18s   %s\n", "", strings.Join(parts, " · "))
+			if bucket.DetailText != nil && !hasRichEquivalent(provider.UsageDetails, *bucket.DetailText) {
+				fmt.Fprintf(&output, "    %s\n", terminalText(*bucket.DetailText))
+			}
 		}
+		output.WriteString(renderDetails(provider.UsageDetails))
 		if credits := provider.RateLimitResetCredits; credits != nil && credits.AvailableCount > 0 {
 			fmt.Fprintf(&output, "  %d banked %s\n", credits.AvailableCount, func() string {
 				if credits.AvailableCount == 1 {
@@ -165,13 +179,18 @@ func terminalText(value string) string {
 		if unicode.IsControl(character) || unicode.In(character, unicode.Cf) {
 			continue
 		}
-		if count >= 120 {
+		if count >= 79 {
 			output.WriteRune('…')
 			break
 		}
 		if whitespace {
 			output.WriteByte(' ')
+			count++
 			whitespace = false
+			if count >= 79 {
+				output.WriteRune('…')
+				break
+			}
 		}
 		output.WriteRune(character)
 		count++

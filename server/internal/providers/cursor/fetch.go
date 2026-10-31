@@ -69,6 +69,7 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 			continue
 		}
 		c.adopt(candidate)
+		c.optionalContext(candidate)
 		data = c.attachAuth(data, candidates, &candidate)
 		data.CredentialEpoch = usage.CredentialEpoch(providerName, candidate.source.Kind, candidate.source.Name, candidate.path, cookieHeader)
 		if err != nil {
@@ -93,10 +94,31 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 			data.Error = &message
 			return data, nil
 		}
+		optional := c.optionalMetadata(ctx, cookieHeader)
+		period := optional.period
+		c.weeklyKnown = c.weeklyKnown || knownUnified(summary) || optional.plan.weekly() || period.weekly(c.discovery.Now())
+		if c.weeklyKnown {
+			if !period.weekly(c.discovery.Now()) || !period.measured() {
+				message := "Cursor current weekly usage is unavailable. Will retry."
+				data.Error = &message
+				data.FetchFailure = optional.periodFailure
+				return data, nil
+			}
+			populatePeriod(&data, period, optional.sand)
+			attachDetails(&data, summary, optional, period, c.discovery.Now())
+			data.Subtitle = summary.MembershipType
+			return data, nil
+		}
 		userInfo := c.fetchUserInfo(ctx, cookieHeader)
 		legacyUsage := c.fetchLegacyUsage(ctx, cookieHeader, userInfo.Sub)
-		sand := c.fetchSandUsage(ctx, cookieHeader)
-		populateUsageData(&data, summary, legacyUsage, sand)
+		if !legacyMeasured(summary, legacyUsage) {
+			message := "Cursor usage metrics are unavailable. Will retry."
+			data.Error = &message
+			return data, nil
+		}
+		populateUsageData(&data, summary, legacyUsage, optional.sand)
+		markLegacyMeasurements(&data, summary)
+		attachDetails(&data, summary, optional, nil, c.discovery.Now())
 		data.Subtitle = summary.MembershipType
 		return data, nil
 	}

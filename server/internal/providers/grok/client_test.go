@@ -89,7 +89,7 @@ func Test_Provider_Fetch_returns_billing_error_when_billing_request_fails(t *tes
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -117,7 +117,7 @@ func Test_Provider_Fetch_ignores_settings_failure_after_billing_succeeds(t *test
 		_, _ = w.Write([]byte(`{"config":{"used":{"val":10},"monthlyLimit":{"val":100},"onDemandCap":{"val":0},"billingPeriodEnd":"2026-08-01T00:00:00Z"}}`))
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL + "/v1/billing", SettingsURL: server.URL + "/v1/settings", TokenURL: server.URL + "/oauth2/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -141,7 +141,7 @@ func Test_Provider_Fetch_returns_context_error_when_request_is_canceled(t *testi
 		<-r.Context().Done()
 	}))
 	t.Cleanup(server.Close)
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL, SettingsURL: server.URL, TokenURL: server.URL})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: server.Client(), BillingURL: server.URL, SettingsURL: server.URL, TokenURL: server.URL})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

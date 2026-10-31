@@ -1,4 +1,5 @@
 #include "usage.h"
+#include "usagedetails.h"
 #include "sshnetwork.h"
 #include <QDateTime>
 #include <QTimeZone>
@@ -9,6 +10,14 @@
 #include <QRegularExpression>
 #include <QUuid>
 #include <cmath>
+
+bool Usage::isPercent(const QVariantMap &bucket) {
+    const auto measurement = bucket.value("measurement");
+    if (measurement.isValid() && !measurement.isNull()) return measurement.toString() == "percent";
+    const QString status = bucket["status_text"].toString();
+    return !(bucket["id"] == "on_demand" && bucket["utilization"].toDouble() <= 0
+        && !status.isEmpty() && !status.contains(" / "));
+}
 
 QString Usage::displayName(const QString &provider) {
     return provider.compare("Codex", Qt::CaseInsensitive) == 0 ? QString("ChatGPT") : provider;
@@ -85,6 +94,7 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;
+        p["usage_details"] = p["error"].isNull() ? normalizeDetails(p["usage_details"]) : QJsonValue(QJsonValue::Null);
         // Optional per-entry fetch metadata. Older servers omit it; anything
         // malformed or inconsistent with the frozen error contract is dropped
         // so it can never enable a stale reading for that entry.
@@ -160,6 +170,9 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 b["starts_at"] = QJsonValue::Null;
             if (!b["detail_text"].isString() || b["detail_text"].toString().size() > 4096)
                 b["detail_text"] = QJsonValue::Null;
+            if (!b["measurement"].isNull() && !b["measurement"].isUndefined()
+                && b["measurement"] != "percent" && b["measurement"] != "status")
+                b["measurement"] = "unknown";
             buckets[i] = b;
         }
         p["buckets"] = buckets;
@@ -237,6 +250,7 @@ QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
 }
 
 QVariantList Usage::notches(const QString &provider, const QVariantMap &bucket) {
+    if (!isPercent(bucket)) return {};
     const auto window = period(provider, bucket);
     const auto duration = window["seconds"].toLongLong(), step = window["step"].toLongLong();
     QVariantList result;
@@ -253,17 +267,14 @@ QVariantMap Usage::pacing(const QString &provider, const QVariantMap &bucket, co
     auto unavailable = [](const QString &reason) {
         return QVariantMap{{"available", false}, {"label", "Pace unavailable"}, {"detail", reason}};
     };
+    if (!isPercent(bucket)) return unavailable("This row does not report a measured usage percentage.");
     const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
     if (!reset.isValid()) return unavailable("This meter has no reset time, so its pacing cannot be estimated.");
     if (reset <= now) return unavailable("The reset time has passed. Waiting for the backend's next usage window.");
     const auto periodInfo = period(provider, bucket);
     const auto duration = periodInfo["seconds"].toLongLong();
     const auto window = periodInfo["label"].toString();
-    const auto id = bucket["id"].toString().toLower();
     if (duration <= 0) return unavailable("This meter has no known usage-window length. A reset time alone cannot establish pacing.");
-    const QString status = bucket["status_text"].toString();
-    if (id == "on_demand" && bucket["utilization"].toDouble() <= 0 && !status.isEmpty() && !status.contains(" / "))
-        return unavailable("This meter reports billing status without a measured usage percentage.");
     const auto remaining = now.secsTo(reset);
     if (remaining > duration) return unavailable("The reset is outside the expected usage window; no pacing estimate is shown.");
     const double expected = 100.0 * (duration - remaining) / duration;
@@ -292,6 +303,9 @@ QVariantMap Usage::pacing(const QString &provider, const QVariantMap &bucket, co
 }
 
 QVariantMap Usage::concern(const QString &provider, const QVariantMap &bucket, const QDateTime &now) {
+    if (!isPercent(bucket)) return {{"severity", 0}, {"color", warningColor(WarningLevel::Normal)},
+        {"level", warningName(WarningLevel::Normal)}, {"pressure", 0}, {"available", false},
+        {"detail", "This row does not report a measured usage percentage."}};
     const auto pace = pacing(provider, bucket, now);
     const double used = qBound(0.0, bucket["utilization"].toDouble(), 100.0);
     const double remaining = 100.0 - used;

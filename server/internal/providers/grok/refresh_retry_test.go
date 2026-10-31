@@ -73,7 +73,7 @@ func Test_Provider_requestRefresh_does_not_retry_post_write_transport_error(t *t
 	})
 	transport := &http.Transport{}
 	t.Cleanup(transport.CloseIdleConnections)
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: writeAuthFile(t, `{}`),
 		HTTPClient:      &http.Client{Transport: transport},
 		TokenURL:        "http://" + listener.Addr().String() + "/token",
@@ -115,7 +115,7 @@ func Test_Provider_requestRefresh_retries_standard_transport_failure_before_writ
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
-	provider, err := NewProvider(Options{
+	provider, err := newIsolatedProvider(Options{
 		CredentialsPath: writeAuthFile(t, `{}`),
 		HTTPClient:      &http.Client{Transport: transport},
 		TokenURL:        server.URL,
@@ -151,7 +151,7 @@ func Test_Provider_requestRefresh_does_not_retry_response_body_read_error(t *tes
 			Header:     make(http.Header),
 		}, nil
 	})}
-	provider, err := NewProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: client, TokenURL: "https://example.test/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: client, TokenURL: "https://example.test/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -187,7 +187,7 @@ func Test_Provider_refresh_persists_rotated_credentials_when_complete_body_close
 			Header:     make(http.Header),
 		}, nil
 	})}
-	provider, err := NewProvider(Options{CredentialsPath: authPath, HTTPClient: client, TokenURL: "https://example.test/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: authPath, HTTPClient: client, TokenURL: "https://example.test/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -240,7 +240,7 @@ func Test_Provider_requestRefresh_returns_cancellation_during_status_retry_backo
 			Header:     make(http.Header),
 		}, nil
 	})}
-	provider, err := NewProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: client, TokenURL: "https://example.test/token"})
+	provider, err := newIsolatedProvider(Options{CredentialsPath: writeAuthFile(t, `{}`), HTTPClient: client, TokenURL: "https://example.test/token"})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

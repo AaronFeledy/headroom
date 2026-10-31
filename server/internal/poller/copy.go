@@ -23,6 +23,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 				StatusText:  copyString(bucket.StatusText),
 				StartsAt:    copyTime(bucket.StartsAt),
 				DetailText:  copyString(bucket.DetailText),
+				Measurement: bucket.Measurement,
 			}
 		}
 	}
@@ -45,6 +46,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		Error:                 copyString(data.Error),
 		NeedsReauth:           data.NeedsReauth,
 		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
+		UsageDetails:          data.UsageDetails.Clone(),
 		ProviderAccountID:     data.ProviderAccountID,
 	}
 }

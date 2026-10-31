@@ -72,7 +72,7 @@ endif()
 
 qt_add_library(headroom-core STATIC
     controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp resetaction.cpp resetpolicy.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
-    settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp)
+    settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp usagedetails.cpp usagedetailssummary.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(headroom-core PUBLIC HEADROOM_VERSION="${HEADROOM_VERSION}")
@@ -132,6 +132,7 @@ endif()
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
+    qml/UsageDetails.qml
     qml/Theme.qml qml/NotificationHighlight.qml qml/Main.qml qml/UpdateIndicator.qml qml/ActionButton.qml qml/ProviderCard.qml qml/ResetOptions.qml qml/Meter.qml qml/MeterToolTip.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
     RESOURCES headroom.svg qml/loading.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
@@ -199,7 +200,7 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
     set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
-    foreach(feature notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance login)
+    foreach(feature usagedetails notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance login)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)
@@ -207,6 +208,7 @@ if(BUILD_TESTING)
             -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-${feature}-tests.xml,junitxml")
         set_tests_properties(headroom-${feature}-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endforeach()
+    target_sources(headroom-usagedetails-tests PRIVATE tests/richusagefixture.cpp)
     target_compile_definitions(headroom-appinfo-tests PRIVATE SSH_FIXTURE_PATH="$<TARGET_FILE:headroom-ssh-fixture>")
     add_dependencies(headroom-appinfo-tests headroom-ssh-fixture)
     qt_add_executable(headroom-update-fixture tests/update_fixture.cpp)
@@ -250,7 +252,7 @@ if(BUILD_TESTING)
             -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/${target}.xml,junitxml")
         set_tests_properties(${target} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endforeach()
-    qt_add_executable(headroom-ui-tests tests/test_ui.cpp)
+    qt_add_executable(headroom-ui-tests tests/test_ui.cpp tests/richusagefixture.cpp)
     set_target_properties(headroom-ui-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-ui-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets Qt6::QuickControls2)
     target_compile_definitions(headroom-ui-tests PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

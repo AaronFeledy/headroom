@@ -16,7 +16,7 @@ func TestBillingMetadataUsesCurrentPeriodAndOptionalDetails(t *testing.T) {
 	if b.StartsAt == nil || b.ResetsAt.Sub(*b.StartsAt).Hours() != 7*24 || b.Utilization != 40 {
 		t.Fatalf("bad window: %#v", b)
 	}
-	for _, want := range []string{"Prepaid balance: $12.50", "Top-up method: saved payment method", "Shared usage pool", "API reported usage: 30.0%", "Web reported usage: 10.0%"} {
+	for _, want := range []string{"Prepaid balance: $12.50", "Top-up method: saved payment method", "Unified billing reported by Grok", "API reported usage: 30.0%", "Web reported usage: 10.0%"} {
 		if b.DetailText == nil || !strings.Contains(*b.DetailText, want) {
 			t.Errorf("missing %q", want)
 		}

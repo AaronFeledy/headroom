@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -21,7 +20,7 @@ type billingResponse struct {
 
 type billingConfig struct {
 	BillingPeriodStart   string                `json:"billingPeriodStart"`
-	PrepaidBalance       *billingValue         `json:"prepaidBalance"`
+	PrepaidBalance       *minorValue           `json:"prepaidBalance"`
 	TopUpMethod          string                `json:"topUpMethod"`
 	IsUnifiedBillingUser *bool                 `json:"isUnifiedBillingUser"`
 	ProductUsage         []billingProductUsage `json:"productUsage"`
@@ -36,6 +35,7 @@ type billingConfig struct {
 
 type billingValue struct {
 	Value *float64 `json:"val"`
+	raw   *minorValue
 }
 
 type billingPeriodType string
@@ -148,6 +148,7 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 		data.SecondaryLabel = secondaryLabel
 		data.ShowSecondary = showSecondary
 	}
+	attachBillingDetails(decoded, data, now)
 	return nil
 }
 
@@ -202,18 +203,6 @@ func wrapIfErr(message string, err error) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
-func formatWholeNumber(value float64) string {
-	raw := fmt.Sprintf("%.0f", value)
-	start := 0
-	if raw[0] == '-' {
-		start = 1
-	}
-	for i := len(raw) - 3; i > start; i -= 3 {
-		raw = raw[:i] + "," + raw[i:]
-	}
-	return raw
-}
-
 // onDemandMeter builds the pay-as-you-go meter. enabled is nil for legacy
 // responses that omit onDemandEnabled (a positive cap then implies enabled);
 // used/capacity are nil when their scalar was omitted. Utilization is set only
@@ -238,8 +227,9 @@ func onDemandMeter(enabled *bool, used *float64, capacity *float64) (usage.Bucke
 		return usage.Bucket{}, false
 	}
 	status := onDemandStatusText(used, usedVal, capVal)
-	bucket := usage.Bucket{ID: usage.BucketOnDemand, Label: "Pay as you go", StatusText: &status}
+	bucket := usage.Bucket{ID: usage.BucketOnDemand, Label: "Pay as you go", StatusText: &status, Measurement: usage.MeasurementStatus}
 	if used != nil && capVal > 0 {
+		bucket.Measurement = usage.MeasurementPercent
 		bucket.Utilization = math.Max(0, math.Min(100, usedVal/capVal*100))
 	}
 	return bucket, true
@@ -273,51 +263,4 @@ func billingStart(value string, end *time.Time) *time.Time {
 type billingProductUsage struct {
 	Product      string   `json:"product"`
 	UsagePercent *float64 `json:"usagePercent"`
-}
-
-func billingDetails(config billingConfig) *string {
-	lines := []string{}
-	if config.PrepaidBalance != nil {
-		balance := 0.0 // An empty Cent object represents zero in protobuf JSON.
-		if config.PrepaidBalance.Value != nil {
-			balance = *config.PrepaidBalance.Value
-		}
-		if !math.IsNaN(balance) && !math.IsInf(balance, 0) && balance >= 0 {
-			lines = append(lines, fmt.Sprintf("Prepaid balance: $%.2f", balance/100))
-		}
-	}
-	if config.TopUpMethod == "TOP_UP_METHOD_SAVED_PAYMENT_METHOD" {
-		lines = append(lines, "Top-up method: saved payment method")
-	}
-	if config.IsUnifiedBillingUser != nil && *config.IsUnifiedBillingUser {
-		lines = append(lines, "Shared usage pool across Grok products")
-	}
-	seen := map[string]bool{}
-	for _, product := range config.ProductUsage {
-		name := strings.TrimSpace(product.Product)
-		// Product identifiers must remain short plain labels in a tooltip.
-		validName := name != "" && len(name) <= 40
-		for _, ch := range name {
-			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == ' ' || ch == '_' || ch == '-') {
-				validName = false
-			}
-		}
-		percent := product.UsagePercent
-		if !validName || seen[name] || percent == nil || math.IsNaN(*percent) || math.IsInf(*percent, 0) || *percent < 0 || *percent > 100 {
-			continue
-		}
-		if len(seen) == 12 {
-			break
-		}
-		seen[name] = true
-		if name == "Api" {
-			name = "API"
-		}
-		lines = append(lines, fmt.Sprintf("%s reported usage: %.1f%%", name, *percent))
-	}
-	if len(lines) == 0 {
-		return nil
-	}
-	detail := strings.Join(lines, "\n")
-	return &detail
 }
