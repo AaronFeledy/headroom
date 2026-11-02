@@ -241,6 +241,11 @@ larger of the configured interval or 60 seconds and doubles up to the larger of
 that interval or five minutes. OAuth refresh, credential, parsing, and trust
 failures do not receive accelerated retries.
 
+Claude's optional banked-status and profile GETs share the provider cooldown.
+An auxiliary 429 preserves successful usage and authentication while scheduling
+both ordinary and auxiliary reads after the cooldown. Failed profile discovery
+also backs off from one to five minutes within the same credential context.
+
 Polled entries optionally include `fetch_status`: `fetched_at` is the actual
 attempt-completion UTC RFC3339Nano timestamp; `failure_kind` is `null` on success
 or `transient`, `rate_limited`, `auth`, or `other` on failure. `credential_epoch`
@@ -249,6 +254,21 @@ used by that attempt, changing on credential rotation or server restart. Unknown
 or mixed credential contexts use `null`; clients must not associate older meters
 with them. Failure responses still have `is_success: false`, empty `buckets`, and
 null `rate_limit_reset_credits`.
+
+`fetch_status.diagnostics` optionally describes the last attempt: nullable
+`operation` (`usage`, `reset_status`, `profile`), `http_status`, `retry_after`,
+`cooldown_until`, and `cooldown_source` (`retry_after`, `backoff`), plus
+`next_attempt_at`. Times are UTC RFC3339Nano. Auxiliary throttling can appear
+here while `failure_kind` remains null and `is_success` stays true. Older clients
+may ignore this additive object. No URL, response body, account identifier,
+credential, or raw Retry-After header is included.
+
+The server records one `provider fetch` event per actual attempt, with PID,
+provider, `usage_success`, outcome, and this bounded scheduling metadata. It
+does not log cache reads as new provider attempts. On a current-user systemd
+installation, inspect these events with `journalctl --user -u headroom.service`;
+desktop Diagnostics shows the same safe attempt metadata and includes version,
+PID, and selected connection mode in copied logs.
 
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, public HTTP endpoints other than
 the TLS proof endpoint require

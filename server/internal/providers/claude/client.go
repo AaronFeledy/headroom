@@ -153,12 +153,16 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		if statusErr == nil {
 			authExpired = false
 			c.attachResetCredits(ctx, creds, &data)
+			failure = data.FetchFailure
 			// A canceled bank attachment has no trustworthy reset binding.
 			// Let the poller retain last-good display data as a failed fetch so
 			// armed actions pause rather than treating missing binding as success.
 			if err := ctx.Err(); err != nil {
-				failure = usage.TransportFailure(err)
-				return data, failure
+				transportFailure := usage.TransportFailure(err)
+				if failure == nil {
+					failure = transportFailure
+				}
+				return data, transportFailure
 			}
 			return data, nil
 		}

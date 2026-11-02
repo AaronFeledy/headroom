@@ -110,6 +110,7 @@ protected:
 private:
     struct RetainedReading {
         QVariantList buckets;
+        QVariantMap pacing; // Last successfully displayed snapshot's per-meter estimates.
         QString fetchedAt, epoch, source;
         qint64 observedAt = 0;      // desktop time this reading was first seen
         quint64 snapshotSerial = 0; // last accepted snapshot in which the provider succeeded
@@ -162,12 +163,14 @@ private:
     int m_interval = 60, m_retryAttempt = 0;
     QString m_errorKind;
     QVariantList m_diagnostics;
+    QHash<QString, QString> m_diagnosticAttempts;
+    void recordProviderDiagnostics(const QVariantList &providers);
     bool m_notifications = true, m_loading = false;
     bool m_startPolling = true;
     bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
     QVariantList m_providers;
-    // Session-only presentation cache: successful buckets only, never action metadata.
+    // Session-only presentation cache: successful buckets and pacing, never action metadata.
     QHash<QString, RetainedReading> m_retained;
     QHash<QString, qint64> m_transientSince;
     QSet<QString> m_maskedProviders; // raw entries masked by a backend failure, not by the server

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -15,11 +16,13 @@ import (
 )
 
 type bankCache struct {
-	token       string
-	status      *bankStatus
-	attemptedAt time.Time
-	goodAt      time.Time
-	accountID   string
+	token        string
+	status       *bankStatus
+	attemptedAt  time.Time
+	goodAt       time.Time
+	accountID    string
+	profileNext  time.Time
+	profileDelay time.Duration
 }
 
 func applyBankHeaders(req *http.Request, token string) {
@@ -43,6 +46,9 @@ func (c *Client) readBankJSON(ctx context.Context, endpoint, token string) ([]by
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, usage.HTTPFailure(resp)
+		}
 		return nil, errResetUnavailable
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResetResponseBytes+1))
@@ -62,6 +68,10 @@ func (c *Client) selectBankToken(token string) {
 func (c *Client) readBankStatus(ctx context.Context, token string) (*bankStatus, error) {
 	body, err := c.readBankJSON(ctx, c.usageURL+"?cedar_ember=1&skip_spend=1", token)
 	if err != nil {
+		var failure *usage.FetchFailure
+		if errors.As(err, &failure) {
+			failure.Operation = usage.OperationResetStatus
+		}
 		return nil, err
 	}
 	status := parseBankStatus(body)
@@ -73,8 +83,32 @@ func (c *Client) bankAccount(ctx context.Context, token string) (string, error) 
 	if c.bank.accountID != "" {
 		return c.bank.accountID, nil
 	}
+	now := time.Now()
+	if now.Before(c.bank.profileNext) {
+		return "", errResetUnavailable
+	}
+	// Failed optional account discovery backs off within this credential epoch.
+	failed := true
+	var retryAfter time.Time
+	defer func() {
+		if failed {
+			c.bank.profileDelay = min(5*time.Minute, max(time.Minute, c.bank.profileDelay*2))
+			c.bank.profileNext = time.Now().Add(c.bank.profileDelay)
+			if retryAfter.After(c.bank.profileNext) {
+				c.bank.profileNext = retryAfter
+			}
+		} else {
+			c.bank.profileDelay = 0
+			c.bank.profileNext = time.Time{}
+		}
+	}()
 	body, err := c.readBankJSON(ctx, c.apiBaseURL+"/api/oauth/profile", token)
 	if err != nil {
+		var failure *usage.FetchFailure
+		if errors.As(err, &failure) {
+			failure.Operation = usage.OperationProfile
+			retryAfter = failure.RetryAfter
+		}
 		return "", err
 	}
 	var profile struct {
@@ -89,6 +123,7 @@ func (c *Client) bankAccount(ctx context.Context, token string) (string, error) 
 		return "", errResetUnavailable
 	}
 	c.bank.accountID = strings.ToLower(profile.Organization.UUID + "/" + profile.Account.UUID)
+	failed = false
 	return c.bank.accountID, nil
 }
 
@@ -145,12 +180,25 @@ func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, dat
 		c.bank.attemptedAt = now
 		status, err := c.readBankStatus(ctx, creds.accessToken)
 		fresh = err == nil && status != nil
+		var failure *usage.FetchFailure
+		if errors.As(err, &failure) {
+			data.FetchFailure = failure
+		}
 	}
 	if time.Since(c.bank.goodAt) <= 15*time.Minute {
 		data.RateLimitResetCredits = c.bank.status.credits(time.Now())
 	}
 	if credits := data.RateLimitResetCredits; credits != nil {
-		if account, err := c.bankAccount(ctx, creds.accessToken); err == nil {
+		// Do not issue another HTTP request after an auxiliary 429 in this fetch.
+		if data.FetchFailure != nil && c.bank.accountID == "" {
+			return
+		}
+		account, err := c.bankAccount(ctx, creds.accessToken)
+		var failure *usage.FetchFailure
+		if errors.As(err, &failure) {
+			data.FetchFailure = failure
+		}
+		if err == nil {
 			data.ProviderAccountID = account
 			credits.AccountFingerprint = accountFingerprint(account)
 			if fingerprint := credits.AccountFingerprint; fingerprint != nil {

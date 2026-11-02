@@ -133,6 +133,62 @@ private slots:
         read(QJsonDocument(legacy).toJson(QJsonDocument::Compact));
         QVERIFY(!shown("Claude").contains("stale")); QVERIFY(!shown("Claude")["is_success"].toBool());
     }
+    void stalePacingStaysFrozenAcrossResetAndRecovers() {
+        QTemporaryDir dir;
+        class SnapshotController final : public Controller {
+        public:
+            using Controller::Controller;
+            using Controller::acceptSnapshot;
+            void refresh() override {}
+        };
+        SnapshotController controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials(), {}, false);
+        const auto now = QDateTime::currentDateTimeUtc();
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshotWithFetchStatus(
+            now.toString(Qt::ISODateWithMs), "epoch-a")).array()[0].toObject();
+        QJsonObject session{{"id", "session"}, {"label", "Session"}, {"utilization", 25},
+            {"starts_at", now.addSecs(2 - 5 * 3600).toString(Qt::ISODateWithMs)},
+            {"resets_at", now.addSecs(2).toString(Qt::ISODateWithMs)}};
+        QJsonObject statusRow{{"id", "credits"}, {"label", "Credits"}, {"utilization", 50},
+            {"measurement", "status"}, {"status_text", "2 credits"}, {"resets_at", session["resets_at"]}};
+        provider["buckets"] = QJsonArray{session, statusRow};
+        const auto read = [&](const QJsonObject &input) {
+            QVariantList parsed;
+            QVERIFY(Usage::parse(QJsonDocument(QJsonArray{input}).toJson(), parsed));
+            controller.acceptSnapshot(parsed);
+        };
+        const auto shown = [&] { return controller.displayProviders().first().toMap(); };
+        read(provider);
+        QVERIFY(!shown().contains("last_known_pacing"));
+        QVERIFY(controller.pacing("Claude", session.toVariantMap())["available"].toBool());
+        // The old scheduled reset passes before the first provider error arrives.
+        QTest::qWait(2100);
+        QVERIFY(!controller.pacing("Claude", session.toVariantMap())["available"].toBool());
+        auto failed = provider;
+        failed["is_success"] = false; failed["error"] = "Rate limited. Will retry."; failed["buckets"] = QJsonArray{};
+        auto fetch = failed["fetch_status"].toObject(); fetch["failure_kind"] = "rate_limited";
+        fetch["fetched_at"] = now.addSecs(3).toString(Qt::ISODateWithMs); failed["fetch_status"] = fetch;
+        read(failed);
+        QVERIFY(shown()["stale"].toBool());
+        const auto retained = shown()["last_known_pacing"].toMap();
+        const auto frozen = retained["session"].toMap();
+        QVERIFY(frozen["available"].toBool()); QVERIFY(frozen["expected"].toDouble() < 100);
+        QVERIFY(!frozen["detail"].toString().isEmpty());
+        QVERIFY(!retained["credits"].toMap()["available"].toBool());
+        fetch["failure_kind"] = "transient"; fetch["fetched_at"] = now.addSecs(4).toString(Qt::ISODateWithMs);
+        failed["fetch_status"] = fetch; read(failed);
+        QCOMPARE(shown()["last_known_pacing"].toMap(), retained);
+        QVERIFY(!controller.providers().first().toMap().contains("last_known_pacing"));
+        QVERIFY(controller.providers().first().toMap()["buckets"].toList().isEmpty());
+        // Recovery replaces both usage and the saved pace; it does not revive the old window.
+        session["resets_at"] = QDateTime::currentDateTimeUtc().addSecs(3600).toString(Qt::ISODateWithMs);
+        session["starts_at"] = QDateTime::currentDateTimeUtc().addSecs(-4 * 3600).toString(Qt::ISODateWithMs);
+        session["utilization"] = 75; provider["buckets"] = QJsonArray{session}; read(provider);
+        QVERIFY(!shown().contains("last_known_pacing"));
+        read(failed);
+        const auto updated = shown()["last_known_pacing"].toMap()["session"].toMap();
+        QVERIFY(updated["available"].toBool());
+        QVERIFY(updated["expected"].toDouble() != frozen["expected"].toDouble());
+    }
     void credentialRecoveryUpdatesRetainedReading() {
         QTemporaryDir dir;
         const auto stamp = [](int offset) { return QDateTime::currentDateTimeUtc().addSecs(offset).toString(Qt::ISODateWithMs); };

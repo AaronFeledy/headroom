@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -17,11 +18,13 @@ type Entry struct {
 }
 
 type Options struct {
+	Logger    *slog.Logger
 	Clock     Clock
 	NewTicker func(time.Duration) Ticker
 }
 
 type Poller struct {
+	logger       *slog.Logger
 	clock        Clock
 	newTicker    func(time.Duration) Ticker
 	mu           sync.RWMutex
@@ -59,7 +62,7 @@ func New(opts Options) *Poller {
 	if newTicker == nil {
 		newTicker = newRealTicker
 	}
-	return &Poller{clock: clock, newTicker: newTicker, providers: map[string]*providerState{}}
+	return &Poller{logger: opts.Logger, clock: clock, newTicker: newTicker, providers: map[string]*providerState{}}
 }
 
 func (p *Poller) Register(provider usage.Provider, enabled bool) error {

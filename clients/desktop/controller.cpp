@@ -9,6 +9,7 @@
 #include <QHostInfo>
 #include <QUrl>
 #include <utility>
+#include <cmath>
 
 namespace {
 // Network-only retry schedule; token, API, and certificate failures keep the slower backoff.
@@ -202,9 +203,12 @@ void Controller::log(const QString &category, const QString &message) {
     while (m_diagnostics.size() > 500) m_diagnostics.removeFirst();
     emit diagnosticsChanged();
 }
-void Controller::clearDiagnostics() { m_diagnostics.clear(); emit diagnosticsChanged(); }
+void Controller::clearDiagnostics() { m_diagnostics.clear(); m_diagnosticAttempts.clear(); emit diagnosticsChanged(); }
 QString Controller::diagnosticText() const {
+    if (m_diagnostics.isEmpty()) return {};
     QStringList lines;
+    lines.append(QString("Headroom %1; desktop PID %2; connection %3; cache refresh %4s; times UTC")
+        .arg(QCoreApplication::applicationVersion()).arg(QCoreApplication::applicationPid()).arg(m_mode).arg(m_interval));
     for (const auto &item : m_diagnostics) {
         const auto row = item.toMap();
         lines.append(row["time"].toString() + " [" + row["category"].toString() + "] " + row["message"].toString());
@@ -333,7 +337,42 @@ void Controller::requestUsage() {
         m_proofAttempted = false;
     });
 }
+void Controller::recordProviderDiagnostics(const QVariantList &providers) {
+    const auto safeTime = [](const QVariant &value) {
+        const QString text = value.toString();
+        if (text.size() > 64) return QString();
+        const auto time = QDateTime::fromString(text, Qt::ISODateWithMs);
+        return time.isValid() ? time.toUTC().toString(Qt::ISODateWithMs) : QString();
+    };
+    for (const auto &value : providers) {
+        const auto provider = value.toMap();
+        const QString name = provider["provider_name"].toString();
+        if (!QStringList{"Claude", "Codex", "Cursor", "Grok"}.contains(name)) continue;
+        const auto status = provider["fetch_status"].toMap();
+        const QString fetched = safeTime(status["fetched_at"]);
+        if (fetched.isEmpty() || m_diagnosticAttempts.value(name) == fetched) continue;
+        m_diagnosticAttempts.insert(name, fetched);
+        QStringList parts{QString("%1: fetched %2").arg(Usage::displayName(name), fetched),
+            provider["is_success"].toBool() ? QStringLiteral("usage ok") : QStringLiteral("usage failed")};
+        const QString kind = status["failure_kind"].toString();
+        if (QStringList{"transient", "rate_limited", "auth", "other"}.contains(kind)) parts.append("failure " + kind);
+        const auto d = status["diagnostics"].toMap();
+        const QString operation = d["operation"].toString();
+        if (QStringList{"usage", "reset_status", "profile"}.contains(operation)) parts.append("request " + operation);
+        const double code = d["http_status"].toDouble();
+        if (std::isfinite(code) && code >= 100 && code <= 599 && std::floor(code) == code) parts.append(QString("HTTP %1").arg(int(code)));
+        for (const auto &field : {"retry_after", "next_attempt_at", "cooldown_until"}) {
+            const QString time = safeTime(d[field]);
+            if (!time.isEmpty()) parts.append(QString::fromLatin1(field) + " " + time);
+        }
+        const QString source = d["cooldown_source"].toString();
+        if (QStringList{"retry_after", "backoff"}.contains(source)) parts.append("cooldown source " + source);
+        log("Provider", parts.join("; "));
+    }
+}
+
 void Controller::acceptSnapshot(const QVariantList &providers) {
+    recordProviderDiagnostics(providers);
     ++m_snapshotSerial;
     m_backendOutage = false;
     retainReadings(providers, true);
