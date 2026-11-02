@@ -212,57 +212,94 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 18; topMargin: card.compact ? 14 : 18 }
         columns: card.stacked ? 1 : 2
         columnSpacing: 20; rowSpacing: card.compact ? 14 : 20
-        RowLayout {
-            id: providerHeader
-            objectName: "providerHeader_" + card.name
+        GridLayout {
+            id: identityGroup
+            objectName: "providerIdentityGroup_" + card.name
             Layout.fillWidth: card.stacked
             Layout.preferredWidth: card.stacked ? -1 : 138
             Layout.maximumWidth: card.stacked ? Infinity : 138
+            Layout.minimumWidth: 0
             Layout.alignment: Qt.AlignTop
-            spacing: 10
-            activeFocusOnTab: true
-            Rectangle {
-                width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
-                Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
-            }
-            ColumnLayout {
-                Layout.fillWidth: true; spacing: 4
-                Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
-                Item {
-                    Layout.fillWidth: true
-                    implicitHeight: headerMetadata.implicitHeight
-                        + (headerCounterSlot.visible ? 4 + headerCounterSlot.implicitHeight : 0)
-                    GridLayout {
-                        id: headerMetadata
-                        width: parent.width
-                        columns: card.compact ? 2 : 1
-                        columnSpacing: 8; rowSpacing: 4
-                        Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                        Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
-                    }
+            // The header group is full-width above meters and narrow beside
+            // them. Reflow its contents according to its own available width.
+            readonly property real identityWidth: 160
+            readonly property bool inlineNotice: staleNotice.visible
+                && width >= identityWidth + columnSpacing + 160
+            columns: inlineNotice ? 2 : 1
+            columnSpacing: 14; rowSpacing: 10
+            RowLayout {
+                id: providerHeader
+                objectName: "providerHeader_" + card.name
+                Layout.fillWidth: !identityGroup.inlineNotice
+                Layout.preferredWidth: identityGroup.inlineNotice ? identityGroup.identityWidth : -1
+                Layout.maximumWidth: identityGroup.inlineNotice ? identityGroup.identityWidth : Infinity
+                Layout.minimumWidth: 0
+                Layout.alignment: Qt.AlignTop
+                spacing: 10
+                activeFocusOnTab: true
+                Rectangle {
+                    width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
+                    Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 4
+                    Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
                     Item {
-                        id: headerCounterSlot
-                        visible: (card.hasBankedResets || card.managingReset) && (!card.weeklyBucket || card.failed)
-                        implicitHeight: headerCounterOverlay.implicitHeight
-                    }
-                    Loader {
-                        id: headerCounterOverlay
-                        sourceComponent: !card.weeklyBucket || card.failed ? bankedResetsFooter : null
-                        visible: (card.hasResetCount || card.managingReset) && (!card.weeklyBucket || card.failed)
-                        anchors.top: headerMetadata.bottom; anchors.topMargin: 4
-                        width: parent.width
+                        Layout.fillWidth: true
+                        implicitHeight: headerMetadata.implicitHeight
+                            + (headerCounterSlot.visible ? 4 + headerCounterSlot.implicitHeight : 0)
+                        GridLayout {
+                            id: headerMetadata
+                            width: parent.width
+                            columns: providerHeader.width >= 260 ? 2 : 1
+                            columnSpacing: 8; rowSpacing: 4
+                            Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
+                        }
+                        Item {
+                            id: headerCounterSlot
+                            visible: (card.hasBankedResets || card.managingReset) && (!card.weeklyBucket || card.failed)
+                            implicitHeight: headerCounterOverlay.implicitHeight
+                        }
+                        Loader {
+                            id: headerCounterOverlay
+                            sourceComponent: !card.weeklyBucket || card.failed ? bankedResetsFooter : null
+                            visible: (card.hasResetCount || card.managingReset) && (!card.weeklyBucket || card.failed)
+                            anchors.top: headerMetadata.bottom; anchors.topMargin: 4
+                            width: parent.width
+                        }
                     }
                 }
+                ContextMenu.menu: orderMenu
+                Menu {
+                    id: orderMenu; objectName: "providerMenu_" + card.name
+                    palette.window: Theme.surface; palette.windowText: Theme.foreground
+                    palette.light: Theme.selection; palette.midlight: Theme.selection
+                    palette.mid: Theme.selection; palette.dark: Theme.comment
+                    separatorsCollapsible: true
+                    onClosed: card.Window.window.restoreEscapeFocus()
+                    MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
+                }
             }
-            ContextMenu.menu: orderMenu
-            Menu {
-                id: orderMenu; objectName: "providerMenu_" + card.name
-                palette.window: Theme.surface; palette.windowText: Theme.foreground
-                palette.light: Theme.selection; palette.midlight: Theme.selection
-                palette.mid: Theme.selection; palette.dark: Theme.comment
-                separatorsCollapsible: true
-                onClosed: card.Window.window.restoreEscapeFocus()
-                MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
+            ColumnLayout {
+                id: staleNotice
+                objectName: "providerStaleNotice_" + card.name
+                visible: card.stale
+                Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignTop; spacing: 3
+                Text {
+                    objectName: "providerStaleAge_" + card.name
+                    textFormat: Text.PlainText
+                    text: "Last successful reading " + card.readingAge
+                    color: Theme.orange; font.pixelSize: 11; font.weight: Font.Medium
+                    Layout.fillWidth: true; wrapMode: Text.Wrap
+                }
+                Text {
+                    objectName: "providerStaleError_" + card.name
+                    textFormat: Text.PlainText
+                    text: card.provider.error || "The provider could not return usage."
+                    color: Theme.muted; font.pixelSize: 11
+                    Layout.fillWidth: true; wrapMode: Text.Wrap
+                }
             }
         }
         ColumnLayout {
@@ -307,25 +344,6 @@ Rectangle {
                 Layout.fillWidth: true
                 provider: card.provider
                 clock: card.clock
-            }
-            ColumnLayout {
-                objectName: "providerStaleNotice_" + card.name
-                visible: card.stale
-                Layout.fillWidth: true; spacing: 3
-                Text {
-                    objectName: "providerStaleAge_" + card.name
-                    textFormat: Text.PlainText
-                    text: "Last successful reading " + card.readingAge
-                    color: Theme.orange; font.pixelSize: 11; font.weight: Font.Medium
-                    Layout.fillWidth: true; wrapMode: Text.WordWrap
-                }
-                Text {
-                    objectName: "providerStaleError_" + card.name
-                    textFormat: Text.PlainText
-                    text: card.provider.error || "The provider could not return usage."
-                    color: Theme.muted; font.pixelSize: 11
-                    Layout.fillWidth: true; wrapMode: Text.WordWrap
-                }
             }
         }
         ColumnLayout {
