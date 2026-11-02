@@ -222,10 +222,16 @@ Startup, reconnection, settings changes, and update checks keep using plain
 cache reads.
 
 When a provider fails only temporarily, its card keeps the last successful
-meters as a clearly labelled stale reading: muted percentages and bars, no pace
-marker, pacing text, or warning labels, scheduled reset
-times instead of live countdowns, and a **Last successful reading …** line with
-the current error. New reset spending and automatic authorization stay disabled;
+meters as a clearly labelled stale reading: muted percentages and bars, the last
+known pace text and marker in muted colors, no live warning labels, scheduled
+reset times instead of live countdowns, and a **Last successful reading …** line
+with the current error. These messages share the provider identity group: they
+sit beside the logo/name/plan when that group has room, and below it in the
+narrow left column of a wide dashboard. Pacing is frozen from the last
+successful desktop snapshot, including its tooltip, and does not advance during
+the error or disappear when the old reset time passes. A fresh successful
+snapshot restores live pacing. New reset spending and automatic authorization
+stay disabled;
 known active requests retain an informational management entry, including
 cancellation of an armed choice. A reading is reused only while the server reports the failure
 as transient or rate limited for the same credential epoch and the provider is
@@ -417,9 +423,17 @@ Headroom window is already open, quit and reopen it afterward; a new launcher
 invocation may activate the existing primary process until that process exits.
 
 **Open diagnostics** shows the last 500 events in this session, with UTC times,
-categories, Copy log, and Clear. It records controlled connection/settings/tier
-summaries, never raw requests, response bodies, tokens, URLs, or account details.
-Nothing is written to a log file by this console.
+categories, Copy log, and Clear. Provider events show each actual attempt once,
+including request category, HTTP status, next attempt, and provider-directed or
+fallback cooldowns when the server supports them. Successful usage can coexist
+with an auxiliary-request cooldown. Reading the same cached attempt does not
+create another provider event. Copied logs include the desktop version, PID,
+connection mode, and cache-refresh interval.
+
+Only controlled connection/settings/tier summaries and bounded provider metadata
+are recorded, never raw requests, response bodies, tokens, URLs, account details,
+or credential epochs. Nothing is written to a log file by this console. The
+server separately records provider-attempt events in its normal service log.
 
 ## Verification
 
