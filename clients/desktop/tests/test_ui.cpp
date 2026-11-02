@@ -1721,9 +1721,16 @@ private slots:
         auto error = findItem(window->contentItem(), "providerStaleError_Claude"); QVERIFY(error); QVERIFY(error->isVisible());
         QCOMPARE(error->property("text").toString(), QString("Request timed out"));
         auto failedTitle = findItem(window->contentItem(), "providerErrorTitle_Claude"); QVERIFY(failedTitle); QVERIFY(!failedTitle->isVisible());
-        // Historical percentages are muted; live pacing, warnings, and actions wait for fresh data.
-        marker = findItem(window->contentItem(), "paceMarker_Claude_session"); QVERIFY(marker); QVERIFY(!marker->isVisible());
-        auto pace = findItem(window->contentItem(), "paceLabel_Claude_session"); QVERIFY(pace); QVERIFY(!pace->isVisible());
+        // Historical percentages and the frozen pacing estimate remain muted.
+        // Warning labels and actions still wait for fresh data.
+        marker = findItem(window->contentItem(), "paceMarker_Claude_session"); QVERIFY(marker); QVERIFY(marker->isVisible());
+        QCOMPARE(marker->property("color").value<QColor>(), QColor("#6272a4"));
+        auto pace = findItem(window->contentItem(), "paceLabel_Claude_session"); QVERIFY(pace); QVERIFY(pace->isVisible());
+        QCOMPARE(pace->property("color").value<QColor>(), QColor("#b6b9d2"));
+        const auto frozen = controller.displayProviders().first().toMap()["last_known_pacing"].toMap()["session"].toMap();
+        QCOMPARE(meter->property("pace").toMap(), frozen);
+        QCOMPARE(pace->property("text").toString(), frozen["label"].toString());
+        QVERIFY(meter->property("usageDetails").toString().contains("Last known pacing"));
         auto percent = findItem(window->contentItem(), "meterPercent_Claude_session"); QVERIFY(percent);
         QCOMPARE(percent->property("color").value<QColor>(), QColor("#b6b9d2"));
         fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
@@ -1834,7 +1841,8 @@ private slots:
             QTRY_COMPARE(QQmlProperty(card, "border.color").read().value<QColor>(), QColor("#ff5555"));
         }
         auto meter = findItem(window->contentItem(), "meter_Grok_weekly"); QVERIFY(meter); QVERIFY(meter->isVisible());
-        marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QVERIFY(!marker->isVisible());
+        marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QVERIFY(marker->isVisible());
+        QCOMPARE(marker->property("color").value<QColor>(), QColor("#6272a4"));
         QCOMPARE(window->property("healthy").toInt(), 0);
         auto footerBorder = findItem(window->contentItem(), "footerBorder"); QVERIFY(footerBorder);
         QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#ff5555"));

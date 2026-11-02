@@ -94,6 +94,14 @@ void Controller::retainReadings(const QVariantList &providers, bool removeMissin
                 const auto at = QDateTime::fromString(fetchedAt, Qt::ISODateWithMs);
                 reading.observedAt = at.isValid() ? qMin(at.toSecsSinceEpoch(), now) : now;
             }
+            // Save presentation estimates separately from the raw buckets. During
+            // an error neither elapsed time nor a passed reset may advance them.
+            reading.pacing.clear();
+            const auto pacedAt = QDateTime::currentDateTimeUtc();
+            for (const auto &value : buckets) {
+                const auto bucket = value.toMap();
+                reading.pacing.insert(bucket["id"].toString(), Usage::pacing(name, bucket, pacedAt));
+            }
             reading.epoch = epoch;
             reading.source = source;
             reading.snapshotSerial = m_snapshotSerial;
@@ -135,6 +143,7 @@ QVariantList Controller::displayProviders() const {
                 && !epoch.isEmpty() && epoch == reading->epoch;
             if (outage || transient) {
                 provider["buckets"] = reading->buckets;
+                provider["last_known_pacing"] = reading->pacing;
                 provider["stale"] = true;
                 provider["last_reading_at"] = reading->observedAt;
             }

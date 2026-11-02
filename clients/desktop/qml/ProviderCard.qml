@@ -286,6 +286,8 @@ Rectangle {
                         bucket: modelData; providerName: card.name; accent: card.accent
                         compact: card.compact
                         stale: card.stale
+                        retainedPace: card.provider.last_known_pacing
+                            ? card.provider.last_known_pacing[modelData.id] || null : null
                         notificationViewport: card.notificationViewport
                         presentingNotifications: card.presentingNotifications
                         // Stale readings carry no actions: banked-reset counts and

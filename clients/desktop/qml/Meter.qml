@@ -8,8 +8,9 @@ ColumnLayout {
     required property var bucket
     required property string providerName
     property bool compact: false
-    // A stale meter shows the last successful reading muted, without live pacing or actions.
+    // A stale meter keeps the last successful reading and frozen pace muted.
     property bool stale: false
+    property var retainedPace: null
     property var notificationViewport: null
     property bool presentingNotifications: false
     property color accent: Theme.purple
@@ -19,11 +20,16 @@ ColumnLayout {
     property bool warning: concern.severity > 0
     property color usageColor: concern.color || Theme.purple
     property var clock: backend.state
-    property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
+    property var pace: {
+        meter.clock
+        if (meter.stale) return meter.retainedPace || ({available: false, label: "Pace unavailable", detail: ""})
+        return backend.pacing(providerName, bucket)
+    }
     property bool statusOnly: !backend.isPercent(bucket)
     readonly property string providerDetails: bucket.detail_text || ""
     readonly property string usageDetails: (meter.stale
-        ? "Shown from the last successful reading. Pacing and warning colors resume when a fresh reading arrives."
+        ? "Shown from the last successful reading. Pacing is the last known estimate and stays frozen until a fresh reading arrives."
+            + (pace.detail ? "\n\nLast known pacing:\n" + pace.detail : "")
         : concern.detail) + (providerDetails ? "\n\n" + providerDetails : "")
     readonly property string billingDetails: {
         meter.clock
@@ -116,10 +122,10 @@ ColumnLayout {
         }
         Rectangle {
             objectName: "paceMarker_" + meter.providerName + "_" + meter.bucket.id
-            visible: meter.pace.available && !meter.stale
+            visible: meter.pace.available
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
-            color: Theme.foreground; border.width: 1; border.color: Theme.background
+            color: meter.stale ? Theme.comment : Theme.foreground; border.width: 1; border.color: Theme.background
         }
         NotificationHighlight {
             objectName: "notificationHighlight_" + meter.objectName
@@ -137,22 +143,22 @@ ColumnLayout {
         id: meterFooter
         Layout.fillWidth: true
         // Keep countdowns or status beside pace when the complete footer fits, including accessories.
-        readonly property bool inlineReset: !meter.statusOnly && !meter.stale && (resetLabel.visible || statusLabel.visible)
+        readonly property bool inlineReset: !meter.statusOnly && (resetLabel.visible || statusLabel.visible)
             && width >= Math.ceil(paceLabel.implicitWidth) + Math.ceil(resetDetails.implicitWidth) + columnSpacing
         columns: inlineReset ? 2 : 1
         columnSpacing: 12; rowSpacing: 5
         Text {
             id: paceLabel
             objectName: "paceLabel_" + meter.providerName + "_" + meter.bucket.id
-            visible: !meter.statusOnly && !meter.stale
+            visible: !meter.statusOnly
             text: meter.pace.label
             Layout.fillWidth: true; elide: Text.ElideRight
-            color: !meter.pace.available ? Theme.muted : meter.warning ? meter.usageColor
+            color: meter.stale || !meter.pace.available ? Theme.muted : meter.warning ? meter.usageColor
                 : meter.pace.onPace ? Theme.muted : meter.pace.over ? Theme.orange : Theme.cyan
             font.pixelSize: 11
             HoverHandler { id: paceHover }
             ToolTip.visible: paceHover.hovered
-            ToolTip.text: meter.concern.detail
+            ToolTip.text: meter.stale ? meter.usageDetails : meter.concern.detail
         }
         Item {
             id: resetDetailsHost
