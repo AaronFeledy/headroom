@@ -95,7 +95,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		defer sshListener.Close()
 	}
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	}
 	defer prepared.listener.Close()
 	cfg.AuthToken = prepared.request.Token
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -185,12 +185,16 @@ type appRuntime struct {
 	interval time.Duration
 }
 
-func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	return buildPollerWithCursorDiscovery(cfg, nil)
+func buildPoller(cfg config.Config, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
+	return buildPollerWithDiagnostics(cfg, nil, logger)
 }
 
 func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	providerPoller := poller.New(poller.Options{})
+	return buildPollerWithDiagnostics(cfg, discovery, nil)
+}
+
+func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
+	providerPoller := poller.New(poller.Options{Logger: logger})
 	var cursorClient *cursor.Client
 	var codexClient *codex.Client
 	var claudeClient *claude.Client
