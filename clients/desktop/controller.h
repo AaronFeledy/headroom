@@ -162,6 +162,8 @@ private:
     int m_interval = 60, m_retryAttempt = 0;
     QString m_errorKind;
     QVariantList m_diagnostics;
+    QHash<QString, QString> m_diagnosticAttempts;
+    void recordProviderDiagnostics(const QVariantList &providers);
     bool m_notifications = true, m_loading = false;
     bool m_startPolling = true;
     bool m_waitingForUsageRetry = false;

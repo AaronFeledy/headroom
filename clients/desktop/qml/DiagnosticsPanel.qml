@@ -20,7 +20,7 @@ Popup {
             ActionButton { text: "×"; quiet: true; implicitWidth: 32; Accessible.name: "Close diagnostics"; onClicked: panel.close() }
         }
         Text { text: "Last 500 events · this session only · times in UTC"; color: Theme.muted; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        Text { text: "Connection and warning events are recorded without tokens, account details, or response bodies."; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        Text { text: "Connection, provider attempts, HTTP status, and retry timing are recorded without tokens, account details, or response bodies."; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         Rectangle {
             Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.inset; radius: 8
             ScrollView {

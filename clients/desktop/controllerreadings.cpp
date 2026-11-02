@@ -53,6 +53,7 @@ void Controller::invalidateConnection() {
     // snapshot restores them.
     markBackendUnavailable(false, connectionReset);
     m_transientSince.clear();
+    m_diagnosticAttempts.clear();
     m_recovery.stop(); m_recoveryStep = 0; m_refreshBaseline.clear(); m_refreshAcceptedAt = 0;
     m_refreshAllowedAt = 0; m_refreshNoticeUntil = 0; m_refreshKind.clear(); m_refreshSummary.clear();
     syncRefreshClock();

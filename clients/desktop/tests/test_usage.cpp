@@ -29,6 +29,51 @@ private slots:
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_MODE");
         qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_RECORD");
     }
+    void providerDiagnosticsAreBoundedRedactedAndDeduplicated() {
+        QTemporaryDir dir;
+        class SnapshotController final : public Controller {
+        public:
+            using Controller::Controller;
+            using Controller::acceptSnapshot;
+            void refresh() override {}
+        };
+        SnapshotController controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials(), {}, false);
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshotWithFetchStatus(
+            "2026-10-31T12:00:00.000Z", "secret-credential-epoch")).array()[0].toObject();
+        provider["subtitle"] = "secret-account";
+        auto status = provider["fetch_status"].toObject();
+        QJsonObject details{{"operation", "profile"}, {"http_status", 429},
+            {"retry_after", "2026-10-31T12:10:00.000Z"}, {"next_attempt_at", "2026-10-31T12:10:00.000Z"},
+            {"cooldown_until", "2026-10-31T12:10:00.000Z"}, {"cooldown_source", "retry_after"},
+            {"raw_body", "secret-response"}, {"url", "https://secret-url"}};
+        status["diagnostics"] = details; provider["fetch_status"] = status;
+        QVariantList parsed;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        const auto normalized = parsed[0].toMap()["fetch_status"].toMap()["diagnostics"].toMap();
+        QVERIFY(!normalized.contains("raw_body")); QVERIFY(!normalized.contains("url"));
+        controller.acceptSnapshot(parsed); controller.acceptSnapshot(parsed);
+        auto text = controller.diagnosticText();
+        QCOMPARE(text.count("request profile"), 1);
+        QVERIFY(text.contains("HTTP 429")); QVERIFY(text.contains("usage ok"));
+        QVERIFY(text.contains("next_attempt_at 2026-10-31T12:10:00.000Z"));
+        QVERIFY(text.contains("desktop PID")); QVERIFY(!text.contains("secret"));
+        details["operation"] = "secret-operation"; details["http_status"] = 429.5;
+        details["cooldown_source"] = "secret-source"; details["retry_after"] = "https://secret-url";
+        status["fetched_at"] = "2026-10-31T12:01:00.000Z"; status["diagnostics"] = details;
+        provider["fetch_status"] = status;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        const auto cleaned = parsed[0].toMap()["fetch_status"].toMap()["diagnostics"].toMap();
+        QVERIFY(!cleaned.contains("operation")); QVERIFY(!cleaned.contains("http_status"));
+        QVERIFY(!cleaned.contains("cooldown_source")); QVERIFY(!cleaned.contains("retry_after"));
+        controller.acceptSnapshot(parsed); QVERIFY(!controller.diagnosticText().contains("secret"));
+        controller.clearDiagnostics(); QVERIFY(controller.diagnostics().isEmpty());
+        QVERIFY(controller.diagnosticText().isEmpty());
+        controller.acceptSnapshot(parsed); QVERIFY(!controller.diagnostics().isEmpty());
+        // Optional malformed diagnostics never invalidate otherwise usable usage.
+        details["next_attempt_at"] = "secret-invalid-time"; status["diagnostics"] = details; provider["fetch_status"] = status;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        QVERIFY(!parsed[0].toMap()["fetch_status"].toMap().contains("diagnostics"));
+    }
     void resetTimeLabelsUseLocalCalendarDays_data() {
         QTest::addColumn<QString>("nowStamp");
         QTest::addColumn<QString>("resetStamp");

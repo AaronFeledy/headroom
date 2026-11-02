@@ -11,6 +11,30 @@
 #include <QUuid>
 #include <cmath>
 
+namespace {
+QJsonObject normalizeFetchDiagnostics(const QJsonValue &value) {
+    if (!value.isObject()) return {};
+    const auto input = value.toObject();
+    QJsonObject result;
+    for (const auto &field : {"next_attempt_at", "retry_after", "cooldown_until"}) {
+        const auto v = input[field];
+        if (!v.isString() || v.toString().size() > 64) continue;
+        const auto time = QDateTime::fromString(v.toString(), Qt::ISODateWithMs);
+        if (time.isValid()) result[field] = time.toUTC().toString(Qt::ISODateWithMs);
+    }
+    if (!result.contains("next_attempt_at")) return {};
+    const auto operation = input["operation"].toString();
+    if (QStringList{"usage", "reset_status", "profile"}.contains(operation)) result["operation"] = operation;
+    const auto source = input["cooldown_source"].toString();
+    if (QStringList{"retry_after", "backoff"}.contains(source)) result["cooldown_source"] = source;
+    const auto status = input["http_status"];
+    const double code = status.toDouble(-1);
+    if (status.isDouble() && std::isfinite(code) && code >= 100 && code <= 599 && std::floor(code) == code)
+        result["http_status"] = int(code);
+    return result;
+}
+}
+
 bool Usage::isPercent(const QVariantMap &bucket) {
     const auto measurement = bucket.value("measurement");
     if (measurement.isValid() && !measurement.isNull()) return measurement.toString() == "percent";
@@ -111,10 +135,14 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 : kind.isString() && kinds.contains(kind.toString()) && !p["error"].isNull();
             const bool validEpoch = epoch.isNull() || epoch.isUndefined()
                 || (epoch.isString() && !epoch.toString().isEmpty() && epoch.toString().size() <= 256);
-            if (validTime && validKind && validEpoch)
-                fetchStatus = QJsonObject{{"fetched_at", fetchedAt},
+            if (validTime && validKind && validEpoch) {
+                QJsonObject normalized{{"fetched_at", fetchedAt},
                     {"failure_kind", kind.isString() ? kind : QJsonValue(QJsonValue::Null)},
                     {"credential_epoch", epoch.isString() ? epoch : QJsonValue(QJsonValue::Null)}};
+                const auto diagnostics = normalizeFetchDiagnostics(status["diagnostics"]);
+                if (!diagnostics.isEmpty()) normalized["diagnostics"] = diagnostics;
+                fetchStatus = normalized;
+            }
         }
         p["fetch_status"] = fetchStatus;
         QJsonArray buckets;
