@@ -26,9 +26,29 @@ const (
 )
 
 type FetchStatus struct {
-	FetchedAt       string       `json:"fetched_at"`
-	FailureKind     *FailureKind `json:"failure_kind"`
-	CredentialEpoch *string      `json:"credential_epoch"`
+	FetchedAt       string            `json:"fetched_at"`
+	FailureKind     *FailureKind      `json:"failure_kind"`
+	CredentialEpoch *string           `json:"credential_epoch"`
+	Diagnostics     *FetchDiagnostics `json:"diagnostics,omitempty"`
+}
+
+// FetchOperation labels are source-defined categories, never URLs or provider text.
+type FetchOperation string
+
+const (
+	OperationUsage       FetchOperation = "usage"
+	OperationResetStatus FetchOperation = "reset_status"
+	OperationProfile     FetchOperation = "profile"
+)
+
+// FetchDiagnostics is a bounded, account-free summary of the last provider attempt.
+type FetchDiagnostics struct {
+	Operation      *string `json:"operation"`
+	HTTPStatus     *int    `json:"http_status"`
+	RetryAfter     *string `json:"retry_after"`
+	NextAttemptAt  string  `json:"next_attempt_at"`
+	CooldownUntil  *string `json:"cooldown_until"`
+	CooldownSource *string `json:"cooldown_source"`
 }
 
 // FetchFailure is operation-local, internal scheduling metadata, never wire data.
@@ -36,6 +56,8 @@ type FetchFailure struct {
 	Kind              FailureKind
 	RetryAfter        time.Time
 	RateLimitFallback bool
+	Operation         FetchOperation
+	HTTPStatus        int
 	err               error
 }
 
@@ -69,7 +91,7 @@ func TransportFailure(err error) *FetchFailure {
 }
 
 func HTTPFailure(response *http.Response) *FetchFailure {
-	f := &FetchFailure{Kind: FailureOther}
+	f := &FetchFailure{Kind: FailureOther, Operation: OperationUsage, HTTPStatus: response.StatusCode}
 	switch {
 	case response.StatusCode == http.StatusTooManyRequests:
 		f.Kind = FailureRateLimited
