@@ -47,6 +47,8 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 	}
 	entry.Data.FetchFailure = copyFetchFailure(failure)
 	s.schedule(ctx, entry, failure)
+	entry.Data.FetchStatus.Diagnostics = s.diagnostics(entry, failure)
+	s.logAttempt(ctx, entry, failure)
 	s.entry = copyEntry(entry)
 	s.hasEntry = true
 	return copyEntry(entry)

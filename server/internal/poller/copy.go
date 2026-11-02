@@ -57,6 +57,18 @@ func copyFetchStatus(value *usage.FetchStatus) *usage.FetchStatus {
 	}
 	copy := *value
 	copy.CredentialEpoch = copyString(value.CredentialEpoch)
+	if value.Diagnostics != nil {
+		d := *value.Diagnostics
+		d.Operation = copyString(d.Operation)
+		d.RetryAfter = copyString(d.RetryAfter)
+		d.CooldownUntil = copyString(d.CooldownUntil)
+		d.CooldownSource = copyString(d.CooldownSource)
+		if d.HTTPStatus != nil {
+			status := *d.HTTPStatus
+			d.HTTPStatus = &status
+		}
+		copy.Diagnostics = &d
+	}
 	if value.FailureKind != nil {
 		kind := *value.FailureKind
 		copy.FailureKind = &kind
