@@ -166,6 +166,15 @@ func syncDirectory(path string) error {
 }
 
 func runtimeWindows() bool { return false }
+
+// processCreationChanged proves a PID now names a different process even when
+// its executable link is unreadable, because /proc/<pid>/stat is not
+// owner-restricted. An unreadable or matching identity proves nothing.
+func processCreationChanged(pid int, token string) bool {
+	current, err := linuxStartToken(pid)
+	return err == nil && current != token
+}
+
 func processGone(pid int) bool {
 	if syscall.Kill(pid, 0) == syscall.ESRCH {
 		return true
