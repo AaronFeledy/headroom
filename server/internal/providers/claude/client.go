@@ -59,6 +59,7 @@ type Client struct {
 	account       *usage.Account
 	signInCommand *string
 	paths         discoveryOptions
+	goos          string
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex
@@ -113,6 +114,7 @@ func New(opts Options) *Client {
 	}
 	return &Client{
 		client:        client,
+		goos:          runtime.GOOS,
 		usageURL:      usageURL,
 		tokenURL:      tokenURL,
 		apiBaseURL:    apiBaseURL,
@@ -137,6 +139,7 @@ func (c *Client) Account() *usage.Account { return c.account.Clone() }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
 	authExpired := false
+	credentialsMissing := false
 	var epoch *string
 	var failure *usage.FetchFailure
 	defer func() {
@@ -168,11 +171,16 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		if c.account != nil && auth.SignInCommand != nil {
 			auth.SignInCommand = c.signInCommand
 		}
+		if c.goos == "darwin" && credentialsMissing {
+			auth.SignInCommand = nil
+			result.ReauthCommand = nil
+		}
 		result.Auth = auth
 	}()
 	creds, err := c.currentCredentials(ctx)
 	if err != nil {
-		return c.reauthUsageData(formatCredentialError(err)), err
+		credentialsMissing = errors.Is(err, ErrCredentialsMissing)
+		return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ready, refreshErr := c.ensureFreshCredentials(ctx, creds)
@@ -223,7 +231,8 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			}
 			creds, err = c.currentCredentials(ctx)
 			if err != nil {
-				return c.reauthUsageData(formatCredentialError(err)), err
+				credentialsMissing = errors.Is(err, ErrCredentialsMissing)
+				return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 			}
 			continue
 		}

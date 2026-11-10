@@ -266,14 +266,17 @@ func (b usageBucketResponse) toUsageBucket() (usage.UsageBucket, error) {
 	return usage.UsageBucket{Utilization: math.Min(math.Max(*b.Utilization, 0), 100), ResetsAt: reset}, nil
 }
 
-func formatCredentialError(err error) string {
+func formatCredentialError(err error, goos string) string {
 	if err == nil {
 		return ""
 	}
-	if strings.Contains(err.Error(), ErrCredentialsMissing.Error()) {
-		return "Credentials not found. Run claude to authenticate."
+	if errors.Is(err, ErrCredentialsMissing) {
+		if goos == "darwin" {
+			return "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet."
+		}
+		return "Not signed in."
 	}
-	return "Credentials are invalid. Run claude to authenticate."
+	return "Saved sign-in could not be read. Sign in again."
 }
 
 func formatFetchError(err error) string {

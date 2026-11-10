@@ -115,8 +115,8 @@ func Test_Client_extra_account_missing_path_does_not_fallback(t *testing.T) {
 	got, err := client.Fetch(context.Background())
 
 	// Then
-	if err == nil {
-		t.Fatal("expected credentials error")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
 	}
 	if got.ProviderName != "Claude (Work)" || got.ProviderType != "Claude" {
 		t.Fatalf("identity name/type = %q/%q", got.ProviderName, got.ProviderType)
@@ -124,7 +124,17 @@ func Test_Client_extra_account_missing_path_does_not_fallback(t *testing.T) {
 	if got.Account == nil || got.Account.ID != "work" {
 		t.Fatalf("account = %+v", got.Account)
 	}
-	if got.ReauthCommand == nil || !strings.HasPrefix(*got.ReauthCommand, "CLAUDE_CONFIG_DIR=") {
+	if client.goos == "darwin" {
+		if got.ReauthCommand != nil || got.Auth.SignInCommand != nil {
+			t.Fatal("Keychain sign-in must not suggest a command")
+		}
+		return
+	}
+	prefix := "CLAUDE_CONFIG_DIR="
+	if client.goos == "windows" {
+		prefix = "$previous = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR = '"
+	}
+	if got.ReauthCommand == nil || !strings.HasPrefix(*got.ReauthCommand, prefix) {
 		t.Fatalf("reauth command = %v", got.ReauthCommand)
 	}
 	if !strings.Contains(*got.ReauthCommand, filepath.Dir(missing)) {

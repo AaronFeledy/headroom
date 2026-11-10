@@ -2,8 +2,6 @@ package claude
 
 import (
 	"context"
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -60,42 +58,5 @@ func Test_Client_loadCredentials_parses_anthropic_shape(t *testing.T) {
 	}
 	if got.accessToken != "access" || got.refreshToken != "refresh" || got.source != credentialSourceOpenCode {
 		t.Fatalf("credentials = %#v", got)
-	}
-}
-
-func Test_Client_Fetch_returns_typed_missing_credentials_error(t *testing.T) {
-	// Given
-	path := filepath.Join(t.TempDir(), "missing.json")
-	client := New(Options{CredentialsPath: path})
-
-	// When
-	got, err := client.Fetch(context.Background())
-
-	// Then
-	if !errors.Is(err, ErrCredentialsMissing) {
-		t.Fatalf("error = %v, want ErrCredentialsMissing", err)
-	}
-	if !got.NeedsReauth || got.ReauthCommand == nil || *got.ReauthCommand != "claude auth login" {
-		t.Fatalf("usage = %#v", got)
-	}
-}
-
-func Test_Client_Fetch_returns_malformed_error_for_invalid_json(t *testing.T) {
-	// Given
-	path := filepath.Join(t.TempDir(), ".credentials.json")
-	if err := os.WriteFile(path, []byte(`{"claudeAiOauth":`), 0o600); err != nil {
-		t.Fatalf("write malformed credentials: %v", err)
-	}
-	client := New(Options{CredentialsPath: path})
-
-	// When
-	got, err := client.Fetch(context.Background())
-
-	// Then
-	if !errors.Is(err, ErrCredentialsMalformed) {
-		t.Fatalf("error = %v, want ErrCredentialsMalformed", err)
-	}
-	if got.Error == nil || got.ReauthCommand == nil {
-		t.Fatalf("usage = %#v", got)
 	}
 }
