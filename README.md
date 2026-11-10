@@ -92,6 +92,16 @@ it for the tray meter, and enable **Start Headroom when I sign in** in Settings
 if you'd like it available at login. Usage pace is an estimate; the
 [desktop guide](clients/desktop/README.md) explains the indicators and alerts.
 
+### Multiple Claude accounts
+
+To watch more than one Claude subscription, sign in to each extra account with
+its own `CLAUDE_CONFIG_DIR`, list it under `providers.claude.accounts` in the
+server config, and restart Headroom. Each one gets its own `Claude (<label>)`
+card that you can reorder or pin like any other. The
+[setup steps](server/README.md#multiple-claude-accounts) cover Linux, WSL, and
+Windows; macOS servers can't read these sign-ins yet. Banked resets can be used
+only from the default Claude account.
+
 ## Use it in the terminal
 
 With the desktop open or a server already running:

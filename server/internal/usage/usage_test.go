@@ -142,6 +142,106 @@ func (p fakeProvider) Fetch(_ context.Context) (usage.UsageData, error) {
 	return usage.UsageData{ProviderName: p.name}, nil
 }
 
+func Test_UsageData_MarshalJSON_emits_provider_type_and_null_account_for_default_row(t *testing.T) {
+	// Given
+	data := usage.UsageData{ProviderName: "Claude"}
+
+	// When
+	encoded, err := json.Marshal(data)
+
+	// Then
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertUsageKeys(t, encoded)
+	assertJSONField(t, encoded, "provider_type", `"Claude"`)
+	assertJSONField(t, encoded, "account", `null`)
+}
+
+func Test_UsageData_MarshalJSON_emits_account_identity_for_extra_row(t *testing.T) {
+	// Given
+	data := usage.UsageData{
+		ProviderName: "Claude (Work)",
+		ProviderType: "Claude",
+		Account:      &usage.Account{ID: "work", Label: "Work"},
+	}
+
+	// When
+	encoded, err := json.Marshal(data)
+
+	// Then
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertUsageKeys(t, encoded)
+	assertJSONField(t, encoded, "provider_name", `"Claude (Work)"`)
+	assertJSONField(t, encoded, "provider_type", `"Claude"`)
+	assertJSONField(t, encoded, "account", `{"id":"work","label":"Work"}`)
+}
+
+func Test_UsageData_MarshalJSON_falls_back_provider_type_to_provider_name_when_empty(t *testing.T) {
+	// Given
+	data := usage.UsageData{ProviderName: "Codex"}
+
+	// When
+	encoded, err := json.Marshal(data)
+
+	// Then
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertJSONField(t, encoded, "provider_type", `"Codex"`)
+	assertJSONField(t, encoded, "account", `null`)
+}
+
+func Test_UsageData_MarshalJSON_keeps_identity_keys_on_error_row(t *testing.T) {
+	// Given
+	errText := "rate limited"
+	data := usage.UsageData{
+		ProviderName: "Claude (Work)",
+		ProviderType: "Claude",
+		Account:      &usage.Account{ID: "work", Label: "Work"},
+		Error:        &errText,
+	}
+
+	// When
+	encoded, err := json.Marshal(data)
+
+	// Then
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertUsageKeys(t, encoded)
+	assertJSONField(t, encoded, "provider_type", `"Claude"`)
+	assertJSONField(t, encoded, "account", `{"id":"work","label":"Work"}`)
+	assertJSONField(t, encoded, "is_success", `false`)
+	assertJSONField(t, encoded, "usage_details", `null`)
+}
+
+func Test_UsageData_MarshalJSON_auth_fallback_nulls_sign_in_for_account_row(t *testing.T) {
+	// Given
+	accountRow := usage.UsageData{
+		ProviderName: "Claude (Work)",
+		ProviderType: "Claude",
+		Account:      &usage.Account{ID: "work", Label: "Work"},
+	}
+	defaultRow := usage.UsageData{ProviderName: "Claude"}
+
+	// When
+	accountEncoded, err := json.Marshal(accountRow)
+	if err != nil {
+		t.Fatalf("MarshalJSON account row: %v", err)
+	}
+	defaultEncoded, err := json.Marshal(defaultRow)
+	if err != nil {
+		t.Fatalf("MarshalJSON default row: %v", err)
+	}
+
+	// Then
+	assertJSONField(t, accountEncoded, "auth.sign_in_command", `null`)
+	assertJSONField(t, defaultEncoded, "auth.sign_in_command", `"claude auth login"`)
+}
+
 func assertUsageKeys(t *testing.T, encoded []byte) {
 	t.Helper()
 	var got map[string]json.RawMessage
@@ -150,6 +250,8 @@ func assertUsageKeys(t *testing.T, encoded []byte) {
 	}
 	want := []string{
 		"provider_name",
+		"provider_type",
+		"account",
 		"primary_label",
 		"secondary_label",
 		"show_secondary",
@@ -222,12 +324,12 @@ func cutPath(path string) (string, string, bool) {
 func sortedKeys(values map[string]json.RawMessage) []string {
 	keys := make([]string, 0, len(values))
 	order := map[string]int{
-		"provider_name": 0, "primary_label": 1, "secondary_label": 2, "show_secondary": 3,
-		"subtitle": 4, "primary_status_text": 5, "secondary_status_text": 6, "reauth_command": 7,
-		"current": 8, "weekly": 9, "buckets": 10, "error": 11, "needs_reauth": 12, "is_success": 13,
-		"rate_limit_reset_credits": 14,
-		"auth":                     15,
-		"usage_details":            16,
+		"provider_name": 0, "provider_type": 1, "account": 2, "primary_label": 3, "secondary_label": 4, "show_secondary": 5,
+		"subtitle": 6, "primary_status_text": 7, "secondary_status_text": 8, "reauth_command": 9,
+		"current": 10, "weekly": 11, "buckets": 12, "error": 13, "needs_reauth": 14, "is_success": 15,
+		"rate_limit_reset_credits": 16,
+		"auth":                     17,
+		"usage_details":            18,
 	}
 	for key := range values {
 		keys = append(keys, key)

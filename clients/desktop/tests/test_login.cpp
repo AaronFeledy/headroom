@@ -68,6 +68,34 @@ class LoginTest : public QObject {
     Q_OBJECT
 private slots:
     void initTestCase() { QVERIFY(TlsFixture::selectNativeTestBackend()); }
+    void commandlessAccountExplainsSignInFailure() {
+        auto row = provider("signed_out", "cli", "Claude");
+        row["provider_name"] = "Claude (Work)";
+        row["account"] = QVariantMap{{"id", "work"}, {"label", "Work"}};
+        const QString explanation = "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet.";
+        const QString first = "Headroom couldn't find a Claude (Work) sign-in.";
+        row["error"] = explanation;
+        auto auth = row["auth"].toMap();
+        for (const auto &command : {QVariant(), QVariant(QString())}) {
+            auth["sign_in_command"] = command; row["auth"] = auth;
+            const auto copy = LoginCopy::compose(row, "local", "disabled");
+            QCOMPARE(copy["lines"].toStringList(), (QStringList{first, explanation}));
+            QVERIFY(copy["command"].toString().isEmpty());
+        }
+        for (const auto &error : {QString(), first, QString("Bad\nexplanation"), QString(201, 'x')}) {
+            row["error"] = error;
+            QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(), QStringList{first});
+        }
+        auto expired = provider("expired", "cli", "Claude");
+        expired["provider_name"] = "Claude (Work)"; expired["error"] = "AUTH_EXPIRED";
+        auto expiredAuth = expired["auth"].toMap(); expiredAuth["sign_in_command"] = QVariant(); expired["auth"] = expiredAuth;
+        QCOMPARE(LoginCopy::compose(expired, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Your Claude login on this computer expired."}));
+        row["provider_name"] = "Claude"; row["account"] = QVariant(); row["error"] = explanation;
+        auth["state"] = "signed_out"; auth["sign_in_command"] = "claude auth login"; row["auth"] = auth;
+        QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Headroom couldn't find a Claude sign-in.", "Run claude auth login on this computer."}));
+    }
     void proofVerification() {
         const QByteArray nonce(64, 'a'), token("synthetic-token");
         const auto certificate = TlsFixture::certificate();

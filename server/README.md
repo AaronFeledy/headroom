@@ -75,7 +75,7 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
   `error: "refresh rate limited"`, a positive `retry_after_seconds`, and
   `Retry-After`. Unavailable/stopping pollers or no enabled providers return `503`.
   Browser-origin headers are rejected; normal bearer/SSH authorization applies.
-- `GET /api/v1/usage/{provider}` - one cached provider entry, for example `Claude` or `codex`.
+- `GET /api/v1/usage/{provider}` - one cached provider entry, for example `Claude`, `codex`, or URL-encoded `Claude%20(Work)`.
 - `GET /api/v1/health` - server status, version, and provider health.
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one of `cookie` or `access_token`. Cookies may include `source_name` (trimmed, 1–40 characters, no controls); access tokens may not.
 - `GET /api/v1/tls/proof?nonce=<64 hex>` - unauthenticated TLS identity proof; available only over HTTPS when a bearer token is configured.
@@ -221,7 +221,9 @@ Never exercise either provider's consume method, reset HTTP route, or SSH reset
 forwarding during tests or manual validation, even with a fake upstream. Their
 skip-only safety tests are intentional, not TODOs.
 
-Each usage entry also includes an always-present `auth` object: `state`
+Each usage entry includes additive `provider_type` (`Claude`, `Codex`, `Cursor`,
+or `Grok`) and `account` (`null`, or `{"id", "label"}` for an extra Claude
+account). Each usage entry also includes an always-present `auth` object: `state`
 (`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,
 nullable `sign_in_command` and `sign_in_url`, `accepts_browser_credentials`, and
 an array `checked` (up to 12 `{kind, name, status}` entries). Only Cursor accepts
@@ -421,6 +423,12 @@ providers:
   claude:
     enabled: true
     credentials_path: ~/.claude/.credentials.json
+    # Optional extra Claude accounts (YAML only):
+    # accounts:
+    #   - id: work                                 # required, ^[a-z0-9][a-z0-9_-]{0,31}$
+    #     label: Work                              # optional, default = id (1-32 chars)
+    #     credentials_path: ~/.claude-work/.credentials.json  # required, absolute or ~/
+    #     enabled: true                            # optional, default true
   codex:
     enabled: true
     credentials_path: ~/.codex/auth.json
@@ -437,11 +445,81 @@ All four providers are enabled by default; Claude defaults to
 `~/.claude/.credentials.json`, and the others discover credentials automatically
 when no path is set. Disable unwanted providers with `enabled: false` or
 `USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
-retained while Headroom displays it as ChatGPT. Codex can also discover
-`CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode
-auth. Cursor discovery works on every bind, including off-loopback. Its priority
-is cursor-agent `auth.json`, Cursor app `state.vscdb`, server-side Firefox, then
-memory-only desktop cookies or API access tokens. An explicit Cursor credential
+retained while Headroom displays it as ChatGPT.
+
+On a macOS server, Claude Code usually keeps its sign-in in the Keychain, which
+Headroom can't read yet ([#64](https://github.com/AaronFeledy/headroom/issues/64)).
+There, Claude usage works only with OpenCode credentials or a
+`.credentials.json` file.
+
+### Multiple Claude accounts
+
+To watch more than one Claude subscription, give each extra account its own
+Claude Code config directory and list it under `providers.claude.accounts`:
+
+1. Sign in to the extra account with a separate config directory:
+
+   ```bash
+   # Linux / WSL
+   CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
+   ```
+
+   ```powershell
+   # Windows PowerShell (restores the previous CLAUDE_CONFIG_DIR, including when unset)
+   $previous = $env:CLAUDE_CONFIG_DIR
+   $env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"
+   try { claude auth login } finally { $env:CLAUDE_CONFIG_DIR = $previous }
+   ```
+
+2. Add the account to `config.yaml`:
+
+   ```yaml
+   providers:
+     claude:
+       accounts:
+         - id: work
+           label: Work
+           credentials_path: ~/.claude-work/.credentials.json
+   ```
+
+3. Restart the server; configuration is read only at startup. If Headroom
+   started the server in Local mode, quit and reopen Headroom.
+
+The account appears as its own `Claude (Work)` card. If you skip step 1, the
+card says `Not signed in.` and shows the exact sign-in command for that account.
+Extra accounts never fall back to `~/.claude`, WSL, or OpenCode credentials, and
+they keep running when `providers.claude.enabled` is false.
+
+macOS servers can't read extra accounts yet: Claude Code keeps macOS sign-ins in
+the Keychain, and Headroom reads only `.credentials.json`
+([#64](https://github.com/AaronFeledy/headroom/issues/64)). The card says so
+instead of offering a sign-in command that wouldn't help.
+
+Accounts are YAML-only (no env vars or CLI flags). Each entry needs a stable `id`
+(`^[a-z0-9][a-z0-9_-]{0,31}$`), an optional `label` (1–32 Unicode characters
+after trim, no control characters; defaults to `id`), a `credentials_path`
+(absolute, or starting with `~`, `~/`, or `~\`), and an optional `enabled`
+(default true). At most eight accounts. These fail startup with
+`config: invalid`: accounts under another provider, duplicate ids or
+case-insensitive labels (including disabled accounts), and two enabled entries
+that point at the same credentials file, including the default Claude file while
+the default account is enabled. Symlinks and hard links to the same existing file
+count as the same file; a missing file is valid configuration.
+
+In `GET /api/v1/usage`, account rows follow all default rows and carry
+`provider_type` `Claude` and `account` `{"id":"work","label":"Work"}`. Request one
+row with the URL-encoded name, for example `/api/v1/usage/Claude%20(Work)`.
+Renaming a label keeps the card's desktop position and tray choice, which follow
+the `id`, but changes that URL. Stream Deck keys target an account by its `id` in
+the key's Account ID setting. Extra accounts show their banked-reset count
+read-only; banked resets can be redeemed only from the default account.
+
+### Other provider discovery
+
+Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL
+auth, and OpenCode auth. Cursor discovery works on every bind, including
+off-loopback. Its priority is cursor-agent `auth.json`, Cursor app `state.vscdb`,
+server-side Firefox, then memory-only desktop cookies or API access tokens. An explicit Cursor credential
 path replaces only CLI-file discovery. On WSL it also checks Windows profiles
 (preferring `$USER`, respecting the automount root in `/etc/wsl.conf`); native
 Windows checks WSL homes without running Windows executables. Cross-kernel

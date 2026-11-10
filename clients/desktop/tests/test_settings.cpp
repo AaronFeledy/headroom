@@ -34,6 +34,29 @@ class SettingsTest : public QObject {
     QString previousOrganization;
     QString previousApplication;
 private slots:
+    void extraProviderOrderAndPrimaryRoundTrip() {
+        QTemporaryDir dir;
+        SettingsService service(dir.filePath("settings.json"), false);
+        const QString emojiName = "Claude (" + QString::fromUcs4(U"\U0001f600").repeated(32) + ")";
+        for (const auto &name : {QString("Claude (Work)"), QString("Claude:work"), emojiName}) {
+            QVERIFY(service.saveOrder({name, "Claude", "Codex"}, name).isEmpty());
+            SettingsService reopened(service.path(), false);
+            QCOMPARE(reopened.value().primary, name);
+            QCOMPARE(reopened.value().order, (QStringList{name, "Claude", "Codex", "Cursor", "Grok"}));
+        }
+    }
+    void extraProviderOrderIsBoundedAndSanitized() {
+        const QStringList values{"Claude (Work)", "claude (work)", "cLaUdE", "Bad\nName", "Codex", "Bad\x7fName"};
+        QCOMPARE(SettingsService::normalizeOrder(values, "Grok"),
+            (QStringList{"Claude (Work)", "Claude", "Codex", "Cursor", "Grok"}));
+        QStringList many;
+        for (int i = 0; i < 34; ++i) many.append(QString("Account %1").arg(i));
+        const auto normalized = SettingsService::normalizeOrder(many, "Claude");
+        QCOMPARE(normalized.size(), 36);
+        QCOMPARE(normalized[31], "Account 31");
+        QCOMPARE(normalized.mid(32), (QStringList{"Claude", "Codex", "Cursor", "Grok"}));
+        QCOMPARE(SettingsService::normalizeProvider(QString(81, 'x')), "Claude");
+    }
     void certificateAndBrowserSharingPersistence() {
         QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);
         QVERIFY(service.value().shareBrowserSignIns); QVERIFY(service.value().remoteCertificate.isEmpty());

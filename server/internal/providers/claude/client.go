@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,14 +44,21 @@ type Options struct {
 	HTTPClient      *http.Client
 	// Empty disables reset consumption; New never derives persistent state from HOME.
 	ResetStateDir string
+	// Name defaults to "Claude". Extra accounts use "Claude (<label>)".
+	Name string
+	// Account is nil for the default Claude row.
+	Account *usage.Account
 }
 
 type Client struct {
-	client     *http.Client
-	usageURL   string
-	tokenURL   string
-	apiBaseURL string
-	paths      discoveryOptions
+	client        *http.Client
+	usageURL      string
+	tokenURL      string
+	apiBaseURL    string
+	name          string
+	account       *usage.Account
+	signInCommand *string
+	paths         discoveryOptions
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex
@@ -83,11 +91,34 @@ func New(opts Options) *Client {
 	if resetStateDir != "" {
 		resetStateDir = filepath.Clean(resetStateDir)
 	}
+	name := strings.TrimSpace(opts.Name)
+	if name == "" {
+		name = providerName
+	}
+	account := opts.Account.Clone()
+	// Banked-reset consumption is default-account-only: never give an extra
+	// account a reset state directory even if a caller passes one.
+	if account != nil {
+		resetStateDir = ""
+	}
+	command := reauthCommandText
+	signInCommand := &command
+	if account != nil {
+		signInCommand = nil
+		credPath := expandHome(opts.CredentialsPath, opts.HomeDir)
+		if filepath.Base(credPath) == ".credentials.json" {
+			command = accountSignInCommand(runtime.GOOS, filepath.Dir(credPath))
+			signInCommand = &command
+		}
+	}
 	return &Client{
 		client:        client,
 		usageURL:      usageURL,
 		tokenURL:      tokenURL,
 		apiBaseURL:    apiBaseURL,
+		name:          name,
+		account:       account,
+		signInCommand: signInCommand,
 		resetStateDir: resetStateDir,
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
@@ -98,7 +129,11 @@ func New(opts Options) *Client {
 	}
 }
 
-func (c *Client) Name() string { return providerName }
+func (c *Client) Name() string { return c.name }
+
+func (c *Client) ProviderType() string { return providerName }
+
+func (c *Client) Account() *usage.Account { return c.account.Clone() }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
 	authExpired := false
@@ -107,6 +142,9 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 	defer func() {
 		result.CredentialEpoch = epoch
 		result.FetchFailure = failure
+		result.ProviderName = c.name
+		result.ProviderType = providerName
+		result.Account = c.account.Clone()
 		c.stateMu.Lock()
 		creds := c.loaded
 		c.stateMu.Unlock()
@@ -126,22 +164,26 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 				state = "expired"
 			}
 		}
-		result.Auth = usage.NewAuth(providerName, state, source)
+		auth := usage.NewAuth(providerName, state, source)
+		if c.account != nil && auth.SignInCommand != nil {
+			auth.SignInCommand = c.signInCommand
+		}
+		result.Auth = auth
 	}()
 	creds, err := c.currentCredentials(ctx)
 	if err != nil {
-		return reauthUsageData(formatCredentialError(err)), err
+		return c.reauthUsageData(formatCredentialError(err)), err
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ready, refreshErr := c.ensureFreshCredentials(ctx, creds)
 		if refreshErr != nil {
 			if errors.Is(refreshErr, ErrInvalidGrant) {
-				return reauthUsageData("AUTH_EXPIRED"), nil
+				return c.reauthUsageData("AUTH_EXPIRED"), nil
 			}
 			return errorUsageData("Token refresh failed. Will retry."), nil
 		}
 		creds = ready
-		epoch = usage.CredentialEpoch(providerName, creds.path, fmt.Sprint(creds.source), creds.accessToken)
+		epoch = usage.CredentialEpoch(c.name, creds.path, fmt.Sprint(creds.source), creds.accessToken)
 		data, statusErr, err := c.fetchUsage(ctx, creds)
 		if err != nil {
 			var typed *usage.FetchFailure
@@ -175,13 +217,13 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			if refreshErr := c.refreshCredentials(ctx, creds, refreshModeForced); refreshErr != nil {
 				failure = nil
 				if errors.Is(refreshErr, ErrInvalidGrant) {
-					return reauthUsageData("AUTH_EXPIRED"), nil
+					return c.reauthUsageData("AUTH_EXPIRED"), nil
 				}
 				return errorUsageData("Authentication failed. Will retry."), nil
 			}
 			creds, err = c.currentCredentials(ctx)
 			if err != nil {
-				return reauthUsageData(formatCredentialError(err)), err
+				return c.reauthUsageData(formatCredentialError(err)), err
 			}
 			continue
 		}
@@ -225,9 +267,16 @@ func (c *Client) ensureFreshCredentials(ctx context.Context, creds *credentials)
 	}
 }
 
-func reauthUsageData(message string) usage.UsageData {
-	command := reauthCommandText
-	return usage.UsageData{ProviderName: providerName, PrimaryLabel: primaryLabel, SecondaryLabel: secondaryLabel, ShowSecondary: true, ReauthCommand: &command, Error: &message, NeedsReauth: true}
+func (c *Client) reauthUsageData(message string) usage.UsageData {
+	return usage.UsageData{
+		ProviderName:   c.name,
+		PrimaryLabel:   primaryLabel,
+		SecondaryLabel: secondaryLabel,
+		ShowSecondary:  true,
+		ReauthCommand:  c.signInCommand,
+		Error:          &message,
+		NeedsReauth:    true,
+	}
 }
 
 func errorUsageData(message string) usage.UsageData {

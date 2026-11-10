@@ -61,6 +61,78 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void accountCardShowsReadOnlyBankedCount() {
+        QTemporaryDir dir;
+        const auto samples = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        auto extra = samples[0].toObject();
+        extra["provider_name"] = "Claude (Work)";
+        extra["provider_type"] = "Claude";
+        extra["account"] = QJsonObject{{"id", "work"}, {"label", "Work"}};
+        extra["rate_limit_reset_credits"] = QJsonObject{{"available_count", 2},
+            {"account_fingerprint", QString(64, 'a')}, {"usable_now", true}};
+        auto buckets = extra["buckets"].toArray();
+        for (int i = 0; i < buckets.size(); ++i) {
+            auto bucket = buckets[i].toObject(); bucket["utilization"] = 100; buckets[i] = bucket;
+        }
+        extra["buckets"] = buckets;
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{extra, samples[1]}).toJson());
+        controller.refresh();
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860); window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_VERIFY(findItem(window->contentItem(), "providerCard_Claude (Work)"));
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QVERIFY(QDir().mkpath(capture));
+            for (const auto &size : {QSize(460, 860), QSize(900, 860)}) {
+                QSignalSpy frame(window, &QQuickWindow::frameSwapped);
+                window->resize(size); window->requestUpdate();
+                QVERIFY(frame.wait(2000));
+                QVERIFY(window->grabWindow().save(QDir(capture).filePath(QString("account-%1.png").arg(size.width()))));
+            }
+        }
+        auto icon = findItem(window->contentItem(), "providerIcon_Claude (Work)"); QVERIFY(icon);
+        QVERIFY(icon->isVisible());
+        QCOMPARE(icon->property("source").toUrl(), QUrl("qrc:/provider-icons/claude.svg"));
+        auto count = findItem(window->contentItem(), "bankedResets_Claude (Work)"); QVERIFY(count);
+        QVERIFY(count->isVisible());
+        QCOMPARE(count->property("text").toString(), "2 banked resets");
+        QVERIFY(!count->activeFocusOnTab());
+        QVERIFY(!count->property("font").value<QFont>().underline());
+        QQmlExpression role(qmlContext(count), count, "Accessible.role");
+        QCOMPARE(role.evaluate().toInt(), int(QAccessible::StaticText));
+        QVERIFY(!role.hasError());
+        QQmlExpression description(qmlContext(count), count, "Accessible.description");
+        QVERIFY(description.evaluate().toString().isEmpty());
+        QVERIFY(!description.hasError());
+        auto button = findItem(window->contentItem(), "useBankedReset_Claude (Work)"); QVERIFY(button);
+        QVERIFY(!button->isVisible());
+        auto card = findItem(window->contentItem(), "providerCard_Claude (Work)"); QVERIFY(card);
+        QVERIFY(card->property("usageUrl").toString().isEmpty());
+        auto defaultCount = findItem(window->contentItem(), "bankedResets_Codex"); QVERIFY(defaultCount);
+        QQmlExpression defaultRole(qmlContext(defaultCount), defaultCount, "Accessible.role");
+        QCOMPARE(defaultRole.evaluate().toInt(), int(QAccessible::Link));
+        QVERIFY(!defaultRole.hasError());
+        QVERIFY(defaultCount->activeFocusOnTab());
+        UrlCapture urls;
+        QDesktopServices::setUrlHandler("https", &urls, "capture");
+        const bool invoked = QMetaObject::invokeMethod(count, "openUsage");
+        QDesktopServices::unsetUrlHandler("https");
+        QVERIFY(invoked); QVERIFY(urls.urls.isEmpty());
+    }
     void richReadOnlyDetails() {
         QTemporaryDir dir;
         ControllerFixture controller(dir.filePath("settings.json"), TestUsage::richSnapshot());

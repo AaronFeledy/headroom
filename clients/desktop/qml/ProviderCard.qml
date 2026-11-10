@@ -8,6 +8,7 @@ Rectangle {
     signal resetRequested()
     objectName: "providerCard_" + name
     property string name: provider.provider_name
+    readonly property string providerType: provider.provider_type || name
     property string displayName: backend.displayName(name)
     property color accent: Theme.purple
     property var notificationViewport: null
@@ -19,7 +20,7 @@ Rectangle {
     readonly property string readingAge: { card.clock; return backend.readingAgeLabel(provider.last_reading_at || 0) }
     readonly property var loginCopy: { backend.settings; return backend.loginCopy(provider) }
     readonly property bool hasAuthCopy: !!loginCopy.title
-    readonly property bool cursorLoginRequired: failed && name === "Cursor"
+    readonly property bool cursorLoginRequired: failed && providerType === "Cursor"
         && !hasAuthCopy
         && (provider.needs_reauth || (provider.error || "").startsWith("Log in to cursor.com"))
     property bool pinned: backend.settings.primary === name
@@ -32,7 +33,8 @@ Rectangle {
     property bool hasResetAccountBinding: resetAccountFingerprint.length === 64
         && /^[0-9a-f]{64}$/.test(resetAccountFingerprint)
     readonly property bool resetProvider: name === "Claude" || name === "Codex"
-    property bool hasResetCount: resetProvider && !failed && resetCredits !== null
+    readonly property bool countsResets: providerType === "Claude" || providerType === "Codex"
+    property bool hasResetCount: countsResets && !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count >= 0
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
     readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
@@ -70,19 +72,19 @@ Rectangle {
                     color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
                     font.pixelSize: 11; elide: Text.ElideRight
                     horizontalAlignment: Text.AlignRight
-                    font.underline: bankedResetHover.hovered || activeFocus
-                    activeFocusOnTab: visible
-                    Accessible.role: Accessible.Link
+                    font.underline: card.resetProvider && (bankedResetHover.hovered || activeFocus)
+                    activeFocusOnTab: visible && card.resetProvider
+                    Accessible.role: card.resetProvider ? Accessible.Link : Accessible.StaticText
                     Accessible.name: text
-                    Accessible.description: "Open " + card.displayName + " usage and reset controls"
+                    Accessible.description: card.resetProvider ? "Open " + card.displayName + " usage and reset controls" : ""
                     Accessible.onPressAction: openUsage()
                     Keys.onReturnPressed: openUsage()
                     Keys.onEnterPressed: openUsage()
                     Keys.onSpacePressed: openUsage()
-                    TapHandler { onTapped: parent.openUsage() }
-                    HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
-                    ToolTip.visible: bankedResetHover.hovered
-                    ToolTip.text: "Open " + card.displayName + " usage and reset controls"
+                    TapHandler { enabled: card.resetProvider; onTapped: parent.openUsage() }
+                    HoverHandler { id: bankedResetHover; enabled: card.resetProvider; cursorShape: Qt.PointingHandCursor }
+                    ToolTip.visible: card.resetProvider && bankedResetHover.hovered
+                    ToolTip.text: card.resetProvider ? "Open " + card.displayName + " usage and reset controls" : ""
                 }
                 NotificationHighlight {
                     visible: card.hasBankedResets
@@ -239,7 +241,7 @@ Rectangle {
                 activeFocusOnTab: true
                 Rectangle {
                     width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
-                    Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.name.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.name) >= 0 }
+                    Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.providerType) >= 0 }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 4

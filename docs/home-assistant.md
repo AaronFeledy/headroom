@@ -21,9 +21,10 @@ claude_usage_widget_auth: Bearer replace-with-a-long-random-token
 
 The server endpoint is `GET /api/v1/usage`. It returns one array entry per
 enabled provider, sorted by provider name. With all four providers enabled, the
-order is `Claude`, `Codex`, `Cursor`, then `Grok`. `Codex` is the compatible API
-name for the provider Headroom displays as ChatGPT, so existing sensor names and
-indexes do not change.
+order is `Claude`, `Codex`, `Cursor`, then `Grok`. Extra Claude account rows such
+as `Claude (Work)` are appended after these, so adding an account does not shift
+existing indexes. `Codex` is the compatible API name for the provider Headroom
+displays as ChatGPT, so existing sensor names and indexes do not change.
 
 The additive `auth` object describes sign-in state, source, and recovery hints;
 existing sensor fields and plain HTTP keep working. Current servers can also
@@ -144,7 +145,7 @@ sensor:
       - is_success
 ```
 
-If you enable only some providers, adjust the array indexes to match the returned `/api/v1/usage` order. To avoid index dependence, you can also create one REST sensor per provider endpoint, such as `/api/v1/usage/Claude`; the JSON paths then start at `value_json.current.utilization` instead of `value_json[0].current.utilization`.
+If you enable only some providers, adjust the array indexes to match the returned `/api/v1/usage` order. To avoid index dependence, you can also create one REST sensor per provider endpoint, such as `/api/v1/usage/Claude` or `/api/v1/usage/Claude%20(Work)`; the JSON paths then start at `value_json.current.utilization` instead of `value_json[0].current.utilization`.
 
 ## Returned Fields
 
@@ -153,6 +154,8 @@ Each provider entry has this shape:
 ```json
 {
   "provider_name": "Claude",
+  "provider_type": "Claude",
+  "account": null,
   "primary_label": "Current Session",
   "secondary_label": "Weekly",
   "show_secondary": true,

@@ -58,6 +58,8 @@ func (bucket *Bucket) UnmarshalJSON(data []byte) error {
 type Provider struct {
 	Auth                  *ProviderAuth          `json:"auth"`
 	ProviderName          string                 `json:"provider_name"`
+	ProviderType          string                 `json:"-"`
+	Account               *ProviderAccount       `json:"-"`
 	PrimaryLabel          string                 `json:"primary_label"`
 	SecondaryLabel        string                 `json:"secondary_label"`
 	ShowSecondary         bool                   `json:"show_secondary"`
@@ -110,6 +112,8 @@ func decodeUsage(body []byte) ([]Provider, error) {
 	for index := range providers {
 		provider := &providers[index]
 		raw := rawProviders[index]
+		provider.ProviderType = decodeProviderType(raw["provider_type"])
+		provider.Account = decodeProviderAccount(raw["account"])
 		if _, ok := raw["error"]; !ok {
 			return nil, errors.New("usage server omitted provider status")
 		}

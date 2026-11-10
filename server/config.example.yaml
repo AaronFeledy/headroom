@@ -5,3 +5,9 @@ providers:
   claude:
     enabled: true
     credentials_path: ~/.claude/.credentials.json
+    # Optional extra Claude accounts (YAML only; no env/flags).
+    # accounts:
+    #   - id: work
+    #     label: Work
+    #     credentials_path: ~/.claude-work/.credentials.json
+    #     enabled: true

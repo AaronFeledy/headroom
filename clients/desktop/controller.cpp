@@ -347,12 +347,16 @@ void Controller::recordProviderDiagnostics(const QVariantList &providers) {
     for (const auto &value : providers) {
         const auto provider = value.toMap();
         const QString name = provider["provider_name"].toString();
-        if (!QStringList{"Claude", "Codex", "Cursor", "Grok"}.contains(name)) continue;
+        const QString type = Usage::providerType(provider);
+        if (!QStringList{"Claude", "Codex", "Cursor", "Grok"}.contains(type)) continue;
         const auto status = provider["fetch_status"].toMap();
         const QString fetched = safeTime(status["fetched_at"]);
         if (fetched.isEmpty() || m_diagnosticAttempts.value(name) == fetched) continue;
         m_diagnosticAttempts.insert(name, fetched);
-        QStringList parts{QString("%1: fetched %2").arg(Usage::displayName(name), fetched),
+        const auto account = provider["account"].toMap();
+        // Account labels are user text; diagnostics name the account by its config id only.
+        const QString label = Usage::displayName(type) + (account.isEmpty() ? QString() : ":" + account["id"].toString());
+        QStringList parts{QString("%1: fetched %2").arg(label, fetched),
             provider["is_success"].toBool() ? QStringLiteral("usage ok") : QStringLiteral("usage failed")};
         const QString kind = status["failure_kind"].toString();
         if (QStringList{"transient", "rate_limited", "auth", "other"}.contains(kind)) parts.append("failure " + kind);
@@ -403,7 +407,8 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     for (const auto &value : m_providers) {
         const auto provider = value.toMap();
         const QString name = provider["provider_name"].toString();
-        if ((name != "Codex" && name != "Claude") || !provider["is_success"].toBool()) continue;
+        const QString type = Usage::providerType(provider);
+        if ((type != "Codex" && type != "Claude") || !provider["is_success"].toBool()) continue;
         const auto credits = provider["rate_limit_reset_credits"].toMap();
         if (credits.contains("available_count"))
             m_notificationCenter.observeBankedResetCount(name, credits["available_count"].toLongLong(),
@@ -435,6 +440,10 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
         : (token.isEmpty() && (mode != "remote" || url == m_url) ? m_token : token);
     const QString retainedSshUrl = sshUrl.isEmpty() && mode != "ssh" ? m_sshUrl : sshUrl;
     const bool connectionChanged = m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl;
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        if (row["provider_name"].toString() == primary) { primary = Usage::rowKey(row); break; }
+    }
     const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary, shareBrowserSignIns);
     if (!error.isEmpty()) return error;
     if (mode == "remote") QHostInfo::clearCache();
@@ -462,22 +471,39 @@ QString Controller::writeSettings(const QString &mode, const QString &url, const
 }
 QVariantList Controller::providers() const {
     auto result = m_providers;
+    const auto rank = [&](const QVariant &v) -> double {
+        const auto row = v.toMap();
+        const auto i = m_order.indexOf(Usage::rowKey(row));
+        if (i >= 0) return i;
+        const auto typeIndex = m_order.indexOf(Usage::providerType(row));
+        return typeIndex < 0 ? 999 : typeIndex + 0.5;
+    };
     std::stable_sort(result.begin(), result.end(), [&](const QVariant &a, const QVariant &b) {
-        auto rank = [&](const QVariant &v) { const auto i = m_order.indexOf(v.toMap()["provider_name"].toString()); return i < 0 ? 999 : i; };
         return rank(a) < rank(b);
     });
     return result;
 }
 QString Controller::primary() const {
     const auto ordered = providers();
-    return ordered.isEmpty() ? (m_order.isEmpty() ? m_primary : m_order.first()) : ordered.first().toMap()["provider_name"].toString();
+    if (!ordered.isEmpty()) return ordered.first().toMap()["provider_name"].toString();
+    if (m_order.isEmpty()) return m_primary;
+    // Without rows an account key ("Claude:work") has no label; the tray shows its provider type.
+    return m_order.first().section(':', 0, 0);
 }
 void Controller::moveProvider(const QString &source, const QString &target, bool after) {
     if (source == target) return;
     QStringList order;
-    for (const auto &p : providers()) order.append(p.toMap()["provider_name"].toString());
-    if (!order.contains(source) || !order.contains(target)) return;
-    order.removeAll(source); order.insert(order.indexOf(target) + (after ? 1 : 0), source);
+    QString sourceKey, targetKey;
+    for (const auto &p : providers()) {
+        const auto row = p.toMap();
+        const auto name = row["provider_name"].toString();
+        const auto key = Usage::rowKey(row);
+        order.append(key);
+        if (name == source) sourceKey = key;
+        if (name == target) targetKey = key;
+    }
+    if (sourceKey.isEmpty() || targetKey.isEmpty()) return;
+    order.removeAll(sourceKey); order.insert(order.indexOf(targetKey) + (after ? 1 : 0), sourceKey);
     for (const auto &name : m_order) if (!order.contains(name)) order.append(name);
     const auto previous = m_order; m_order = order;
     const QString error = m_settingsService.saveOrder(order, order.first());
@@ -490,8 +516,18 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
     m_primary = order.first(); emit settingsChanged(); emit providersChanged(); emit changed();
 }
 
+QString Controller::providerTypeFor(const QString &name) const {
+    // Outage-masked rows retain identity fields in m_providers; retained readings
+    // contain only meters and do not provide a separate row identity.
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        if (row["provider_name"].toString() == name) return Usage::providerType(row);
+    }
+    return name;
+}
+
 QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {
-    if (!Usage::isPercent(bucket)) return Usage::concern(provider, bucket);
+    if (!Usage::isPercent(bucket)) return Usage::concern(providerTypeFor(provider), bucket);
     return m_concerns.value(qMakePair(provider, bucket["id"].toString()));
 }
 bool Controller::isPercent(const QVariantMap &bucket) const { return Usage::isPercent(bucket); }
@@ -516,7 +552,7 @@ void Controller::updateMeterStates() {
                 continue;
             }
             present.insert(key);
-            auto assessment = Usage::concern(name, bucket, now);
+            auto assessment = Usage::concern(Usage::providerType(provider), bucket, now);
             const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs);
             const auto window = reset.isValid() ? QString::number(reset.toMSecsSinceEpoch()) : QString();
             // Once a known window expires, wait for its replacement. Reusing
@@ -558,8 +594,8 @@ void Controller::updateMeterStates() {
         }
     }
 }
-QVariantList Controller::notches(const QString &provider, const QVariantMap &bucket) const { return Usage::notches(provider, bucket); }
-QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucket) const { return Usage::pacing(provider, bucket); }
+QVariantList Controller::notches(const QString &provider, const QVariantMap &bucket) const { return Usage::notches(providerTypeFor(provider), bucket); }
+QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucket) const { return Usage::pacing(providerTypeFor(provider), bucket); }
 QString Controller::countdown(const QString &timestamp) const { return Usage::countdown(timestamp); }
 QString Controller::resetTimeLabel(const QString &timestamp) const { return Usage::resetTimeLabel(timestamp); }
 void Controller::setPrimary(const QString &name) {

@@ -20,7 +20,7 @@ QStringList Usage::detailSummary(const QVariantMap &provider, const QDateTime &n
     const auto details = provider["usage_details"].toMap();
     for (const auto &value : details["quotas"].toList()) {
         const auto quota = value.toMap();
-        if (!visible(quota) || quota["bucket_id"] != "weekly_grok_bot" || provider["provider_name"] != "Cursor") continue;
+        if (!visible(quota) || quota["bucket_id"] != "weekly_grok_bot" || Usage::providerType(provider) != "Cursor") continue;
         QStringList facts;
         if (!quota["has_available_usage"].isNull())
             facts << (quota["has_available_usage"].toBool() ? QStringLiteral("Usage available") : QStringLiteral("No usage available"));
@@ -49,7 +49,7 @@ QStringList Usage::detailSummary(const QVariantMap &provider, const QDateTime &n
         rows << historical(grants, grantCount == 1 ? QStringLiteral("1 restricted grant reported")
             : QStringLiteral("%1 restricted grants reported").arg(grantCount));
     const auto inventory = details["reset_inventory"].toMap();
-    if (provider["provider_name"] == "Grok" && visible(inventory) && inventory["reported_count"].toLongLong() > 0) {
+    if (Usage::providerType(provider) == "Grok" && visible(inventory) && inventory["reported_count"].toLongLong() > 0) {
         const qint64 count = inventory["reported_count"].toLongLong();
         QString text = QStringLiteral("Reset inventory (read-only): %1 reported").arg(count);
         QDateTime next;

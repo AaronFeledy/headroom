@@ -70,6 +70,8 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
     for (const auto &entry : providers) {
         const auto provider = entry.toMap();
         if (provider["provider_name"].toString() != primary) continue;
+        const QString type = Usage::providerType(provider);
+        result.providerType = type.toLower();
         if (!provider["is_success"].toBool()) { result.kind = Kind::ProviderError; break; }
         const auto buckets = provider["buckets"].toList();
         bool primaryAssigned = false;
@@ -81,7 +83,7 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
             if (!primaryAssigned) {
                 primaryAssigned = true;
                 result.used = used; result.level = severity;
-                const auto pace = Usage::pacing(primary, bucket, now);
+                const auto pace = Usage::pacing(type, bucket, now);
                 result.expected = pace["available"].toBool() ? pace["expected"].toDouble() : -1;
                 result.kind = used >= 100 ? Kind::Exhausted : Kind::Usage;
                 resetText = resetDescription(bucket, now);
@@ -212,7 +214,7 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size, const TrayVisual::A
         drawUnreadBadge(p, model.unread);
         return pixmap;
     }
-    const QPixmap provider = providerPixmap(model.provider);
+    const QPixmap provider = providerPixmap(model.providerType.isEmpty() ? model.provider : model.providerType);
     if (fire > 0) p.setOpacity(1.0 - fire);
     if (!provider.isNull()) {
         const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(32, 32), Qt::KeepAspectRatio);

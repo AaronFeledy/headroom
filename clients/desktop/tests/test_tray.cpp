@@ -30,6 +30,19 @@ class TrayTest : public QObject {
         return count;
     }
 private slots:
+    void accountPrimaryUsesTypeForPacingAndIcon() {
+        auto row = provider("Claude (Work)", {meter("session", 12)});
+        row["provider_type"] = "Claude";
+        row["account"] = QVariantMap{{"id", "work"}, {"label", "Work"}};
+        const auto model = TrayVisual::build(ready(), {row}, "Claude (Work)", assess, now);
+        QCOMPARE(model.provider, "Claude (Work)");
+        QCOMPARE(model.providerType, "claude");
+        QCOMPARE(model.expected, 50);
+        QVERIFY(model.tooltip.startsWith("Claude (Work)"));
+        const auto defaultModel = TrayVisual::build(ready(), {provider("Claude", {meter("session", 12)})}, "Claude", assess, now);
+        QCOMPARE(TrayVisual::icon(model).pixmap(64, 64).toImage(),
+            TrayVisual::icon(defaultModel).pixmap(64, 64).toImage());
+    }
     void unreadBadgeSurvivesEveryTrayState() {
         for (const auto kind : {TrayVisual::Kind::Usage, TrayVisual::Kind::Exhausted,
                 TrayVisual::Kind::Offline, TrayVisual::Kind::AuthError, TrayVisual::Kind::Setup}) {
