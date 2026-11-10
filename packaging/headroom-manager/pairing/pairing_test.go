@@ -51,7 +51,7 @@ func fixtureCoordinator() (Coordinator, *fixtureEndpoint, *fixtureEndpoint, *[]s
 	events := []string{}
 	local := &fixtureEndpoint{name: "local", events: &events, identity: Identity{Version: "2.0.0", Platform: "windows", Architecture: "x86_64", Entry: config.WindowsEntry, Root: `C:\Headroom`, Manager: `C:\Headroom\versions\2.0.0\bin\headroom-package.exe`, Trusted: true}}
 	peer := &fixtureEndpoint{name: "peer", events: &events, identity: Identity{Version: "2.0.0", Platform: "linux", Architecture: "x86_64", Kind: "cli", Entry: config.LinuxEntry, Root: "/home/testuser/.local/share/headroom", Manager: "/home/testuser/.local/share/headroom/versions/2.0.0/bin/headroom-package", Trusted: true}}
-	c := Coordinator{Config: config, Platform: "windows", Local: local, Peer: peer, Latest: func(context.Context) (string, error) { return "2.1.0", nil }, SaveProgress: func(p Progress) error { events = append(events, "save:"+p.Phase); return nil }}
+	c := Coordinator{Config: config, Platform: "windows", Local: local, Peer: peer, Latest: func(context.Context) (string, error) { return "2.1.0", nil }, SaveProgress: func(p Progress) error { events = append(events, "save:"+string(p.Phase)); return nil }}
 	return c, local, peer, &events
 }
 
