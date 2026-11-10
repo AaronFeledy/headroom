@@ -18,8 +18,11 @@ func TestRecoveryCrashHelper(t *testing.T) {
 		if phase == point {
 			os.Exit(86)
 		}
-		if phase == "candidate-launched" && (point == "rolling-back" || point == "rollback-relaunch" || point == "rolled-back" || point == "rollback-generation-removed") {
-			return errors.New("matrix candidate failure")
+		if phase == "candidate-launched" {
+			switch point {
+			case "rolling-back", "rollback-relaunch", "rolled-back", "rollback-generation-removed", "rollback-app-ready", "rollback-service-ready":
+				return errors.New("matrix candidate failure")
+			}
 		}
 		if phase == "generation-ready" && point == "rollback-generation-only-removed" {
 			return errors.New("matrix generation-ready failure")
@@ -39,6 +42,9 @@ func TestRecoveryCrashHelper(t *testing.T) {
 		t.Fatal("recovery did not reach crash point")
 	}
 	current := startInstalledFixture(t, root)
+	if os.Getenv("HEADROOM_CRASH_SERVICE") != "" {
+		startCrashManagedService(t, root)
+	}
 	prepared, err := PrepareApply(fixtureExecutable, ApplyRequest{
 		InstallRoot: root, EntryPath: filepath.Join(filepath.Dir(root), "entry", "headroom"+nativeExtension()),
 		StageRecord: os.Getenv("HEADROOM_CRASH_STAGE"), CurrentPID: current.Process.Pid, CurrentExecutable: current.Path,

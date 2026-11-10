@@ -68,6 +68,19 @@ func assertPriorRelaunched(t *testing.T, logPath string, prior InstallState) {
 	}
 }
 
+func assertPriorLaunchCount(t *testing.T, logPath string, prior InstallState) {
+	t.Helper()
+	count := 0
+	for _, launch := range crashLaunches(t, logPath) {
+		if launch.Version == prior.ActiveVersion {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("prior launches in %s = %d; want 1", filepath.Base(logPath), count)
+	}
+}
+
 func assertCrashRecovered(t *testing.T, root string, want InstallState) {
 	t.Helper()
 	state, err := readStateUnchecked(root)

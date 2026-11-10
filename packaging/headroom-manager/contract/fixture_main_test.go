@@ -50,6 +50,7 @@ func main() {
  if os.Getenv("HEADROOM_FIXTURE_CRASH_VERSION")==version { os.Exit(8) }
  if ready!="" && os.Getenv("HEADROOM_FIXTURE_NO_READY_VERSION")!=version { b,_:=json.Marshal(map[string]any{"nonce":os.Getenv("HEADROOM_READY_NONCE"),"pid":os.Getpid(),"version":version,"executable":executable}); if log!="" { f,e:=os.OpenFile(log,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e==nil { _,_=f.Write(append(b,'\n')); _=f.Close() } }; _=os.WriteFile(ready,append(b,'\n'),0600) }
  if evidence:=os.Getenv("USAGE_CONFIG"); evidence!="" && os.Getenv("HEADROOM_MANAGED_SERVICE_RESTART")!="" {
+  if log!="" { b,_:=json.Marshal(map[string]any{"pid":os.Getpid(),"version":version,"executable":executable}); f,e:=os.OpenFile(log,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e==nil { _,_=f.Write(append(b,'\n')); _=f.Close() } }
   cwd,_:=os.Getwd(); _=os.WriteFile(evidence,[]byte(cwd+"\n"+os.Getenv("USAGE_LISTEN_ADDR")+"\n"),0600)
   receipt:=filepath.Join(os.Getenv("HEADROOM_INSTALL_ROOT"),"runtime","managed-serve.json")
   for i:=0;i<250;i++ {

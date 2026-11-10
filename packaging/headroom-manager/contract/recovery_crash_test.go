@@ -21,6 +21,7 @@ func TestApplyCrashRecoveryMatrix(t *testing.T) {
 		"copying", "generation-ready", "bootstrap-intent", "bootstrap-applied", "bootstrap-ready",
 		"state-intent", "state-applied", "activated", "candidate-launched", "complete", "rolling-back", "rollback-relaunch", "rolled-back", "recovery-rollback-relaunch",
 		"rollback-generation-removed", "rollback-generation-only-removed",
+		"rollback-app-ready", "recovery-app-ready", "rollback-service-ready", "recovery-service-ready",
 	} {
 		t.Run(point, func(t *testing.T) {
 			t.Parallel()
@@ -37,13 +38,24 @@ func TestApplyCrashRecoveryMatrix(t *testing.T) {
 			}
 			logPath := filepath.Join(directory, "launches.jsonl")
 			t.Cleanup(func() { stopCrashFixtures(t, logPath) })
+			serviceLog := filepath.Join(directory, "service-launches.jsonl")
+			t.Cleanup(func() { stopCrashFixtures(t, serviceLog) })
+			t.Cleanup(func() { stopCrashFixtures(t, filepath.Join(directory, "original-service.jsonl")) })
 			firstPoint := point
-			if point == "recovery-rollback-relaunch" {
+			if strings.HasPrefix(point, "recovery-") {
 				firstPoint = "activated"
 			}
-			runCrashHelper(t, []string{"HEADROOM_CRASH_ROOT=" + root, "HEADROOM_CRASH_STAGE=" + stageRecord(stage), "HEADROOM_CRASH_POINT=" + firstPoint})
-			if point == "recovery-rollback-relaunch" {
-				runCrashHelper(t, []string{"HEADROOM_CRASH_ROOT=" + root, "HEADROOM_CRASH_POINT=rollback-relaunch", "HEADROOM_CRASH_RECOVER=1"})
+			environment := []string{"HEADROOM_CRASH_ROOT=" + root, "HEADROOM_CRASH_STAGE=" + stageRecord(stage), "HEADROOM_CRASH_POINT=" + firstPoint}
+			if strings.HasSuffix(point, "service-ready") {
+				environment = append(environment, "HEADROOM_CRASH_SERVICE=1")
+			}
+			runCrashHelper(t, environment)
+			if strings.HasPrefix(point, "recovery-") {
+				recoveryPoint := point
+				if point == "recovery-rollback-relaunch" {
+					recoveryPoint = "rollback-relaunch"
+				}
+				runCrashHelper(t, []string{"HEADROOM_CRASH_ROOT=" + root, "HEADROOM_CRASH_POINT=" + recoveryPoint, "HEADROOM_CRASH_RECOVER=1"})
 			}
 			paths, err := filepath.Glob(filepath.Join(root, "transactions", "apply-*", TransactionJournalName))
 			if err != nil || len(paths) != 1 {
@@ -60,6 +72,8 @@ func TestApplyCrashRecoveryMatrix(t *testing.T) {
 			})
 			wantPhase := strings.TrimPrefix(point, "recovery-")
 			switch point {
+			case "rollback-app-ready", "recovery-app-ready", "rollback-service-ready", "recovery-service-ready":
+				wantPhase = "rollback-relaunch"
 			case "bootstrap-applied":
 				wantPhase = "bootstrap-intent"
 			case "state-applied":
@@ -87,6 +101,16 @@ func TestApplyCrashRecoveryMatrix(t *testing.T) {
 				want = *journal.Candidate
 			}
 			assertCrashRecovered(t, root, want)
+			if strings.HasSuffix(point, "app-ready") || strings.HasSuffix(point, "service-ready") {
+				terminal, err := readJournal(paths[0])
+				if err != nil || terminal.Phase != journalPhaseRolledBack {
+					t.Fatalf("relaunch recovery did not reach rolled-back: %+v, %v", terminal, err)
+				}
+				assertPriorLaunchCount(t, logPath, prior)
+				if strings.HasSuffix(point, "service-ready") {
+					assertPriorLaunchCount(t, serviceLog, prior)
+				}
+			}
 			if err := rejectIncompleteTransactions(root); err != nil {
 				t.Errorf("recovery still blocks future updates: %v", err)
 			}
@@ -107,6 +131,9 @@ func TestApplyCrashRecoveryMatrix(t *testing.T) {
 			after := crashRecoverySnapshot(t, root, logPath)
 			if !bytes.Equal(before, after) {
 				t.Fatal("second recovery changed state, bootstrap, result, or relaunch evidence")
+			}
+			if strings.HasSuffix(point, "service-ready") {
+				assertPriorLaunchCount(t, serviceLog, prior)
 			}
 		})
 	}

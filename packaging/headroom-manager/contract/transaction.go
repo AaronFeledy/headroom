@@ -617,13 +617,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			relaunch := journal.Request
 			relaunch.ReadyPath = filepath.Join(directory, "rollback-ready.json")
 			relaunch.Nonce, _ = randomHex(24)
-			if relaunchErr := launchAndAwaitReady(relaunch, *previous, nil); relaunchErr != nil {
-				cleanupErr = fmt.Errorf("previous app relaunch failed: %w", relaunchErr)
-			} else if hasManagedService(relaunch) {
-				if serviceErr := launchManagedService(relaunch, *previous, nil); serviceErr != nil {
-					cleanupErr = fmt.Errorf("previous managed service relaunch failed: %w", serviceErr)
-				}
-			}
+			cleanupErr = relaunchRollbackPrior(relaunch, *previous)
 		}
 		if cleanupErr != nil {
 			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "recovery_required", Version: previous.ActiveVersion,

@@ -9,6 +9,9 @@ import (
 func recoverApplyJournal(journal ApplyJournal, directory string) error {
 	root := journal.Request.InstallRoot
 	stops := planApplyRecovery(journal, recoveryStateMatch{})
+	if priorManagedServiceReady(journal) {
+		stops.stopService = recoveryServiceKeep
+	}
 	if stops.stopCandidate {
 		if err := stopRecordedProcess(journal.CandidatePID, journal.CandidateExe, journal.CandidateToken, 5*time.Second); err != nil {
 			return err
@@ -49,7 +52,7 @@ func recoverApplyJournal(journal ApplyJournal, directory string) error {
 		_ = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal)
 		return nil
 	case recoveryEarlyRelaunch:
-		if plan.finishServiceStop {
+		if plan.finishServiceStop && !priorManagedServiceReady(journal) {
 			if err := finishManagedServiceStopForRecovery(root, journal.Request); err != nil {
 				return err
 			}
@@ -76,18 +79,30 @@ func recoverApplyJournal(journal ApplyJournal, directory string) error {
 	relaunch := journal.Request
 	relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
 	relaunch.Nonce, _ = randomHex(24)
-	if err := launchAndAwaitReady(relaunch, *journal.Previous, nil); err != nil {
-		return err
+	if !priorAppReady(journal, directory) {
+		if err := launchAndAwaitReady(relaunch, *journal.Previous, nil); err != nil {
+			return err
+		}
+	}
+	if transactionTestHook != nil {
+		if err := transactionTestHook("recovery-app-ready"); err != nil {
+			return err
+		}
 	}
 	if hasManagedService(journal.Request) {
-		restartService := true
+		restartService := !priorManagedServiceReady(journal)
 		if plan.action == recoveryEarlyRelaunch {
 			_, serviceErr := ReadManagedService(root)
-			restartService = !plan.serviceIfMissing || serviceErr != nil
+			restartService = restartService && (!plan.serviceIfMissing || serviceErr != nil)
 		}
 		if restartService {
 			if err := launchManagedService(journal.Request, *journal.Previous, nil); err != nil {
 				return err
+			}
+			if transactionTestHook != nil {
+				if err := transactionTestHook("recovery-service-ready"); err != nil {
+					return err
+				}
 			}
 		}
 	}
