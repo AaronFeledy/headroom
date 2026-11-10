@@ -103,8 +103,8 @@ func coordinatedUpdate(ctx context.Context, args []string) error {
 }
 
 func samePair(left, right pairing.Config) bool {
-	left.State = "pending"
-	right.State = "pending"
+	left.State = pairing.StatePending
+	right.State = pairing.StatePending
 	return left == right
 }
 
@@ -113,7 +113,7 @@ func pairCommand(ctx context.Context, args []string) error {
 		return errors.New("usage: headroom pair windows-wsl --windows-entry PATH --wsl-distribution NAME --wsl-user USER --wsl-entry PATH")
 	}
 	set := flag.NewFlagSet("pair windows-wsl", flag.ContinueOnError)
-	config := pairing.Config{Schema: 1, Product: "Headroom", State: "pending"}
+	config := pairing.Config{Schema: 1, Product: "Headroom", State: pairing.StatePending}
 	set.StringVar(&config.WindowsEntry, "windows-entry", "", "absolute native Windows public headroom.exe path")
 	set.StringVar(&config.Distribution, "wsl-distribution", "", "exact local WSL distribution")
 	set.StringVar(&config.User, "wsl-user", "", "exact WSL account")
@@ -175,7 +175,7 @@ func pairCommand(ctx context.Context, args []string) error {
 	if response.Identity == nil || config.ValidateIdentity(*response.Identity, peerPlatform) != nil {
 		return errors.New("pairing peer identity did not match")
 	}
-	config.State = "active"
+	config.State = pairing.StateActive
 	if err = pairing.SaveConfig(root, config); err != nil {
 		return err
 	}
@@ -253,14 +253,14 @@ func handlePairRPC(ctx context.Context, request pairing.Request, response *pairi
 		if probe.Identity == nil || config.ValidateIdentity(*probe.Identity, peerPlatform) != nil {
 			return errors.New("reciprocal pairing probe failed")
 		}
-		config.State = "active"
+		config.State = pairing.StateActive
 		if err = pairing.SaveConfig(root, config); err != nil {
 			return err
 		}
 		response.Identity = &local
 		return nil
 	}
-	if loadErr != nil || stored.State != "active" || stored.ID != request.PairingID {
+	if loadErr != nil || stored.State != pairing.StateActive || stored.ID != request.PairingID {
 		return errors.New("pairing is not active")
 	}
 	if _, err = pairing.NativeRunner(stored); err != nil {

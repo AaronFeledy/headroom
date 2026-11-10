@@ -22,14 +22,14 @@ const ProgressName = "pairing/update-progress.json"
 const RPCArgument = "--headroom-pair-request"
 
 type Config struct {
-	Schema       int    `json:"schema"`
-	Product      string `json:"product"`
-	ID           string `json:"pairing_id"`
-	State        string `json:"state"`
-	WindowsEntry string `json:"windows_entry"`
-	Distribution string `json:"wsl_distribution"`
-	User         string `json:"wsl_user"`
-	LinuxEntry   string `json:"wsl_entry"`
+	Schema       int          `json:"schema"`
+	Product      string       `json:"product"`
+	ID           string       `json:"pairing_id"`
+	State        pairingState `json:"state"`
+	WindowsEntry string       `json:"windows_entry"`
+	Distribution string       `json:"wsl_distribution"`
+	User         string       `json:"wsl_user"`
+	LinuxEntry   string       `json:"wsl_entry"`
 }
 
 func NewID() (string, error) {
@@ -76,7 +76,7 @@ func canonicalPath(value, platform string) bool {
 }
 
 func (c Config) Validate() error {
-	if c.Schema != 1 || c.Product != "Headroom" || !validID(c.ID) || (c.State != "pending" && c.State != "active") {
+	if c.Schema != 1 || c.Product != "Headroom" || !validID(c.ID) || (c.State != StatePending && c.State != StateActive) {
 		return errors.New("invalid Windows/WSL pairing identity")
 	}
 	if !safeText(c.Distribution, 128) || strings.HasPrefix(c.Distribution, "-") || !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.-]{0,127}\$?$`).MatchString(c.User) {
@@ -147,12 +147,12 @@ type Prepared struct {
 }
 
 type Progress struct {
-	Schema    int       `json:"schema"`
-	Product   string    `json:"product"`
-	PairingID string    `json:"pairing_id"`
-	Version   string    `json:"version"`
-	Phase     string    `json:"phase"`
-	Peer      *Identity `json:"peer,omitempty"`
+	Schema    int           `json:"schema"`
+	Product   string        `json:"product"`
+	PairingID string        `json:"pairing_id"`
+	Version   string        `json:"version"`
+	Phase     progressPhase `json:"phase"`
+	Peer      *Identity     `json:"peer,omitempty"`
 }
 
 // Endpoint owns only its native installation. Commit acknowledges a durable
@@ -188,7 +188,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 	if err := c.Config.Validate(); err != nil {
 		return "", err
 	}
-	if c.Config.State != "active" {
+	if c.Config.State != StateActive {
 		return "", errors.New("Windows/WSL pairing has not completed")
 	}
 	peerPlatform := "windows"
@@ -217,7 +217,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", errors.New("paired update recovery identity is invalid")
 		}
 		switch previous.Phase {
-		case "prepared", "peer_committing", "peer_applied", "complete":
+		case progressPhasePrepared, progressPhasePeerCommitting, progressPhasePeerApplied, progressPhaseComplete:
 		default:
 			return "", errors.New("paired update recovery phase is invalid")
 		}
@@ -225,10 +225,10 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	if c.Reconcile && (previous.Phase == "" || previous.Phase == "complete") {
+	if c.Reconcile && (previous.Phase == "" || previous.Phase == progressPhaseComplete) {
 		return "", errors.New("there is no unfinished paired update to reconcile")
 	}
-	peerConfirmed := !c.Reconcile && (previous.Phase == "peer_committing" || previous.Phase == "peer_applied")
+	peerConfirmed := !c.Reconcile && (previous.Phase == progressPhasePeerCommitting || previous.Phase == progressPhasePeerApplied)
 	var peer Identity
 	if peerConfirmed {
 		if previous.Peer == nil || c.Config.ValidateIdentity(*previous.Peer, peerPlatform) != nil {
@@ -263,7 +263,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("paired installation is not ready for reconciliation: %w", err)
 		}
 	}
-	if !c.Reconcile && previous.Phase != "" && previous.Phase != "complete" {
+	if !c.Reconcile && previous.Phase != "" && previous.Phase != progressPhaseComplete {
 		if previous.Schema != 1 || previous.Product != "Headroom" || previous.PairingID != c.Config.ID {
 			return "", errors.New("paired update recovery identity is invalid")
 		}
@@ -291,7 +291,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 		if err = c.Peer.Verify(ctx, version); err != nil {
 			return "", err
 		}
-		return version, c.save(version, "complete")
+		return version, c.save(version, progressPhaseComplete)
 	}
 	preparedLocal, err := c.Local.Prepare(ctx, version)
 	if err != nil {
@@ -313,11 +313,11 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", errors.New("paired preparation does not match the exact target")
 		}
 	}
-	if err = c.save(version, "prepared"); err != nil {
+	if err = c.save(version, progressPhasePrepared); err != nil {
 		return "", err
 	}
 	if !preparedPeer.Current {
-		if err = c.save(version, "peer_committing"); err != nil {
+		if err = c.save(version, progressPhasePeerCommitting); err != nil {
 			return "", err
 		}
 		commitErr := c.Peer.Commit(ctx, preparedPeer)
@@ -329,7 +329,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 	} else if err = c.Peer.Verify(ctx, version); err != nil {
 		return "", err
 	}
-	if err = c.save(version, "peer_applied"); err != nil {
+	if err = c.save(version, progressPhasePeerApplied); err != nil {
 		return "", err
 	}
 	if !preparedLocal.Current {
@@ -343,10 +343,10 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 	if err = c.Local.Verify(ctx, version); err != nil {
 		return "", err
 	}
-	return version, c.save(version, "complete")
+	return version, c.save(version, progressPhaseComplete)
 }
 
-func (c Coordinator) save(version, phase string) error {
+func (c Coordinator) save(version string, phase progressPhase) error {
 	if c.SaveProgress == nil {
 		return errors.New("paired update has no durable recovery store")
 	}

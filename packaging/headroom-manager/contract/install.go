@@ -241,7 +241,7 @@ func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath st
 	if managedCLIEntry != "" && manifest.Platform != "windows" {
 		state.ServerEntryPath = filepath.Join(filepath.Dir(managedCLIEntry), "usage-server")
 	}
-	journal := InstallJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "generation-ready", InstallRoot: installRoot,
+	journal := InstallJournal{Schema: SchemaVersion, Product: "Headroom", Phase: journalPhaseGenerationReady, InstallRoot: installRoot,
 		EntryPath: entryPath, CLIEntryPath: managedCLIEntry, GenerationDir: generation, Candidate: state}
 	for _, directory := range superseded {
 		journal.Supersedes = append(journal.Supersedes, filepath.Base(directory))
@@ -277,11 +277,16 @@ func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath st
 		_ = os.RemoveAll(backup)
 		return InstallState{}, err
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-generation-ready"); err != nil {
+			return InstallState{}, err
+		}
+	}
 	if err = prepareBootstrapBackupWithCLI(installRoot, entryPath, managedCLIEntry, backup); err != nil {
 		_ = os.RemoveAll(generation)
 		return InstallState{}, err
 	}
-	journal.Phase = "bootstrap-intent"
+	journal.Phase = journalPhaseBootstrapIntent
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, err
 	}
@@ -293,16 +298,36 @@ func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath st
 	if err = applyBootstrapWithCLI(stage.PackageRoot, installRoot, entryPath, managedCLIEntry, manifest); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
 	}
-	journal.Phase = "state-intent"
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-bootstrap-applied"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
+	}
+	journal.Phase = journalPhaseStateIntent
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-state-intent"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
 	}
 	if err = writeDurableJSON(statePath, state); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
 	}
-	journal.Phase = "complete"
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-state-applied"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
+	}
+	journal.Phase = journalPhaseComplete
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, err
+	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-complete"); err != nil {
+			return InstallState{}, err
+		}
 	}
 	_ = os.Remove(filepath.Join(installRoot, "last-apply-result.json"))
 	_ = os.RemoveAll(backup)
@@ -418,7 +443,7 @@ func MigrateManagedEntries(installRoot, applicationEntry, cliEntry string, repla
 	}
 	updated := *state
 	updated.ApplicationEntryPath, updated.CLIEntryPath, updated.ServerEntryPath = applicationEntry, cliEntry, serverEntry
-	journal := EntryMigrationJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "entry-intent", InstallRoot: root,
+	journal := EntryMigrationJournal{Schema: SchemaVersion, Product: "Headroom", Phase: journalPhaseEntryIntent, InstallRoot: root,
 		EntryPath: applicationEntry, CLIEntryPath: cliEntry, Previous: *state, Candidate: updated}
 	journalPath := filepath.Join(backupDir, EntryMigrationJournalName)
 	if err = writeDurableJSON(journalPath, journal); err != nil {
@@ -453,7 +478,7 @@ func MigrateManagedEntries(installRoot, applicationEntry, cliEntry string, repla
 			return InstallState{}, rollback(err)
 		}
 	}
-	journal.Phase = "state-intent"
+	journal.Phase = journalPhaseStateIntent
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, rollback(err)
 	}
@@ -463,7 +488,7 @@ func MigrateManagedEntries(installRoot, applicationEntry, cliEntry string, repla
 	if inspection := InspectInstall(root); !inspection.TrustedIdentity || !inspection.Complete {
 		return InstallState{}, rollback(errors.New("migrated entries failed verification"))
 	}
-	journal.Phase = "complete"
+	journal.Phase = journalPhaseComplete
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, err
 	}
