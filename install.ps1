@@ -28,8 +28,11 @@ function Save-HeadroomFile {
     param([Parameter(Mandatory)][uri]$Uri, [Parameter(Mandatory)][string]$Destination, [long]$MaxBytes = 8MB, [int]$TimeoutSeconds = 120)
     Add-Type -AssemblyName System.Net.Http
     $current = $Uri
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     for ($redirects = 0; $redirects -le 5; $redirects++) {
         if ($current.Scheme -ne 'https' -or $current.Port -ne 443 -or $current.UserInfo -or $allowedDownloadHosts -notcontains $current.DnsSafeHost.ToLowerInvariant()) { throw "Refusing untrusted download URL: $current" }
+        $remaining = $deadline - [DateTime]::UtcNow
+        if ($remaining -le [TimeSpan]::Zero) { throw 'Download deadline exceeded.' }
         $handler = [System.Net.Http.HttpClientHandler]::new()
         $handler.AllowAutoRedirect = $false
         $client = [System.Net.Http.HttpClient]::new($handler)
@@ -37,7 +40,7 @@ function Save-HeadroomFile {
         $response = $null
         $cancel = $null
         try {
-            $cancel = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($TimeoutSeconds))
+            $cancel = [System.Threading.CancellationTokenSource]::new($remaining)
             $response = $client.GetAsync($current, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cancel.Token).GetAwaiter().GetResult()
             if ([int]$response.StatusCode -ge 300 -and [int]$response.StatusCode -lt 400) {
                 if (-not $response.Headers.Location) { throw "Download redirect has no location: $current" }

@@ -108,7 +108,7 @@ internal sealed partial class TrayApiHarnessTests
         var snapshot = await poller.PollAsync();
 
         AssertEqual(TrayApiState.Offline, snapshot.State);
-        AssertEqual(3, deps.Launcher.Starts);
+        AssertEqual(5, deps.Launcher.Starts);
     }
 
     public async Task Test_RemoteModeSkipsLocalProcessWork()

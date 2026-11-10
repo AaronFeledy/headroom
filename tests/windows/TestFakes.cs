@@ -194,7 +194,15 @@ internal sealed class FakeJob : IServerJob
 
 internal sealed class FakeDelay : IServerDelay
 {
-    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) => Task.CompletedTask;
+    public List<TimeSpan> Delays { get; } = new();
+    public Func<int, Task>? OnDelay { get; set; }
+
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Delays.Add(delay);
+        return (OnDelay?.Invoke(Delays.Count) ?? Task.CompletedTask).WaitAsync(cancellationToken);
+    }
 }
 
 internal sealed class FakeReleaseHandler : HttpMessageHandler

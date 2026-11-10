@@ -13,40 +13,54 @@ public sealed partial class ServerProcessManager
 
     private async Task RestartAfterExitAsync(IManagedServerProcess exitedProcess, int generation, CancellationToken cancellationToken)
     {
+        IManagedServerProcess? expectedProcess = exitedProcess;
+        var expectedGeneration = generation;
+        var expectedResult = _started;
         try
         {
-            if (_options.MaxRestartAttempts <= 0 || cancellationToken.IsCancellationRequested)
+            for (var attempt = 0; attempt < _options.MaxRestartAttempts; attempt++)
             {
-                return;
-            }
-            await _dependencies.Delay.DelayAsync(Backoff(0), cancellationToken).ConfigureAwait(false);
-            await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (!ReferenceEquals(_process, exitedProcess) || generation != _generation)
+                await _dependencies.Delay.DelayAsync(Backoff(attempt), cancellationToken).ConfigureAwait(false);
+                await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
                 {
-                    return;
+                    if (_disposeStarted != 0 || cancellationToken.IsCancellationRequested
+                        || !ReferenceEquals(_process, expectedProcess) || expectedGeneration != _generation
+                        || !ReferenceEquals(_started, expectedResult))
+                    {
+                        return;
+                    }
+                    try
+                    {
+                        await DisposeOwnedProcessAsync(cancellationToken).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        _started = null;
+                        var result = await StartOwnedAsync(cancellationToken).ConfigureAwait(false);
+                        if (result.State == ServerProcessState.Started)
+                        {
+                            return;
+                        }
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        Fail(ServerProcessError.LaunchFailed, ex.Message);
+                    }
+                    expectedProcess = _process;
+                    expectedGeneration = _generation;
+                    expectedResult = _started;
+                    if (attempt == _options.MaxRestartAttempts - 1)
+                    {
+                        SetRestartFailed();
+                    }
                 }
-                await DisposeOwnedProcessAsync(cancellationToken).ConfigureAwait(false);
-                _started = null;
-                var result = await StartOwnedAsync(cancellationToken).ConfigureAwait(false);
-                if (result.State == ServerProcessState.Started)
+                finally
                 {
-                    return;
+                    _lifecycle.Release();
                 }
-                SetRestartFailed();
-            }
-            finally
-            {
-                _lifecycle.Release();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-        }
-        catch
-        {
-            await RecordRestartFailedAsync().ConfigureAwait(false);
         }
     }
 
@@ -55,16 +69,4 @@ public sealed partial class ServerProcessManager
         _started = new ServerProcessResult(ServerProcessState.Failed, EffectiveBaseUrl, false, ServerProcessError.RestartFailed, "Automatic local server restart failed.");
     }
 
-    private async Task RecordRestartFailedAsync()
-    {
-        await _lifecycle.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            SetRestartFailed();
-        }
-        finally
-        {
-            _lifecycle.Release();
-        }
-    }
 }

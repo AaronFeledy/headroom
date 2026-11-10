@@ -30,6 +30,23 @@ internal sealed partial class ServerProcessManagerTests
         AssertEqual(0, deps.Launcher.Starts);
     }
 
+    public async Task Test_ReprobesAttachedServer_when_EnsuringStartedAgain()
+    {
+        var deps = FakeDependencies.Create();
+        foreach (var healthy in new[] { true, true, false, true })
+            deps.Health.Results.Enqueue(healthy);
+        await using var manager = new ServerProcessManager(new ServerProcessOptions(), deps.Value);
+        await manager.EnsureStartedAsync();
+
+        AssertEqual(ServerProcessState.Attached, (await manager.EnsureStartedAsync()).State);
+        AssertEqual(2, deps.Health.Calls);
+        AssertEqual(0, deps.Launcher.Starts);
+        AssertEqual(ServerProcessState.Started, (await manager.EnsureStartedAsync()).State);
+        AssertEqual(1, deps.Launcher.Starts);
+        AssertEqual(ServerProcessState.Started, (await manager.EnsureStartedAsync()).State);
+        AssertEqual(4, deps.Health.Calls);
+    }
+
     public async Task Test_AcquiresBinary_when_MissingBeforeSpawn()
     {
         var deps = FakeDependencies.Create();

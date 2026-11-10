@@ -4,7 +4,7 @@ public sealed partial class ServerProcessManager : IPendingUpdateServerStopper
 {
     public async Task StopOwnedServerAsync(CancellationToken cancellationToken)
     {
-        if (_disposeStarted != 0 || !OwnsProcess)
+        if (_disposeStarted != 0)
         {
             return;
         }
