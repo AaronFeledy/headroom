@@ -12,15 +12,22 @@ export type Provider = {
   error: string | null;
   is_success: boolean;
   needs_reauth: boolean;
-  auth?: { state: string };
+  auth?: { state: string; source?: { readonly kind?: string; readonly name?: string } | null };
   primary_status_text?: unknown;
   secondary_status_text?: unknown;
   buckets: Bucket[];
-  fetch_status?: { failure_kind?: string | null; credential_epoch?: string | null };
+  fetch_status?: { failure_kind?: string | null; credential_epoch?: string | null; fetched_at?: string | null };
 };
 export type Snapshot = { providers: Provider[]; status: "ready" | "offline" | "missing" | "invalid" };
 export type KeyView = { provider: string; account?: string; label: string; value: string; detail: string; used?: number;
-  expected?: number; pace?: string; color?: string; display?: "used" | "left" };
+  expected?: number; pace?: string; color?: string; display?: "used" | "left"; stale?: boolean };
+export type RetainedReading = {
+  readonly view: Readonly<KeyView>;
+  readonly epoch: string;
+  readonly source: string;
+  readonly observedAt: number;
+  readonly provider_name: string;
+};
 
 const accountID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
@@ -93,6 +100,11 @@ export function resetLabel(reset: string | null, now: number): string {
   return "Reset " + Math.floor(hours / 24) + "d " + hours % 24 + "h";
 }
 
+function matchingProvider(snapshot: Snapshot, config: Required<Settings>): Provider | undefined {
+  return snapshot.providers.find((row) =>
+    (row.provider_type || row.provider_name) === config.provider && (row.account?.id ?? "") === config.account);
+}
+
 export function keyView(snapshot: Snapshot | undefined, raw: Settings, now = Date.now(), warning?: WarningState): KeyView {
   const config = settings(raw);
   const provider = providers[config.provider as ProviderID];
@@ -104,8 +116,7 @@ export function keyView(snapshot: Snapshot | undefined, raw: Settings, now = Dat
   if (snapshot.status === "missing") return unavailable("Setup", "Install Headroom");
   if (snapshot.status === "invalid") return unavailable("No data", "Check Headroom");
   if (snapshot.status !== "ready") return unavailable("Offline");
-  const p = snapshot.providers.find((row) =>
-    (row.provider_type || row.provider_name) === config.provider && (row.account?.id ?? "") === config.account);
+  const p = matchingProvider(snapshot, config);
   if (!p) return unavailable("Disabled", "Enable in app");
   if (p.needs_reauth || ["signed_out", "expired"].includes(p.auth?.state ?? "")) return unavailable("Sign in");
   if (p.error !== null || !p.is_success) return unavailable("No data");
@@ -126,4 +137,41 @@ export function keyView(snapshot: Snapshot | undefined, raw: Settings, now = Dat
     value: Math.round(amount) + "%", detail: resetLabel(b.resets_at, now), used: b.utilization,
     expected: pace.expected, pace: pace.label, color: warningColors[level],
   };
+}
+
+// Capture the already-computed live presentation so clocks cannot advance stale pace or reset text.
+function retainReading(previous: RetainedReading | undefined, provider: Provider | undefined,
+  view: KeyView, now: number): RetainedReading | undefined {
+  if (!provider) return undefined;
+  const authSource = provider.auth?.source;
+  const source = authSource && Object.keys(authSource).length ? (authSource.kind ?? "") + "\n" + (authSource.name ?? "") : "";
+  const epoch = provider.fetch_status?.credential_epoch ?? "";
+  if (provider.is_success) {
+    if (view.used === undefined) return undefined;
+    const fetchedAt = Date.parse(provider.fetch_status?.fetched_at ?? "");
+    return { view: { ...view }, epoch, source, provider_name: provider.provider_name,
+      observedAt: Number.isFinite(fetchedAt) ? Math.min(fetchedAt, now) : now };
+  }
+  if (!previous || provider.provider_name !== previous.provider_name || provider.needs_reauth ||
+      provider.fetch_status?.failure_kind === "auth" || provider.auth?.state === "expired" ||
+      provider.auth?.state === "signed_out" || !epoch || epoch !== previous.epoch ||
+      source !== "" && source !== previous.source) return undefined;
+  return previous;
+}
+
+export function presentKey(snapshot: Snapshot | undefined, raw: Settings, now = Date.now(),
+  warning?: WarningState, previous?: RetainedReading): { readonly view: KeyView; readonly retained: RetainedReading | undefined } {
+  const view = keyView(snapshot, raw, now, warning);
+  if (snapshot?.status !== "ready") return { view, retained: previous };
+  const provider = matchingProvider(snapshot, settings(raw));
+  const retained = retainReading(previous, provider, view, now);
+  const kind = provider?.fetch_status?.failure_kind;
+  const epoch = provider?.fetch_status?.credential_epoch;
+  const signedIn = provider && !provider.needs_reauth && (provider.auth === undefined || provider.auth.state === "signed_in");
+  if (provider && !provider.is_success && retained?.view.used !== undefined &&
+      now - retained.observedAt <= 24 * 3600 * 1000 && signedIn &&
+      (kind === "transient" || kind === "rate_limited") && epoch && epoch === retained.epoch) {
+    return { view: { ...retained.view, color: "#6272a4", stale: true }, retained };
+  }
+  return { view, retained };
 }

@@ -1,5 +1,5 @@
 import { UsageActivity, CriticalActivity, PULSE_FRAME_MS } from "./activity.js";
-import { keyView, type KeyView, type Settings, type Snapshot } from "./model.js";
+import { presentKey, type KeyView, type RetainedReading, type Settings, type Snapshot } from "./model.js";
 import type { WarningState } from "./pacing.js";
 import { keyImage } from "./render.js";
 
@@ -21,6 +21,7 @@ export class UsageKeyDisplay {
   private activity = new UsageActivity();
   private critical = new CriticalActivity();
   private warning: WarningState = { level: 0 };
+  private retained?: RetainedReading;
   private view: KeyView;
   private cancelFrame?: () => void;
   private disposed = false;
@@ -30,7 +31,7 @@ export class UsageKeyDisplay {
 
   constructor(private config: Settings, private icons: Record<string, string>,
     private write: (image: string) => Promise<void>, private time: AnimationClock = clock) {
-    this.view = keyView(undefined, config);
+    this.view = presentKey(undefined, config, this.time.now()).view;
     this.paint();
   }
 
@@ -41,16 +42,19 @@ export class UsageKeyDisplay {
     this.activity = new UsageActivity();
     this.critical = new CriticalActivity();
     this.warning = { level: 0 };
-    this.view = keyView(undefined, config);
+    this.retained = undefined;
+    this.view = presentKey(undefined, config, this.time.now(), this.warning).view;
     this.paint();
   }
 
   update(snapshot: Snapshot): void {
     if (this.disposed) return;
     const now = this.time.now();
-    this.view = keyView(snapshot, this.config, now, this.warning);
-    this.critical.observe(this.warning.level, this.warning.window, now);
-    this.activity.observe(this.view.used, this.warning.window, now);
+    const presented = presentKey(snapshot, this.config, now, this.warning, this.retained);
+    this.view = presented.view;
+    this.retained = presented.retained;
+    this.critical.observe(this.warning.level, this.view.stale ? undefined : this.warning.window, now);
+    this.activity.observe(this.view.stale ? undefined : this.view.used, this.warning.window, now);
     if (this.critical.active) this.activity.stop();
     this.paint();
   }
@@ -60,6 +64,7 @@ export class UsageKeyDisplay {
     this.cancelFrame?.();
     this.cancelFrame = undefined;
     this.pending = undefined;
+    this.retained = undefined;
   }
 
   private paint(): void {
