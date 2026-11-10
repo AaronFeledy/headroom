@@ -366,6 +366,7 @@ void UpdateService::startPairedUpdate() {
     connect(process, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus status) { finish(code == 0 && status == QProcess::NormalExit); });
     connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) { if (error == QProcess::FailedToStart) finish(false); });
     QTimer::singleShot(15 * 60 * 1000, process, [process] { if (process->state() != QProcess::NotRunning) process->kill(); });
+    enter(State::Applying);
     m_status = QStringLiteral("Preparing the Windows desktop and WSL server update…"); emit changed();
     log(QStringLiteral("Paired Windows/WSL update started."));
     process->start();

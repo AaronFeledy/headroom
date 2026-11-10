@@ -200,11 +200,19 @@ private slots:
         auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
         UpdateService service(true, value);
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_VERIFY(service.canCheck());
         service.checkForUpdates(); QTRY_VERIFY(service.canStage());
         service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        QCOMPARE(service.state(), QStringLiteral("staged"));
+        sequence.clear();
         service.restartToApply();
         QTRY_VERIFY(service.busy());
+        QCOMPARE(service.state(), QStringLiteral("applying"));
+        QVERIFY(!service.restartAvailable());
         QProcess *coordinator = nullptr;
         for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
         QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
@@ -215,11 +223,41 @@ private slots:
         QVERIFY(record().contains("\nupdate token=absent"));
         QVERIFY(!record().contains("\nupdate token=present"));
         const auto stage = service.verifiedStage();
+        // Pause during Applying must not restore Applying without an active worker.
+        service.setPublicTrafficAllowed(false);
+        QCOMPARE(service.state(), QStringLiteral("unavailable"));
+        QVERIFY(!service.restartAvailable());
+        QTRY_VERIFY(!service.busy());
+        service.setPublicTrafficAllowed(true);
+        QCOMPARE(service.state(), QStringLiteral("staged"));
+        QVERIFY(service.restartAvailable());
+        QCOMPARE(service.verifiedStage(), stage);
+        sequence.clear();
+        service.restartToApply();
+        QTRY_COMPARE(service.state(), QStringLiteral("applying"));
+        QVERIFY(!service.restartAvailable());
+        coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
         coordinator->kill();
         QTRY_VERIFY(!service.busy());
+        QCOMPARE(service.state(), QStringLiteral("staged"));
         QVERIFY(service.restartAvailable());
         QCOMPARE(service.verifiedStage(), stage);
         QVERIFY(service.statusText().contains("downloaded package is still available"));
+        QCOMPARE(sequence, QStringList({QStringLiteral("applying"), QStringLiteral("staged")}));
+        // Successful paired coordinator exit leaves Current without a restart offer.
+        service.restartToApply();
+        QTRY_COMPARE(service.state(), QStringLiteral("applying"));
+        coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        coordinator->write("x");
+        coordinator->closeWriteChannel();
+        QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        QVERIFY(service.verifiedStage().isEmpty());
+        QVERIFY(!service.restartAvailable());
+        QVERIFY(service.statusText().contains("up to date"));
     }
     void pairedUpdateOnlyAcceptsItsOwnCoordinator() {
         const QString directory = m_dir.filePath("paired runtime");
