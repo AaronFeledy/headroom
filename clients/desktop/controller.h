@@ -108,6 +108,11 @@ signals:
 protected:
     void acceptSnapshot(const QVariantList &providers);
 private:
+    enum class ConnectionStatus { Setup, Connecting, Offline, Ready };
+    enum class Request { None, Usage, Refresh, Proof };
+    static QString requestName(Request request);
+    void startRequest(Request request);
+    static QString connectionStatusName(ConnectionStatus status);
     QString providerTypeFor(const QString &name) const;
     struct RetainedReading {
         QVariantList buckets;
@@ -160,13 +165,15 @@ private:
     Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
-    QString m_mode = "remote", m_url, m_token, m_sshUrl, m_primary = "Claude", m_message, m_status = "setup";
+    QString m_mode = "remote", m_url, m_token, m_sshUrl, m_primary = "Claude", m_message;
+    ConnectionStatus m_status = ConnectionStatus::Setup;
+    Request m_request = Request::None;
     int m_interval = 60, m_retryAttempt = 0;
     QString m_errorKind;
     QVariantList m_diagnostics;
     QHash<QString, QString> m_diagnosticAttempts;
     void recordProviderDiagnostics(const QVariantList &providers);
-    bool m_notifications = true, m_loading = false;
+    bool m_notifications = true;
     bool m_startPolling = true;
     bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
@@ -193,7 +200,6 @@ private:
     CredentialService m_credentials;
     TlsProofService m_tlsProof;
     qint64 m_nextUpgradeAttempt = 0;
-    bool m_proving = false;
     bool m_proofAttempted = false;
     QPointer<QNetworkReply> m_reply;
     QPointer<QNetworkReply> m_resetReply;

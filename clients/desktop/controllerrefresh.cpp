@@ -24,11 +24,11 @@ int retryAfterSeconds(const QByteArray &body) {
 }
 
 void Controller::requestRefresh() {
-    if (m_loading || m_resetBusy || QDateTime::currentMSecsSinceEpoch() < m_refreshAllowedAt) return;
-    if (m_mode == "remote" && m_status == "offline") QHostInfo::clearCache();
+    if (m_request != Request::None || m_resetBusy || QDateTime::currentMSecsSinceEpoch() < m_refreshAllowedAt) return;
+    if (m_mode == "remote" && m_status == ConnectionStatus::Offline) QHostInfo::clearCache();
     // Without a reachable server there is nothing to refresh: reconnect first.
     if (m_mode == "local" && !m_server.isAvailable()) { refreshUsage(true); return; }
-    if (backendUrl().isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
+    if (backendUrl().isEmpty()) { m_status = ConnectionStatus::Setup; m_errorKind.clear(); emit changed(); return; }
     if (m_mode == QStringLiteral("remote") && TlsProof::shouldUpgrade(QUrl(m_url), !m_token.isEmpty(),
         QDateTime::currentSecsSinceEpoch(), m_nextUpgradeAttempt)) { requestUsage(); return; }
     requestProviderRefresh();
@@ -41,7 +41,7 @@ void Controller::requestProviderRefresh() {
         ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     auto request = backendRequest(url, transport);
     request.setHeader(QNetworkRequest::ContentLengthHeader, 0);
-    m_loading = true; log("Connection", "Requesting a provider refresh."); emit changed();
+    startRequest(Request::Refresh); log("Connection", "Requesting a provider refresh."); emit changed();
     auto reply = transportNetwork()->post(request, QByteArray()); m_reply = reply;
     guardReply(reply, transport, m_mode == QStringLiteral("ssh") ? 27000 : 12000, 4096);
     const quint64 generation = m_connectionGeneration;
@@ -50,8 +50,9 @@ void Controller::requestProviderRefresh() {
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto body = reply->isOpen() ? reply->readAll() : QByteArray();
         const bool certificateFailure = reply->property("headroomPinMismatch").toBool() || reply->property("headroomCertificateErrors").toBool();
-        reply->deleteLater(); m_reply.clear(); m_loading = false;
+        reply->deleteLater();
         if (generation != m_connectionGeneration) return;
+        cancel();
         if (rejectRedirectOrToken(status, redirected)) return;
         if (status == 202) { acceptRefresh(body); return; }
         if (status == 429) { limitRefresh(body); return; }
@@ -112,7 +113,7 @@ void Controller::noteRefresh(const QString &kind, const QString &summary) {
 void Controller::runRecoveryStep() {
     // One request at a time; a skipped step is never queued for catch-up.
     const qint64 window = m_refreshAcceptedAt;
-    if (!m_loading && !m_resetBusy) refreshUsage(false);
+    if (m_request == Request::None && !m_resetBusy) refreshUsage(false);
     // A synchronous failure or connection change may already have ended this window.
     if (window == 0 || m_refreshAcceptedAt != window) return;
     if (++m_recoveryStep >= recoverySteps) { endRefreshWindow(); return; }
