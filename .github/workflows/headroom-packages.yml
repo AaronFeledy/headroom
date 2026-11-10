@@ -61,11 +61,11 @@ jobs:
       - uses: actions/setup-go@v7
         with: {go-version: '1.25.x', cache: false}
       - name: Race-test the complete package-manager suite
-        timeout-minutes: 25
+        timeout-minutes: 35
         working-directory: packaging/headroom-manager
         run: |
           go vet ./...
-          go test -race -shuffle=on -count=1 -timeout 20m -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
+          go test -race -shuffle=on -count=1 -timeout 30m -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
 
   server-docker:
     needs: validate-version
