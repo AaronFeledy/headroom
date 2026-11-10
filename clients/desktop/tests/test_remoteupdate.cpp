@@ -6,6 +6,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include "statemachine_assertions.h"
 
 class RemoteUpdateTest final : public QObject {
     Q_OBJECT
@@ -36,6 +37,7 @@ class RemoteUpdateTest final : public QObject {
     }
 private slots:
     void init() {
+        failOnStateMachineWarning();
         QVERIFY(m_dir.isValid()); QFile::remove(tracePath()); m_logs.clear();
         qputenv("HEADROOM_REMOTE_UPDATE_TRACE", tracePath().toUtf8());
     }
@@ -64,10 +66,13 @@ private slots:
         QFETCH(QString, host);
         RemoteUpdateService service(options());
         service.setEnabled(true); service.setBackend("ssh://alice@" + host + ":2222");
+        QStringList states{service.state()};
+        connect(&service, &RemoteUpdateService::changed, &service, [&] { states << service.state(); });
         QSignalSpy complete(&service, &RemoteUpdateService::completed);
         service.start(); service.start(); service.start();
         QVERIFY(service.busy()); QVERIFY(!service.canStart());
         QTRY_COMPARE(service.state(), QString("current"));
+        QCOMPARE(states, QStringList({"idle", "running", "verifying", "current"}));
         QCOMPARE(complete.size(), 1); QCOMPARE(updateCount(), 1);
         QVERIFY(service.statusText().contains("2.1.0"));
         QVERIFY(m_logs.join('\n').contains("remote-update:"));
@@ -98,8 +103,13 @@ private slots:
         QFETCH(QString, host); QFETCH(QString, message);
         RemoteUpdateService service(options());
         service.setEnabled(true); service.setBackend("ssh://" + host);
+        QStringList states{service.state()};
+        connect(&service, &RemoteUpdateService::changed, &service, [&] { states << service.state(); });
         QSignalSpy complete(&service, &RemoteUpdateService::completed);
         service.start(); QTRY_COMPARE(service.state(), QString("failed"));
+        const bool verifies = host == "mismatch" || host == "bad-health" || host == "slow-health";
+        QCOMPARE(states, verifies ? QStringList({"idle", "running", "verifying", "failed"})
+                                 : QStringList({"idle", "running", "failed"}));
         QVERIFY2(service.statusText().contains(message), qPrintable(service.statusText()));
         QCOMPARE(complete.size(), 0); QCOMPARE(updateCount(), 1);
         QTest::qWait(30); QCOMPARE(updateCount(), 1);

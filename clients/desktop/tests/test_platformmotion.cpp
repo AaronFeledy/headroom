@@ -16,10 +16,14 @@
 #include <QQuickStyle>
 #include <QTemporaryDir>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class PlatformMotionTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void platformReducedMotion() {
         // Given: the native OS/portal preference, never a QML test override.
         if (qEnvironmentVariable("HEADROOM_EXPECT_PLATFORM_REDUCED_MOTION") != "1")

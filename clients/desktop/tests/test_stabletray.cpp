@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QSignalSpy>
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <cstdio>
 
 // A private pipe peer, never a Shell icon or a live provider connection.
@@ -38,6 +39,9 @@ class StableTrayTest : public QObject {
 private:
     QIcon icon() { QPixmap pixmap(32,32); pixmap.fill(Qt::magenta); return QIcon(pixmap); }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void cleanup() { qunsetenv("HEADROOM_TRAY_FIXTURE"); }
     void shellIdentityMatchesLauncher() {
         QCOMPARE(StableTray::shellIdentity(R"(C:\Users\Test\Headroom\headroom.exe)").toHex(),

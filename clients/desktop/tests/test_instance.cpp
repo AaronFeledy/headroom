@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 #include <memory>
 
@@ -43,6 +44,7 @@ private:
 private slots:
     void initTestCase()
     {
+        failOnStateMachineWarning();
         QCoreApplication::setOrganizationName("HeadroomTests");
         QCoreApplication::setApplicationName("InstanceFixture");
 #ifndef Q_OS_WIN
@@ -51,6 +53,7 @@ private slots:
     }
     void init()
     {
+        failOnStateMachineWarning();
 #ifndef Q_OS_WIN
         runtime = std::make_unique<QTemporaryDir>(runtimeTemplate());
         QVERIFY(runtime->isValid());

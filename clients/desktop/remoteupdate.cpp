@@ -1,4 +1,5 @@
 #include "remoteupdate.h"
+#include "statemachine.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,12 +26,40 @@ QString acceptedVersion(const QByteArray &output) {
 }
 }
 
+QString RemoteUpdateService::stateName(State state) {
+    switch (state) {
+    case State::Idle: return QStringLiteral("idle");
+    case State::Running: return QStringLiteral("running");
+    case State::Verifying: return QStringLiteral("verifying");
+    case State::Current: return QStringLiteral("current");
+    case State::Failed: return QStringLiteral("failed");
+    }
+    Q_UNREACHABLE();
+}
+
+bool RemoteUpdateService::allowed(State from, State to) {
+    switch (from) {
+    case State::Idle: return to == State::Idle || to == State::Running;
+    case State::Running: return to == State::Verifying || to == State::Failed;
+    case State::Verifying: return to == State::Current || to == State::Failed;
+    case State::Current:
+    case State::Failed: return to == State::Idle || to == State::Running;
+    }
+    Q_UNREACHABLE();
+}
+
+void RemoteUpdateService::enter(State next) {
+    if (!allowed(m_state, next) || (next == State::Verifying && m_targetVersion.isEmpty()))
+        reportStateMachineViolation("RemoteUpdateService", stateName(m_state), stateName(next));
+    m_state = next;
+}
+
 RemoteUpdateService::RemoteUpdateService(RemoteUpdateOptions options, QObject *parent)
     : QObject(parent), m_options(std::move(options)), m_network(m_options.ssh) {
     m_deadline.setSingleShot(true);
     m_poll.setSingleShot(true);
     connect(&m_deadline, &QTimer::timeout, this, [this] {
-        fail(m_state == "verifying"
+        fail(m_state == State::Verifying
             ? QStringLiteral("The server has not reported the expected version. The update may still finish or may have rolled back. Check headroom update on the server; unmanaged services need a manual update.")
             : QStringLiteral("The remote update timed out. Its outcome is unknown and it may still finish. Check the server before trying again."));
     });
@@ -47,7 +76,7 @@ void RemoteUpdateService::setBackend(const QString &address) {
     stopWork();
     m_address = normalized;
     m_targetVersion.clear();
-    m_state = interrupted ? QStringLiteral("failed") : QStringLiteral("idle");
+    enter(interrupted ? State::Failed : State::Idle);
     m_status = interrupted
         ? QStringLiteral("The connection changed before the previous server update could be confirmed. That update may still finish; check the previous server.")
         : available() ? QStringLiteral("Update the Headroom installation on this SSH host. Its managed server restarts when an update is applied.") : QString();
@@ -63,7 +92,7 @@ void RemoteUpdateService::setEnabled(bool enabled) {
 
 void RemoteUpdateService::start() {
     if (!canStart()) return;
-    m_state = QStringLiteral("running");
+    enter(State::Running);
     m_status = QStringLiteral("Checking and updating the remote server over SSH…");
     m_targetVersion.clear(); m_output.clear(); m_errorBytes = 0;
     log(m_status);
@@ -117,7 +146,7 @@ void RemoteUpdateService::finishCommand(int exitCode, QProcess::ExitStatus exitS
     if (m_targetVersion.isEmpty()) {
         fail(QStringLiteral("The remote command did not confirm a Headroom update. Check that the official CLI is installed and the SSH account permits headroom update; usage-only restricted keys cannot run it.")); return;
     }
-    m_state = QStringLiteral("verifying");
+    enter(State::Verifying);
     m_status = QStringLiteral("Remote update accepted. Waiting for the server to report %1…").arg(m_targetVersion);
     log(m_status); emit changed();
     // The CLI exits after committing to its detached transaction manager, before
@@ -128,7 +157,7 @@ void RemoteUpdateService::finishCommand(int exitCode, QProcess::ExitStatus exitS
 }
 
 void RemoteUpdateService::verifyServer() {
-    if (m_state != "verifying" || m_reply) return;
+    if (m_state != State::Verifying || m_reply) return;
     QUrl health = m_address;
     health.setPath(QStringLiteral("/api/v1/health"));
     auto reply = m_network.get(QNetworkRequest(health));
@@ -143,7 +172,7 @@ void RemoteUpdateService::verifyServer() {
             && (status == "ok" || status == "degraded");
         reply->deleteLater();
         if (verified) {
-            m_deadline.stop(); m_state = QStringLiteral("current");
+            m_deadline.stop(); enter(State::Current);
             m_status = QStringLiteral("Remote server is running Headroom %1.").arg(m_targetVersion);
             log(m_status); emit changed(); emit completed();
         } else m_poll.start(qMax(1, m_options.pollIntervalMs));
@@ -166,7 +195,7 @@ void RemoteUpdateService::stopWork() {
 }
 
 void RemoteUpdateService::fail(const QString &message) {
-    stopWork(); m_state = QStringLiteral("failed"); m_status = message;
+    stopWork(); enter(State::Failed); m_status = message;
     log(message); emit changed();
 }
 

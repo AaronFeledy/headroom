@@ -3,10 +3,14 @@
 #include <QNetworkReply>
 #include <QSignalSpy>
 #include <QTest>
+#include "statemachine_assertions.h"
 
 class SshNetworkTest final : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void validatesAddressesAndArguments()
     {
         QUrl address;

@@ -1,4 +1,5 @@
 #include "managedserver.h"
+#include "statemachine.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -163,20 +164,15 @@ void ManagedServer::configure(const QString &mode, const QString &token)
     disposeProcess(true);
     m_mode = normalized;
     m_token = token;
-    m_available = false;
-    m_owned = false;
     m_readinessAttempt = 0;
     m_restartCount = 0;
-    m_state = m_mode == QStringLiteral("local") ? QStringLiteral("idle") : QStringLiteral("remote");
-    m_message.clear();
-    clearSession();
-    emit stateChanged();
+    enter(m_mode == QStringLiteral("local") ? State::Idle : State::Remote);
 }
 
 void ManagedServer::ensureAvailable()
 {
     if (m_mode != QStringLiteral("local")) return;
-    if (m_available) {
+    if (isAvailable()) {
         emit available();
         return;
     }
@@ -186,25 +182,23 @@ void ManagedServer::ensureAvailable()
     }
     if (m_probe || m_readinessTimer.isActive() || m_restartTimer.isActive() || m_identityTimer.isActive()
         || (m_process && m_process->state() != QProcess::NotRunning)) return;
-    if (m_state == QStringLiteral("failed")) m_restartCount = 0;
+    if (m_state == State::Failed) m_restartCount = 0;
     m_readinessAttempt = 0;
-    m_state = QStringLiteral("probing");
-    m_message.clear();
-    emit stateChanged();
+    enter(State::Probing);
     probe(ProbePurpose::Initial);
 }
 
 void ManagedServer::reportConnectionFailure()
 {
-    if (m_mode != QStringLiteral("local") || !m_available) return;
+    if (m_mode != QStringLiteral("local") || !isAvailable()) return;
     cancelAsync();
-    m_available = false;
-    m_state = QStringLiteral("probing");
-    emit stateChanged();
-    if (m_owned && m_process && m_process->state() != QProcess::NotRunning) {
+    enter(State::Probing);
+    if (m_process && m_process->state() != QProcess::NotRunning) {
         beginReadiness();
     } else {
-        m_owned = false;
+        // A dead child must not carry its ownership or private session into discovery.
+        disposeProcess(false);
+        clearSession();
         probe(ProbePurpose::Initial);
     }
 }
@@ -215,10 +209,7 @@ void ManagedServer::stopOwned()
     cancelAsync();
     m_ensureAfterRetire = false;
     disposeProcess(true);
-    m_available = false;
-    m_owned = false;
-    m_state = m_mode == QStringLiteral("local") ? QStringLiteral("idle") : QStringLiteral("remote");
-    emit stateChanged();
+    enter(m_mode == QStringLiteral("local") ? State::Idle : State::Remote, m_message);
 }
 
 void ManagedServer::cancelAsync()
@@ -300,8 +291,8 @@ void ManagedServer::probe(ProbePurpose purpose)
 void ManagedServer::handleProbe(ProbePurpose purpose, ProbeResult result)
 {
     if (result == ProbeResult::Compatible) {
-        setAvailable(purpose == ProbePurpose::Readiness && m_process, purpose == ProbePurpose::Initial
-            ? QStringLiteral("attached") : QStringLiteral("started"));
+        enter(purpose == ProbePurpose::Initial ? State::Attached : State::Started);
+        emit available();
         return;
     }
     if (purpose == ProbePurpose::Initial && result == ProbeResult::Refused) {
@@ -358,10 +349,9 @@ void ManagedServer::spawn()
     }
     m_ensureAfterRetire = false;
     disposeProcess(true);
+    clearSession();
     auto process = new QProcess(this);
     m_process = process;
-    m_owned = true;
-    m_stopping = false;
     process->setProgram(path);
     process->setArguments({QStringLiteral("--listen-addr"),
         QStringLiteral("127.0.0.1:%1").arg(m_options.localUrl.port(7823)), QStringLiteral("--desktop-session"),
@@ -389,8 +379,7 @@ void ManagedServer::spawn()
             setFailure(QStringLiteral("Headroom could not safely own the local server process."), QStringLiteral("ownership"));
             return;
         }
-        m_state = QStringLiteral("starting");
-        emit stateChanged();
+        enter(State::Starting, m_message);
         m_sessionNonce = randomHex(2);
         m_sessionToken = randomHex(4);
         const QByteArray frame = QJsonDocument(QJsonObject{
@@ -413,15 +402,12 @@ void ManagedServer::spawn()
     });
     connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
             [this, process, generation](int, QProcess::ExitStatus) {
-        if (generation != m_generation || process != m_process || m_stopping) return;
+        if (generation != m_generation || process != m_process) return;
         cancelAsync();
         ++m_generation;
         closeWindowsJob();
         m_process = nullptr;
         process->deleteLater();
-        m_owned = false;
-        m_available = false;
-        clearSession();
         m_readinessTimer.stop();
         if (m_mode != QStringLiteral("local")) return;
         if (m_restartCount >= m_options.restartLimit) {
@@ -429,12 +415,10 @@ void ManagedServer::spawn()
             return;
         }
         ++m_restartCount;
-        m_state = QStringLiteral("restarting");
-        emit stateChanged();
+        enter(State::Restarting, m_message);
         m_restartTimer.start(qMin(1000, 100 * m_restartCount));
     });
-    m_state = QStringLiteral("starting");
-    emit stateChanged();
+    enter(State::Starting, m_message);
     process->start();
 }
 
@@ -526,7 +510,6 @@ void ManagedServer::failOwnedStartup(const QString &message, const QString &kind
     cancelAsync();
     m_ensureAfterRetire = false;
     disposeProcess(true);
-    clearSession();
     setFailure(message, kind);
 }
 
@@ -536,23 +519,62 @@ void ManagedServer::beginReadiness()
     probe(ProbePurpose::Readiness);
 }
 
-void ManagedServer::setAvailable(bool owned, const QString &state)
+QString ManagedServer::stateName(State state)
 {
-    m_owned = owned;
-    m_available = true;
-    m_state = state;
-    m_message.clear();
+    switch (state) {
+    case State::Remote: return QStringLiteral("remote");
+    case State::Idle: return QStringLiteral("idle");
+    case State::Probing: return QStringLiteral("probing");
+    case State::Starting: return QStringLiteral("starting");
+    case State::Restarting: return QStringLiteral("restarting");
+    case State::Attached: return QStringLiteral("attached");
+    case State::Started: return QStringLiteral("started");
+    case State::Failed: return QStringLiteral("failed");
+    }
+    Q_UNREACHABLE();
+}
+
+bool ManagedServer::allowed(State from, State to)
+{
+    if (to == State::Idle || to == State::Remote) return true;
+    switch (from) {
+    case State::Remote:
+        return false;
+    case State::Idle:
+        return to == State::Probing;
+    case State::Probing:
+        return to == State::Attached || to == State::Starting || to == State::Started
+            || to == State::Restarting || to == State::Failed;
+    case State::Starting:
+        return to == State::Starting || to == State::Started || to == State::Restarting || to == State::Failed;
+    case State::Restarting:
+        return to == State::Attached || to == State::Starting || to == State::Failed;
+    case State::Attached:
+        return to == State::Probing;
+    case State::Started:
+        return to == State::Probing || to == State::Restarting || to == State::Failed;
+    case State::Failed:
+        return to == State::Probing;
+    }
+    Q_UNREACHABLE();
+}
+
+void ManagedServer::enter(State next, const QString &message)
+{
+    if (!allowed(m_state, next)
+        || (next == State::Started && !m_process)
+        || (next == State::Attached && m_process))
+        reportStateMachineViolation("ManagedServer", stateName(m_state), stateName(next));
+    m_state = next;
+    m_message = message;
+    // Publish session loss only after availability reflects the new lifecycle state.
+    if (!m_process) clearSession();
     emit stateChanged();
-    emit available();
 }
 
 void ManagedServer::setFailure(const QString &message, const QString &kind)
 {
-    m_available = false;
-    m_owned = false;
-    m_state = QStringLiteral("failed");
-    m_message = message;
-    emit stateChanged();
+    enter(State::Failed, message);
     emit unavailable(message, kind);
 }
 
@@ -560,14 +582,10 @@ void ManagedServer::disposeProcess(bool kill)
 {
     auto process = m_process;
     m_process = nullptr;
-    m_owned = false;
-    m_available = false;
-    clearSession();
     if (!process) {
         closeWindowsJob();
         return;
     }
-    m_stopping = true;
     process->disconnect(this);
     if (kill && process->state() != QProcess::NotRunning) process->kill();
     closeWindowsJob();
@@ -584,5 +602,4 @@ void ManagedServer::disposeProcess(bool kill)
             }
         });
     }
-    m_stopping = false;
 }

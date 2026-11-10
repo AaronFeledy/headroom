@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QTimer>
 #include <functional>
+#include <optional>
 
 struct UpdateServiceOptions {
     QString managerPath;
@@ -37,15 +38,15 @@ class UpdateService : public QObject {
 public:
     explicit UpdateService(bool allowPublicTraffic = true, UpdateServiceOptions options = {}, QObject *parent = nullptr);
     ~UpdateService() override;
-    QString state() const { return m_state; }
+    QString state() const { return stateName(m_state); }
     QString statusText() const { return m_status; }
     QString latestVersion() const { return m_latestVersion; }
     bool busy() const { return m_process || m_pairProcess; }
     bool canCancel() const { return m_process && m_operation != Operation::Apply; }
     bool canCheck() const { return m_allowed && m_official && !busy() && !m_cliReply; }
-    bool canStage() const { return m_allowed && m_state == QStringLiteral("available") && !busy(); }
+    bool canStage() const { return m_allowed && m_state == State::Available && !busy(); }
     bool canRepair() const { return m_allowed && m_repairable && !busy() && !m_cliReply; }
-    bool restartAvailable() const { return m_allowed && m_state == QStringLiteral("staged"); }
+    bool restartAvailable() const { return m_allowed && m_state == State::Staged; }
     QString updateMethod() const { return m_method; }
     bool publicUpdatesAllowed() const { return m_allowed && m_official; }
     QString trustedLauncherPath() const { return m_trustedLauncherPath; }
@@ -65,6 +66,9 @@ signals:
     void changed();
     void applyPrepared();
 private:
+    enum class State { Unavailable, Checking, Current, Available, Downloading, Staged, Applying, Failed };
+    static QString stateName(State state);
+    void enter(State next);
     enum class Operation { None, Inspect, Check, Stage, Repair, Apply };
     void inspectInstallation();
     void run(Operation operation, const QString &command, const QStringList &explicitArguments = {});
@@ -92,7 +96,7 @@ private:
     QByteArray m_errorOutput;
     QJsonObject m_verifiedStage;
     bool m_stageIsRepair = false;
-    QString m_state = QStringLiteral("unavailable");
+    State m_state = State::Unavailable;
     QString m_status;
     QString m_latestVersion;
     QString m_platform;
@@ -100,7 +104,7 @@ private:
     QString m_packageKind;
     QString m_method = QStringLiteral("source");
     QString m_diagnosticCommand;
-    QString m_prePauseState;
+    std::optional<State> m_prePauseState;
     QString m_prePauseStatus;
     bool m_allowed = true;
     bool m_sessionAllowed = true;

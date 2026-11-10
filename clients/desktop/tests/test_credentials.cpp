@@ -2,6 +2,7 @@
 #include "http_assertions.h"
 #include "tls_fixture.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QSslServer>
 #include <QTcpSocket>
 #include <QJsonArray>
@@ -88,9 +89,11 @@ private:
     }
 private slots:
     void initTestCase() {
+        failOnStateMachineWarning();
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
     }
     void init() {
+        failOnStateMachineWarning();
         m_record = m_dir.filePath(QStringLiteral("record"));
         QFile::remove(m_record);
         qputenv("HEADROOM_CREDENTIAL_FIXTURE_RECORD", m_record.toUtf8());

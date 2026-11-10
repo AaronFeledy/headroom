@@ -2,6 +2,7 @@
 #include "scripted_backend.h"
 #include "tls_fixture.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QTemporaryDir>
 
 using TestUsage::disabledCredentials;
@@ -9,7 +10,11 @@ using TestUsage::disabledCredentials;
 class RefreshTransportTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void initTestCase() {
+        failOnStateMachineWarning();
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
     }
     void unsupportedRefreshFallsBackToCacheRead_data() {

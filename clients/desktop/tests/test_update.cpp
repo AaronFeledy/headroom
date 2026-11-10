@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class UpdateServiceTest : public QObject {
     Q_OBJECT
@@ -34,6 +35,7 @@ private:
 private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
+        failOnStateMachineWarning();
         qunsetenv("HEADROOM_UPDATE_FIXTURE_ERROR");
         QFile::remove(m_record);
         QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();
@@ -198,11 +200,19 @@ private slots:
         auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
         UpdateService service(true, value);
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_VERIFY(service.canCheck());
         service.checkForUpdates(); QTRY_VERIFY(service.canStage());
         service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        QCOMPARE(service.state(), QStringLiteral("staged"));
+        sequence.clear();
         service.restartToApply();
         QTRY_VERIFY(service.busy());
+        QCOMPARE(service.state(), QStringLiteral("applying"));
+        QVERIFY(!service.restartAvailable());
         QProcess *coordinator = nullptr;
         for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
         QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
@@ -213,11 +223,41 @@ private slots:
         QVERIFY(record().contains("\nupdate token=absent"));
         QVERIFY(!record().contains("\nupdate token=present"));
         const auto stage = service.verifiedStage();
+        // Pause during Applying must not restore Applying without an active worker.
+        service.setPublicTrafficAllowed(false);
+        QCOMPARE(service.state(), QStringLiteral("unavailable"));
+        QVERIFY(!service.restartAvailable());
+        QTRY_VERIFY(!service.busy());
+        service.setPublicTrafficAllowed(true);
+        QCOMPARE(service.state(), QStringLiteral("staged"));
+        QVERIFY(service.restartAvailable());
+        QCOMPARE(service.verifiedStage(), stage);
+        sequence.clear();
+        service.restartToApply();
+        QTRY_COMPARE(service.state(), QStringLiteral("applying"));
+        QVERIFY(!service.restartAvailable());
+        coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
         coordinator->kill();
         QTRY_VERIFY(!service.busy());
+        QCOMPARE(service.state(), QStringLiteral("staged"));
         QVERIFY(service.restartAvailable());
         QCOMPARE(service.verifiedStage(), stage);
         QVERIFY(service.statusText().contains("downloaded package is still available"));
+        QCOMPARE(sequence, QStringList({QStringLiteral("applying"), QStringLiteral("staged")}));
+        // Successful paired coordinator exit leaves Current without a restart offer.
+        service.restartToApply();
+        QTRY_COMPARE(service.state(), QStringLiteral("applying"));
+        coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        coordinator->write("x");
+        coordinator->closeWriteChannel();
+        QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        QVERIFY(service.verifiedStage().isEmpty());
+        QVERIFY(!service.restartAvailable());
+        QVERIFY(service.statusText().contains("up to date"));
     }
     void pairedUpdateOnlyAcceptsItsOwnCoordinator() {
         const QString directory = m_dir.filePath("paired runtime");
@@ -357,11 +397,18 @@ private slots:
     void manualCheckAndStageUseExplicitStatesAndNoBearerEnvironment() {
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-public-updater");
         UpdateService service(true, options());
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        sequence.clear();
         QVERIFY(service.canCheck()); service.checkForUpdates();
         QTRY_COMPARE(service.state(), QStringLiteral("available"));
         QCOMPARE(service.latestVersion(), QStringLiteral("9.1.0")); QVERIFY(service.canStage());
         service.stageUpdate(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+        QCOMPARE(sequence, QStringList({QStringLiteral("checking"), QStringLiteral("available"),
+                                        QStringLiteral("downloading"), QStringLiteral("staged")}));
         QVERIFY(service.restartAvailable()); QVERIFY(service.statusText().contains(QStringLiteral("Restart")));
         const auto calls = record(); QVERIFY(calls.contains("inspect token=absent")); QVERIFY(calls.contains("check-update token=absent")); QVERIFY(calls.contains("stage-update token=absent"));
     }
@@ -382,17 +429,26 @@ private slots:
     }
     void previewBeforeStartupTimerConsumesAutomaticCheckWithoutTraffic() {
         UpdateService service(true, options());
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_COMPARE(service.state(), QStringLiteral("current"));
         service.setPublicTrafficAllowed(false);
         QVERIFY(!service.canCheck()); QVERIFY(!service.canRepair()); QVERIFY(!service.restartAvailable());
+        QCOMPARE(service.state(), QStringLiteral("unavailable"));
         service.startAutomaticCheck(); QTest::qWait(100);
         QVERIFY(!record().contains("check-update")); QVERIFY(!record().contains("stage-update"));
         service.setPublicTrafficAllowed(true); QTRY_VERIFY(service.canCheck()); QTest::qWait(100);
+        QCOMPARE(service.state(), QStringLiteral("current"));
         QVERIFY(!record().contains("check-update"));
         service.startAutomaticCheck(); QTest::qWait(100); QVERIFY(!record().contains("check-update"));
+        sequence.clear();
         service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
         service.setPublicTrafficAllowed(false); QVERIFY(!service.canStage()); QCOMPARE(service.state(), QStringLiteral("unavailable"));
         service.setPublicTrafficAllowed(true); QCOMPARE(service.state(), QStringLiteral("available")); QVERIFY(service.canStage());
+        QCOMPARE(sequence, QStringList({QStringLiteral("checking"), QStringLiteral("available"),
+                                        QStringLiteral("unavailable"), QStringLiteral("available")}));
     }
     void rapidPreviewOffOnWaitsForCancelledOperationThenRestoresManualOnly() {
         UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));

@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QStandardPaths>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 namespace {
 bool writeFile(const QString &path, const QByteArray &data)
@@ -91,6 +92,7 @@ private slots:
     }
     void init()
     {
+        failOnStateMachineWarning();
         previousXdg = qgetenv("XDG_CONFIG_HOME");
         previousAppData = qgetenv("APPDATA");
         previousOrganization = QCoreApplication::organizationName();

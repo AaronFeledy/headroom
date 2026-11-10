@@ -13,6 +13,7 @@
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QRegularExpression>
+#include "statemachine_assertions.h"
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -121,8 +122,12 @@ private:
         return result;
     }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void initTestCase() {
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+        failOnStateMachineWarning();
     }
     void cleanup() {
         qunsetenv("HEADROOM_FIXTURE_MODE");
@@ -197,10 +202,14 @@ private slots:
             HealthFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
             fixture.response = "{\"status\":\"" + status + "\",\"version\":\"dev\",\"providers\":[]}";
             ManagedServer server(options(fixture.serverPort(), QStringLiteral("/missing/unused")));
+            QStringList states{server.state()};
+            connect(&server, &ManagedServer::stateChanged, &server, [&] { states << server.state(); });
             QSignalSpy ready(&server, &ManagedServer::available);
             server.configure("local", QString()); server.ensureAvailable();
             QTRY_COMPARE(ready.size(), 1); QVERIFY(server.isAttached()); QVERIFY(!server.ownsProcess());
             server.stopOwned(); QVERIFY(fixture.isListening());
+            QCOMPARE(states, QStringList({QStringLiteral("remote"), QStringLiteral("idle"), QStringLiteral("probing"),
+                                          QStringLiteral("attached"), QStringLiteral("idle")}));
         }
     }
     void initialLocalProbeDoesNotDiscloseSavedToken() {
@@ -252,6 +261,8 @@ private slots:
         qint64 pid = 0;
         {
             ManagedServer server(options(port, QStringLiteral(FIXTURE_PATH)));
+            QStringList states{server.state()};
+            connect(&server, &ManagedServer::stateChanged, &server, [&] { states << server.state(); });
             QSignalSpy ready(&server, &ManagedServer::available);
             server.configure("local", "fixture-secret"); server.ensureAvailable();
             QTRY_VERIFY2_WITH_TIMEOUT(ready.size() == 1, qPrintable(server.state() + ": " + server.message()), 10000);
@@ -262,9 +273,22 @@ private slots:
             QVERIFY(content.contains("token_present=no"));
             QVERIFY(content.contains("desktop_session=yes"));
             QVERIFY(!content.contains("fixture-secret"));
+            QCOMPARE(states, QStringList({QStringLiteral("remote"), QStringLiteral("idle"), QStringLiteral("probing"),
+                                          QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("started")}));
+            QProcess *child = nullptr;
+            for (auto process : server.findChildren<QProcess *>())
+                if (process->processId() == pid) child = process;
+            QVERIFY(child);
+            child->kill();
+            QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 10000);
+            QCOMPARE(states, QStringList({"remote", "idle", "probing", "starting", "starting", "started",
+                                          "restarting", "starting", "starting", "started"}));
+            pid = server.ownedProcessId();
             server.configure("remote", QString());
             QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
             QCOMPARE(server.state(), QString("remote")); QVERIFY(!server.ownsProcess());
+            QCOMPARE(states, QStringList({"remote", "idle", "probing", "starting", "starting", "started",
+                                          "restarting", "starting", "starting", "started", "remote"}));
         }
         QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
@@ -328,21 +352,30 @@ private slots:
     void restartBudgetIsBoundedAndManualRetryIsClear() {
         QTemporaryDir dir; const auto record = dir.filePath("record");
         qputenv("HEADROOM_FIXTURE_MODE", "crash"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
-        ManagedServer server(options(unusedPort(), QStringLiteral(FIXTURE_PATH))); QSignalSpy failed(&server, &ManagedServer::unavailable);
+        ManagedServer server(options(unusedPort(), QStringLiteral(FIXTURE_PATH)));
+        QStringList states{server.state()};
+        connect(&server, &ManagedServer::stateChanged, &server, [&] { states << server.state(); });
+        QSignalSpy failed(&server, &ManagedServer::unavailable);
         server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 30000);
+        QCOMPARE(states, QStringList({QStringLiteral("remote"), QStringLiteral("idle"), QStringLiteral("probing"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("failed")}));
         QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("start\n"), 3);
         QTest::qWait(250); file.seek(0); QCOMPARE(file.readAll().count("start\n"), 3);
         server.ensureAvailable(); QTRY_VERIFY_WITH_TIMEOUT(failed.size() >= 2, 30000);
+        QCOMPARE(states, QStringList({QStringLiteral("remote"), QStringLiteral("idle"), QStringLiteral("probing"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("failed"), QStringLiteral("probing"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("restarting"), QStringLiteral("starting"), QStringLiteral("starting"), QStringLiteral("failed")}));
         file.seek(0); QCOMPARE(file.readAll().count("start\n"), 6);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
     void modeSwitchCancelsOldProbe() {
         HealthFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost)); fixture.hold = true;
         ManagedServer server(options(fixture.serverPort(), QStringLiteral(FIXTURE_PATH)));
+        QStringList states{server.state()};
+        connect(&server, &ManagedServer::stateChanged, &server, [&] { states << server.state(); });
         QSignalSpy ready(&server, &ManagedServer::available); QSignalSpy failed(&server, &ManagedServer::unavailable);
         server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE(fixture.requests, 1);
         server.configure("remote", QString()); QTest::qWait(200);
         QCOMPARE(ready.size(), 0); QCOMPARE(failed.size(), 0); QCOMPARE(server.state(), QString("remote")); QVERIFY(!server.ownsProcess());
+        QCOMPARE(states, QStringList({QStringLiteral("remote"), QStringLiteral("idle"), QStringLiteral("probing"),
+                                      QStringLiteral("remote")}));
     }
     void stagedRealServerSmoke() {
         const QString binary = qEnvironmentVariable("HEADROOM_REAL_SERVER_FIXTURE");

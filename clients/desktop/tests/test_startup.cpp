@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 namespace {
 bool writeFile(const QString &path, const QByteArray &contents, bool executable = false)
@@ -50,6 +51,9 @@ QString currentExecutable()
 class StartupTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void packagedLauncherPathIsUsedOnlyForMatchingInstall()
     {
         QTemporaryDir dir;

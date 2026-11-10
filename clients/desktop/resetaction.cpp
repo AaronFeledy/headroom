@@ -122,7 +122,7 @@ bool Controller::resetReadingFresh(const QString &provider) const {
     // WHY: server fetched_at is not comparable to the desktop clock. Like Codex,
     // desktop freshness uses m_lastGood; the server re-polls Claude and re-reads
     // banked status before spending. A valid fetched_at anchors the receipt.
-    return m_status == "ready" && !m_loading && m_lastGood > 0 && now - m_lastGood <= maximumAge
+    return m_status == ConnectionStatus::Ready && m_request == Request::None && m_lastGood > 0 && now - m_lastGood <= maximumAge
         && (provider != "Claude" || fetchedAt.isValid());
 }
 
