@@ -6,6 +6,7 @@ internal static class WindowsHarnessRunner
         await tests.Test_RemoteMode_when_ApiUrlConfigured();
         await tests.Test_AttachFirst_when_DefaultHealthHealthy();
         await tests.Test_ReprobesAttachedServer_when_EnsuringStartedAgain();
+        await tests.Test_IsAttachedClears_when_AttachedStateEnds();
         await tests.Test_AcquiresBinary_when_MissingBeforeSpawn();
         await tests.Test_StartsOwned_when_HealthBecomesReady();
         await tests.Test_CleansUpOwnedProcess_when_ReadinessFails();

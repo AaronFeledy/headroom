@@ -28,6 +28,30 @@ internal sealed partial class ServerProcessManagerTests
         AssertEqual(true, deps.Launcher.LastProcess?.Disposed);
     }
 
+    public async Task Test_IsAttachedClears_when_AttachedStateEnds()
+    {
+        foreach (var action in new[] { "dispose", "stop", "fail" })
+        {
+            var deps = FakeDependencies.Create();
+            deps.Health.Results.Enqueue(true);
+            await using var manager = new ServerProcessManager(new ServerProcessOptions(), deps.Value);
+            await manager.EnsureStartedAsync();
+            AssertEqual(true, manager.IsAttached);
+
+            if (action == "dispose") await manager.DisposeAsync();
+            if (action == "stop") await manager.StopOwnedServerAsync(CancellationToken.None);
+            if (action == "fail")
+            {
+                deps.Version.MatchesQueue.Enqueue(false);
+                AssertEqual(ServerProcessState.Failed, (await manager.EnsureStartedAsync()).State);
+            }
+
+            AssertEqual(false, manager.IsAttached);
+            AssertEqual(false, manager.OwnsProcess);
+            AssertEqual(0, deps.Launcher.Starts);
+        }
+    }
+
     public async Task Test_DisposeRace_when_ExitEventArrives()
     {
         var deps = FakeDependencies.CreateReadyToLaunch();

@@ -30,7 +30,7 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
 
     public Uri EffectiveBaseUrl { get; private set; }
     public bool OwnsProcess => _process != null;
-    public bool IsAttached { get; private set; }
+    public bool IsAttached => _started?.State == ServerProcessState.Attached;
 
     public async Task<ServerProcessResult> EnsureStartedAsync(CancellationToken cancellationToken = default)
     {
@@ -66,7 +66,6 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
 
             if (await ProbeHealthyAsync(cancellationToken).ConfigureAwait(false))
             {
-                IsAttached = true;
                 _started = new ServerProcessResult(ServerProcessState.Attached, EffectiveBaseUrl, false);
                 return _started;
             }
@@ -174,7 +173,6 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
             return Fail(ServerProcessError.ReadinessFailed, ex.Message);
         }
 
-        IsAttached = false;
         process.Exited += OnOwnedProcessExited;
         _started = new ServerProcessResult(ServerProcessState.Started, EffectiveBaseUrl, true);
         return _started;
