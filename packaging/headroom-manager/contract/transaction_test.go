@@ -973,11 +973,11 @@ func startFixturePath(t *testing.T, executable string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	// Windows cannot remove a running executable, so reap fixtures before t.TempDir cleanup runs.
+	// Most tests stop and reap their own fixture first, and Kill then fails (ErrProcessDone on
+	// Unix, EINVAL on Windows). A fixture that is still running fails t.TempDir cleanup instead.
 	t.Cleanup(func() {
-		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			t.Error(err)
-		}
-		_ = command.Wait() // A killed or already-reaped fixture's exit status is irrelevant.
+		_ = command.Process.Kill()
+		_ = command.Wait()
 	})
 	return command
 }
