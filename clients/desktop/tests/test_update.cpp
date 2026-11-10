@@ -359,11 +359,18 @@ private slots:
     void manualCheckAndStageUseExplicitStatesAndNoBearerEnvironment() {
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-public-updater");
         UpdateService service(true, options());
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        sequence.clear();
         QVERIFY(service.canCheck()); service.checkForUpdates();
         QTRY_COMPARE(service.state(), QStringLiteral("available"));
         QCOMPARE(service.latestVersion(), QStringLiteral("9.1.0")); QVERIFY(service.canStage());
         service.stageUpdate(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+        QCOMPARE(sequence, QStringList({QStringLiteral("checking"), QStringLiteral("available"),
+                                        QStringLiteral("downloading"), QStringLiteral("staged")}));
         QVERIFY(service.restartAvailable()); QVERIFY(service.statusText().contains(QStringLiteral("Restart")));
         const auto calls = record(); QVERIFY(calls.contains("inspect token=absent")); QVERIFY(calls.contains("check-update token=absent")); QVERIFY(calls.contains("stage-update token=absent"));
     }
@@ -384,17 +391,26 @@ private slots:
     }
     void previewBeforeStartupTimerConsumesAutomaticCheckWithoutTraffic() {
         UpdateService service(true, options());
+        QStringList sequence;
+        connect(&service, &UpdateService::changed, this, [&] {
+            sequence.append(service.state());
+        });
         QTRY_COMPARE(service.state(), QStringLiteral("current"));
         service.setPublicTrafficAllowed(false);
         QVERIFY(!service.canCheck()); QVERIFY(!service.canRepair()); QVERIFY(!service.restartAvailable());
+        QCOMPARE(service.state(), QStringLiteral("unavailable"));
         service.startAutomaticCheck(); QTest::qWait(100);
         QVERIFY(!record().contains("check-update")); QVERIFY(!record().contains("stage-update"));
         service.setPublicTrafficAllowed(true); QTRY_VERIFY(service.canCheck()); QTest::qWait(100);
+        QCOMPARE(service.state(), QStringLiteral("current"));
         QVERIFY(!record().contains("check-update"));
         service.startAutomaticCheck(); QTest::qWait(100); QVERIFY(!record().contains("check-update"));
+        sequence.clear();
         service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
         service.setPublicTrafficAllowed(false); QVERIFY(!service.canStage()); QCOMPARE(service.state(), QStringLiteral("unavailable"));
         service.setPublicTrafficAllowed(true); QCOMPARE(service.state(), QStringLiteral("available")); QVERIFY(service.canStage());
+        QCOMPARE(sequence, QStringList({QStringLiteral("checking"), QStringLiteral("available"),
+                                        QStringLiteral("unavailable"), QStringLiteral("available")}));
     }
     void rapidPreviewOffOnWaitsForCancelledOperationThenRestoresManualOnly() {
         UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));

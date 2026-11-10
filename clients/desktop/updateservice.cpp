@@ -1,4 +1,5 @@
 #include "updateservice.h"
+#include "statemachine.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -81,6 +82,26 @@ QString recognizedToolFailure(const QJsonObject &object, const QString &command)
 }
 }
 
+QString UpdateService::stateName(State state) {
+    switch (state) {
+    case State::Unavailable: return QStringLiteral("unavailable");
+    case State::Checking: return QStringLiteral("checking");
+    case State::Current: return QStringLiteral("current");
+    case State::Available: return QStringLiteral("available");
+    case State::Downloading: return QStringLiteral("downloading");
+    case State::Staged: return QStringLiteral("staged");
+    case State::Applying: return QStringLiteral("applying");
+    case State::Failed: return QStringLiteral("failed");
+    }
+    Q_UNREACHABLE();
+}
+
+void UpdateService::enter(State next) {
+    if ((next == State::Staged || next == State::Applying) && m_verifiedStage.isEmpty())
+        reportStateMachineViolation("UpdateService", stateName(m_state), stateName(next));
+    m_state = next;
+}
+
 UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions options, QObject *parent)
     : QObject(parent), m_options(std::move(options)), m_allowed(allowPublicTraffic), m_sessionAllowed(allowPublicTraffic) {
     m_timeout.setSingleShot(true);
@@ -158,13 +179,13 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
     if (!effective) {
         if (m_official) {
             if (m_operation == Operation::Stage) {
-                m_prePauseState = QStringLiteral("available");
+                m_prePauseState = State::Available;
                 m_prePauseStatus = QStringLiteral("Headroom %1 is available.").arg(m_latestVersion);
             } else if (m_operation == Operation::Repair) {
-                m_prePauseState = QStringLiteral("current");
+                m_prePauseState = State::Current;
                 m_prePauseStatus = QStringLiteral("The Headroom installation needs repair.");
             } else if (m_operation == Operation::Check) {
-                m_prePauseState = QStringLiteral("current");
+                m_prePauseState = State::Current;
                 m_prePauseStatus = m_repairable ? QStringLiteral("The Headroom installation needs repair.")
                                                 : QStringLiteral("Headroom updates automatically after a startup check.");
             } else {
@@ -172,12 +193,12 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
                 m_prePauseStatus = m_status;
             }
         } else {
-            m_prePauseState.clear(); m_prePauseStatus.clear();
+            m_prePauseState.reset(); m_prePauseStatus.clear();
         }
         if (m_pairProcess) m_pairProcess->kill();
         if (m_process) cancel();
         else finishCLIRequest(QStringLiteral("cancelled"), false);
-        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
+        enter(State::Unavailable); m_status = QStringLiteral("Update checks are paused for this session.");
         emit changed(); return;
     }
     if (m_process) { m_resumeAfterCancel = true; return; }
@@ -329,16 +350,16 @@ void UpdateService::startPairedUpdate() {
         if (m_pairProcess != process) return;
         m_pairProcess = nullptr; process->deleteLater();
         if (m_cliReply || m_process) return;
-        if (!m_allowed) { m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session."); emit changed(); return; }
+        if (!m_allowed) { enter(State::Unavailable); m_status = QStringLiteral("Update checks are paused for this session."); emit changed(); return; }
         if (!success) {
             // Pairing failure does not invalidate the locally verified archive.
             // Keep it available while the user repairs the pairing or retries.
-            m_state = QStringLiteral("staged");
+            enter(State::Staged);
             m_status = QStringLiteral("The Windows/WSL update did not finish. Run headroom update in a terminal for recovery details. The downloaded package is still available.");
             log(QStringLiteral("Paired Windows/WSL update failed; the verified package was retained. Run headroom update for recovery details."));
             emit changed(); return;
         }
-        m_verifiedStage = {}; m_state = QStringLiteral("current");
+        m_verifiedStage = {}; enter(State::Current);
         log(QStringLiteral("Paired Windows/WSL update completed."));
         m_status = QStringLiteral("The paired installations are up to date."); emit changed();
     };
@@ -390,13 +411,13 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
         });
 #endif
     if (operation == Operation::Check || operation == Operation::Inspect) {
-        m_state = QStringLiteral("checking");
+        enter(State::Checking);
         m_status = operation == Operation::Inspect ? QStringLiteral("Checking installation…") : QStringLiteral("Checking for Headroom updates…");
     } else if (operation == Operation::Apply) {
-        m_state = QStringLiteral("applying");
+        enter(State::Applying);
         m_status = QStringLiteral("Preparing a safe restart…");
     } else {
-        m_state = QStringLiteral("downloading");
+        enter(State::Downloading);
         m_status = operation == Operation::Repair ? QStringLiteral("Downloading a matching repair package…")
                                                    : QStringLiteral("Downloading and verifying the Headroom update…");
     }
@@ -424,7 +445,7 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
             m_operation = Operation::None;
             if (!m_allowed) {
                 m_resumeAfterCancel = false;
-                m_state = QStringLiteral("unavailable");
+                enter(State::Unavailable);
                 m_status = QStringLiteral("Update checks are paused for this session.");
                 emit changed(); return;
             }
@@ -446,18 +467,18 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
     if (!m_allowed) {
         m_resumeAfterCancel = false;
         m_autoStage = false;
-        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
+        enter(State::Unavailable); m_status = QStringLiteral("Update checks are paused for this session.");
         log(QStringLiteral("Stopped because update checks are paused for this session."));
         emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); return;
     }
     if (m_cancelRequested || m_timedOut) {
         if (m_resumeAfterCancel) { m_resumeAfterCancel = false; finishCLIRequest(QStringLiteral("cancelled"), false); restoreAllowedState(); return; }
         m_autoStage = false; m_verifiedStage = {};
-        m_state = QStringLiteral("failed");
+        enter(State::Failed);
         m_status = m_timedOut ? QStringLiteral("The update operation timed out. Try again later.")
                               : QStringLiteral("The update operation was cancelled.");
         log(m_status);
-		emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); applyDeferredTrafficState(); return;
+        emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); applyDeferredTrafficState(); return;
     }
     if (m_output.size() > maximumToolOutput || m_errorOutput.size() > maximumToolOutput) {
         fail(QStringLiteral("The package service exceeded its output limit.")); return;
@@ -655,7 +676,7 @@ bool UpdateService::validateIdentity(const QJsonObject &result) const {
 
 void UpdateService::handleInspection(const QJsonObject &result) {
     if (!validateIdentity(result)) {
-        m_state = QStringLiteral("unavailable");
+        enter(State::Unavailable);
         m_status = m_options.systemManaged
             ? QStringLiteral("This installation is managed by your system package manager.")
             : validateInstalledApplicationIdentity(result)
@@ -683,18 +704,18 @@ void UpdateService::handleInspection(const QJsonObject &result) {
     }
     if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("rolled_back")) {
         log(QStringLiteral("The previous update was rolled back; the prior installation was restored."));
-	    m_suppressAutomaticCheck = true;
-        m_state = QStringLiteral("failed");
+        m_suppressAutomaticCheck = true;
+        enter(State::Failed);
         m_status = QStringLiteral("The update could not start, so Headroom restored the previous installation. %1")
                        .arg(result.value(QStringLiteral("apply_message")).toString());
     } else if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("recovery_required")) {
         log(QStringLiteral("Update recovery is incomplete. Restart Headroom to retry recovery, or rerun the installer."));
         m_suppressAutomaticCheck = true;
-        m_state = QStringLiteral("failed");
+        enter(State::Failed);
         m_status = QStringLiteral("Headroom could not finish restoring the previous installation. Restart Headroom to retry recovery; if the problem remains, rerun the installer. %1")
                        .arg(result.value(QStringLiteral("apply_message")).toString());
     } else {
-        m_state = QStringLiteral("current");
+        enter(State::Current);
         m_status = result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("applied")
             ? QStringLiteral("Headroom updated successfully.")
             : m_repairable ? QStringLiteral("The Headroom installation needs repair.")
@@ -715,22 +736,22 @@ void UpdateService::restoreAllowedState() {
     if (!m_allowed) return;
     if (m_official) {
         if (!m_verifiedStage.isEmpty()) {
-            m_state = QStringLiteral("staged");
+            enter(State::Staged);
             m_status = QStringLiteral("A verified Headroom package is staged. Restart to apply it.");
-        } else if (!m_prePauseState.isEmpty()) {
-            m_state = m_prePauseState;
+        } else if (m_prePauseState) {
+            enter(*m_prePauseState);
             m_status = m_prePauseStatus;
         } else {
-            m_state = QStringLiteral("current");
+            enter(State::Current);
             m_status = m_repairable ? QStringLiteral("The Headroom installation needs repair.")
                                     : QStringLiteral("Headroom updates automatically after a startup check.");
         }
-        m_prePauseState.clear(); m_prePauseStatus.clear();
+        m_prePauseState.reset(); m_prePauseStatus.clear();
         emit changed(); return;
     }
     if (!m_options.installRoot.isEmpty() && !m_options.launcherPath.isEmpty() && !m_options.packageVersion.isEmpty()
         && !m_options.systemManaged) { inspectInstallation(); return; }
-    m_state = QStringLiteral("unavailable");
+    enter(State::Unavailable);
     m_status = m_options.systemManaged ? QStringLiteral("This installation is managed by your system package manager.")
                                        : QStringLiteral("This source installation is updated from its source checkout.");
     emit changed();
@@ -751,7 +772,7 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
     if (status == QStringLiteral("available") && operation == Operation::Check && m_autoStage) {
         log(QStringLiteral("Check completed: a newer package is available."));
         m_autoStage = false;
-        m_state = QStringLiteral("available"); emit changed();
+        enter(State::Available); emit changed();
         run(Operation::Stage, QStringLiteral("stage-update")); return;
     }
     m_autoStage = false;
@@ -777,29 +798,29 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
             || !packageInfo.isDir() || packageInfo.isSymLink() || !recorded.isObject() || recorded.object() != stage) {
             fail(QStringLiteral("The verified update stage was not recognized.")); return;
         }
-        m_state = QStringLiteral("staged");
         m_verifiedStage = stage;
         m_stageIsRepair = operation == Operation::Repair;
         m_status = operation == Operation::Repair ? QStringLiteral("A matching repair package is staged. Restart to apply it.")
                                                   : QStringLiteral("Headroom %1 is staged. Restart to apply it.").arg(version);
+        enter(State::Staged);
         log(operation == Operation::Check ? QStringLiteral("Existing downloaded package verified; the package is staged for restart.")
                                          : QStringLiteral("Download and verification completed; the package is staged for restart."));
     } else if (status == QStringLiteral("available")) {
-        m_state = QStringLiteral("available");
+        enter(State::Available);
         m_status = QStringLiteral("Headroom %1 is available.").arg(version);
         log(QStringLiteral("Check completed: a newer package is available."));
     } else if (status == QStringLiteral("current")) {
-        m_state = QStringLiteral("current");
+        enter(State::Current);
         m_status = QStringLiteral("This version of Headroom is current.");
         log(QStringLiteral("Check completed: this installation is current."));
     } else {
-        m_state = QStringLiteral("unavailable");
+        enter(State::Unavailable);
         m_status = QStringLiteral("No compatible Headroom package is published yet.");
         log(QStringLiteral("Check completed: no compatible package is published."));
     }
     emit changed();
     if (m_cliReply) {
-        if (m_state == QStringLiteral("staged")) QTimer::singleShot(0, this, &UpdateService::restartToApply);
+        if (m_state == State::Staged) QTimer::singleShot(0, this, &UpdateService::restartToApply);
         else finishCLIRequest(status, status == QStringLiteral("current"));
     }
 }
@@ -809,7 +830,7 @@ void UpdateService::fail(const QString &message) {
     m_autoStage = false;
     finishCLIRequest(QStringLiteral("failed"), false);
     m_verifiedStage = {};
-	m_state = QStringLiteral("failed"); m_status = message; emit changed(); applyDeferredTrafficState();
+    enter(State::Failed); m_status = message; emit changed(); applyDeferredTrafficState();
 }
 
 void UpdateService::log(const QString &message) const {

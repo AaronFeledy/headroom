@@ -29,9 +29,9 @@ public:
     explicit RemoteUpdateService(RemoteUpdateOptions options = {}, QObject *parent = nullptr);
     ~RemoteUpdateService() override;
     bool available() const { return !m_address.isEmpty(); }
-    bool busy() const { return m_state == "running" || m_state == "verifying"; }
+    bool busy() const { return m_state == State::Running || m_state == State::Verifying; }
     bool canStart() const { return available() && m_enabled && !busy(); }
-    QString state() const { return m_state; }
+    QString state() const { return stateName(m_state); }
     QString statusText() const { return m_status; }
     void setBackend(const QString &address);
     void setEnabled(bool enabled);
@@ -40,6 +40,10 @@ signals:
     void changed();
     void completed();
 private:
+    enum class State { Idle, Running, Verifying, Current, Failed };
+    static QString stateName(State state);
+    static bool allowed(State from, State to);
+    void enter(State next);
     void finishCommand(int exitCode, QProcess::ExitStatus exitStatus);
     void verifyServer();
     void stopWork();
@@ -54,6 +58,7 @@ private:
     QByteArray m_output;
     qsizetype m_errorBytes = 0;
     QString m_targetVersion;
-    QString m_state = "idle", m_status;
+    State m_state = State::Idle;
+    QString m_status;
     bool m_enabled = false;
 };
