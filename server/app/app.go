@@ -201,33 +201,49 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 	var grokProvider *grok.Provider
 	names := []string{}
 	for name, providerCfg := range cfg.Providers {
-		if !providerCfg.Enabled {
+		if providerCfg.Enabled {
+			provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir)
+			if err != nil {
+				return nil, nil, nil, nil, nil, nil, err
+			}
+			if c, ok := provider.(*cursor.Client); ok {
+				if discovery != nil {
+					c = cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, Discovery: discovery})
+					provider = c
+				}
+				cursorClient = c
+			}
+			if c, ok := provider.(*codex.Client); ok {
+				codexClient = c
+			}
+			if c, ok := provider.(*claude.Client); ok {
+				claudeClient = c
+			}
+			if g, ok := provider.(*grok.Provider); ok {
+				grokProvider = g
+			}
+			if err := providerPoller.Register(provider, true); err != nil {
+				return nil, nil, nil, nil, nil, nil, err
+			}
+			names = append(names, provider.Name())
+		}
+		if strings.ToLower(name) != "claude" {
 			continue
 		}
-		provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir)
-		if err != nil {
-			return nil, nil, nil, nil, nil, nil, err
-		}
-		if c, ok := provider.(*cursor.Client); ok {
-			if discovery != nil {
-				c = cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, Discovery: discovery})
-				provider = c
+		for _, account := range providerCfg.Accounts {
+			if !account.Enabled {
+				continue
 			}
-			cursorClient = c
+			extra := claude.New(claude.Options{
+				CredentialsPath: account.CredentialsPath,
+				Name:            "Claude (" + account.Label + ")",
+				Account:         &usage.Account{ID: account.ID, Label: account.Label},
+			})
+			if err := providerPoller.Register(extra, true); err != nil {
+				return nil, nil, nil, nil, nil, nil, err
+			}
+			names = append(names, extra.Name())
 		}
-		if c, ok := provider.(*codex.Client); ok {
-			codexClient = c
-		}
-		if c, ok := provider.(*claude.Client); ok {
-			claudeClient = c
-		}
-		if g, ok := provider.(*grok.Provider); ok {
-			grokProvider = g
-		}
-		if err := providerPoller.Register(provider, true); err != nil {
-			return nil, nil, nil, nil, nil, nil, err
-		}
-		names = append(names, provider.Name())
 	}
 	return providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, nil
 }

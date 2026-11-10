@@ -11,6 +11,7 @@ enum class Kind { Setup, Connecting, Idle, Usage, Exhausted, Offline, AuthError,
 struct Model {
     Kind kind = Kind::Setup;
     QString provider;
+    QString providerType;
     QString tooltip;
     bool unread = false;
     double used = -1;

@@ -108,6 +108,7 @@ signals:
 protected:
     void acceptSnapshot(const QVariantList &providers);
 private:
+    QString providerTypeFor(const QString &name) const;
     struct RetainedReading {
         QVariantList buckets;
         QVariantMap pacing; // Last successfully displayed snapshot's per-meter estimates.

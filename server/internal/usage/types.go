@@ -11,6 +11,13 @@ type Provider interface {
 	Fetch(context.Context) (UsageData, error)
 }
 
+// AccountProvider is implemented by providers whose usage row is one account of a
+// provider type (for example an extra Claude account).
+type AccountProvider interface {
+	ProviderType() string
+	Account() *Account
+}
+
 type UsageBucket struct {
 	Utilization float64
 	ResetsAt    *time.Time
@@ -68,12 +75,27 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 	return json.Marshal(bucketJSON{StartsAt: startsAt, DetailText: b.DetailText, ID: b.ID, Label: b.Label, Utilization: b.Utilization, ResetsAt: resetsAt, StatusText: b.StatusText, Measurement: measurement})
 }
 
+type Account struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+func (a *Account) Clone() *Account {
+	if a == nil {
+		return nil
+	}
+	cp := *a
+	return &cp
+}
+
 type UsageData struct {
 	FetchStatus           *FetchStatus
 	FetchFailure          *FetchFailure `json:"-"`
 	CredentialEpoch       *string       `json:"-"`
 	Auth                  Auth
 	ProviderName          string
+	ProviderType          string
+	Account               *Account
 	PrimaryLabel          string
 	SecondaryLabel        string
 	ShowSecondary         bool
@@ -174,6 +196,8 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 	type usageJSON struct {
 		FetchStatus           *FetchStatus           `json:"fetch_status,omitempty"`
 		ProviderName          string                 `json:"provider_name"`
+		ProviderType          string                 `json:"provider_type"`
+		Account               *Account               `json:"account"`
 		PrimaryLabel          string                 `json:"primary_label"`
 		SecondaryLabel        string                 `json:"secondary_label"`
 		ShowSecondary         bool                   `json:"show_secondary"`
@@ -201,14 +225,23 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		resetCredits = nil
 		details = nil
 	}
+	providerType := d.ProviderType
+	if providerType == "" {
+		providerType = d.ProviderName
+	}
 	auth := d.Auth
 	if auth.State == "" {
-		auth = NewAuth(d.ProviderName, "signed_out", nil)
+		auth = NewAuth(providerType, "signed_out", nil)
+		if d.Account != nil {
+			auth.SignInCommand = nil
+		}
 	}
 	return json.Marshal(usageJSON{
 		FetchStatus:           d.FetchStatus,
 		Auth:                  auth,
 		ProviderName:          d.ProviderName,
+		ProviderType:          providerType,
+		Account:               d.Account,
 		PrimaryLabel:          d.PrimaryLabel,
 		SecondaryLabel:        d.SecondaryLabel,
 		ShowSecondary:         d.ShowSecondary,

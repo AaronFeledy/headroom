@@ -2,14 +2,14 @@
 let socket;
 let context;
 let saved = {};
-const fields = ["provider", "cliPath"];
+const fields = ["provider", "account", "cliPath"];
 const meter = document.getElementById("bucket");
 const custom = document.getElementById("customBucket");
 const status = document.getElementById("status");
 function show(settings) {
   saved = settings ?? {};
   for (const name of fields) {
-    const fallback = { provider: "Claude", cliPath: "" }[name];
+    const fallback = { provider: "Claude", account: "", cliPath: "" }[name];
     document.getElementById(name).value = typeof saved[name] === "string" ? saved[name] : fallback;
   }
   const id = typeof saved.bucket === "string" ? saved.bucket : "first";

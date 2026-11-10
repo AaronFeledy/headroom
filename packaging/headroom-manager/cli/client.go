@@ -52,7 +52,7 @@ func fetchUsage(ctx context.Context, options Options, flags dashboardFlags) (Loc
 		for index := range providers {
 			filtered := providers[index].Buckets[:0]
 			for _, bucket := range providers[index].Buckets {
-				if weeklyBucket(providers[index].ProviderName, bucket) {
+				if weeklyBucket(providers[index].Type(), bucket) {
 					filtered = append(filtered, bucket)
 				}
 			}
@@ -62,6 +62,9 @@ func fetchUsage(ctx context.Context, options Options, flags dashboardFlags) (Loc
 		if err != nil {
 			return LocalSnapshot{}, nil, err
 		}
+	}
+	if len(snapshot.Body) == 0 && !flags.json {
+		providers = groupProvidersByType(providers)
 	}
 	snapshot.Body = bytes.TrimSpace(body)
 	return snapshot, providers, nil
@@ -80,6 +83,9 @@ func filterWeeklyJSON(body []byte) ([]byte, error) {
 			}
 		}
 		var buckets []json.RawMessage
+		if providerType := decodeProviderType(provider["provider_type"]); providerType != "" {
+			name = providerType
+		}
 		if raw, ok := provider["buckets"]; ok {
 			if err := json.Unmarshal(raw, &buckets); err != nil {
 				return nil, err

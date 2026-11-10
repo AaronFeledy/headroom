@@ -81,6 +81,12 @@ QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode,
             if (!note.isEmpty()) { lines.append(note); ++notes; }
         }
     }
+    // Built-in providers always offer a command when signed out; a row without
+    // one (an extra account the server can't sign in) explains why instead.
+    if (state == QStringLiteral("signed_out") && command.isEmpty()) {
+        const QString explanation = text(provider.value(QStringLiteral("error")));
+        if (!explanation.isEmpty() && !lines.contains(explanation)) lines.append(explanation);
+    }
     result[QStringLiteral("lines")] = lines;
     return result;
 }

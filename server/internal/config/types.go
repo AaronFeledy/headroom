@@ -25,10 +25,18 @@ type Config struct {
 	ResetStateDir  string
 }
 
+type AccountConfig struct {
+	ID              string
+	Label           string
+	CredentialsPath string
+	Enabled         bool
+}
+
 type ProviderConfig struct {
 	Enabled            bool
 	CredentialsPath    string
 	BrowserCredentials bool
+	Accounts           []AccountConfig
 }
 
 type LoadOptions struct {

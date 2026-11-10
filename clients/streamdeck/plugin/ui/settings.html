@@ -15,6 +15,9 @@
         <option value="Claude">Claude</option><option value="Codex">ChatGPT</option>
         <option value="Cursor">Cursor</option><option value="Grok">Grok</option>
       </select>
+      <label for="account">Account ID</label>
+      <input id="account" type="text" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{0,31}" spellcheck="false" placeholder="Default account">
+      <p>Leave blank for the default account. Use an account ID from the Headroom server config.</p>
       <label for="bucket">Meter</label>
       <select id="bucket">
         <option value="first">First available</option><option value="session">Session</option>

@@ -37,6 +37,8 @@ type Poller struct {
 
 type providerState struct {
 	name             string
+	providerType     string
+	account          *usage.Account
 	provider         usage.Provider
 	enabled          bool
 	fetchMu          sync.Mutex
@@ -79,7 +81,16 @@ func (p *Poller) Register(provider usage.Provider, enabled bool) error {
 	if _, exists := p.providers[key]; exists {
 		return invalidProviderError{reason: "duplicate provider " + name}
 	}
-	p.providers[key] = &providerState{name: name, provider: provider, enabled: enabled, owner: p}
+	providerType := name
+	var account *usage.Account
+	if ap, ok := provider.(usage.AccountProvider); ok {
+		providerType = strings.TrimSpace(ap.ProviderType())
+		if providerType == "" {
+			providerType = name
+		}
+		account = ap.Account().Clone()
+	}
+	p.providers[key] = &providerState{name: name, providerType: providerType, account: account, provider: provider, enabled: enabled, owner: p}
 	return nil
 }
 
@@ -189,14 +200,24 @@ func (s *providerState) normalize(data usage.UsageData, err error) usage.UsageDa
 		data.ProviderName = s.name
 	}
 	if err == nil && data.Error == nil {
+		s.stampIdentity(&data)
 		s.lastGood = copyUsageData(data)
 		s.hasLastGood = true
 		return copyUsageData(data)
 	}
+	var out usage.UsageData
 	if err == nil {
-		return s.overlayExpectedError(data)
+		out = s.overlayExpectedError(data)
+	} else {
+		out = s.overlayFetchFailure(data, err)
 	}
-	return s.overlayFetchFailure(data, err)
+	s.stampIdentity(&out)
+	return out
+}
+
+func (s *providerState) stampIdentity(data *usage.UsageData) {
+	data.ProviderType = s.providerType
+	data.Account = s.account.Clone()
 }
 
 func (s *providerState) overlayExpectedError(data usage.UsageData) usage.UsageData {
@@ -247,6 +268,11 @@ func providerKey(name string) string {
 
 func sortEntries(entries []Entry) {
 	sort.Slice(entries, func(i int, j int) bool {
+		iAccount := entries[i].Data.Account != nil
+		jAccount := entries[j].Data.Account != nil
+		if iAccount != jAccount {
+			return !iAccount
+		}
 		return strings.ToLower(entries[i].Data.ProviderName) < strings.ToLower(entries[j].Data.ProviderName)
 	})
 }

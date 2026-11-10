@@ -47,9 +47,9 @@ func (s *providerState) logAttempt(ctx context.Context, entry Entry, failure *us
 		return
 	}
 	provider := "Other"
-	switch s.name {
+	switch s.providerType {
 	case "Claude", "Codex", "Cursor", "Grok":
-		provider = s.name
+		provider = s.providerType
 	}
 	outcome := "ok"
 	if entry.Data.Error != nil {
@@ -69,6 +69,9 @@ func (s *providerState) logAttempt(ctx context.Context, entry Entry, failure *us
 		slog.String("outcome", outcome),
 		slog.String("fetched_at", entry.FetchedAt.UTC().Format(time.RFC3339Nano)),
 		slog.String("next_attempt_at", d.NextAttemptAt),
+	}
+	if s.account != nil {
+		attrs = append(attrs, slog.String("account", s.account.ID))
 	}
 	if d.Operation != nil {
 		attrs = append(attrs, slog.String("operation", *d.Operation))

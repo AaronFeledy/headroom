@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,10 +27,18 @@ type rawConfig struct {
 	TLSKeyFile   *string                      `yaml:"tls_key_file"`
 }
 
+type rawAccountConfig struct {
+	ID              *string `yaml:"id"`
+	Label           *string `yaml:"label"`
+	CredentialsPath *string `yaml:"credentials_path"`
+	Enabled         *bool   `yaml:"enabled"`
+}
+
 type rawProviderConfig struct {
-	Enabled            *bool   `yaml:"enabled"`
-	CredentialsPath    *string `yaml:"credentials_path"`
-	BrowserCredentials *bool   `yaml:"browser_credentials"`
+	Enabled            *bool               `yaml:"enabled"`
+	CredentialsPath    *string             `yaml:"credentials_path"`
+	BrowserCredentials *bool               `yaml:"browser_credentials"`
+	Accounts           *[]rawAccountConfig `yaml:"accounts"`
 }
 
 type flagValues struct {
@@ -79,6 +88,9 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	if defaultPath, err := DefaultPath(goos, opts.Env); err == nil {
 		cfg.TLSDir = tlsDirectory(defaultPath)
 		cfg.ResetStateDir = filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
+	}
+	if err := validateAccounts(cfg, goos); err != nil {
+		return Config{}, err
 	}
 	if err := validateTLS(cfg); err != nil {
 		return Config{}, err
@@ -150,12 +162,14 @@ func applyRaw(raw rawConfig, cfg *Config) error {
 		cfg.SSHAccess = *raw.SSHAccess
 	}
 	for name, provider := range raw.Providers {
-		applyProvider(strings.ToLower(name), provider, cfg)
+		if err := applyProvider(strings.ToLower(name), provider, cfg); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func applyProvider(name string, raw rawProviderConfig, cfg *Config) {
+func applyProvider(name string, raw rawProviderConfig, cfg *Config) error {
 	current := cfg.Providers[name]
 	if raw.BrowserCredentials != nil {
 		current.BrowserCredentials = *raw.BrowserCredentials
@@ -166,7 +180,37 @@ func applyProvider(name string, raw rawProviderConfig, cfg *Config) {
 	if raw.CredentialsPath != nil {
 		current.CredentialsPath = *raw.CredentialsPath
 	}
+	if raw.Accounts != nil {
+		if name != "claude" {
+			return fmt.Errorf("providers.%s.accounts[0]: accounts are supported only for claude: %w", name, ErrInvalidConfig)
+		}
+		accounts := make([]AccountConfig, 0, len(*raw.Accounts))
+		for i, item := range *raw.Accounts {
+			account := AccountConfig{Enabled: true}
+			if item.ID != nil {
+				if strings.IndexFunc(*item.ID, unicode.IsControl) >= 0 {
+					return fmt.Errorf("providers.%s.accounts[%d]: id must not contain control characters: %w", name, i, ErrInvalidConfig)
+				}
+				account.ID = strings.TrimSpace(*item.ID)
+			}
+			if item.Label != nil {
+				account.Label = strings.TrimSpace(*item.Label)
+			}
+			if item.CredentialsPath != nil {
+				account.CredentialsPath = strings.TrimSpace(*item.CredentialsPath)
+			}
+			if item.Enabled != nil {
+				account.Enabled = *item.Enabled
+			}
+			if account.Label == "" {
+				account.Label = account.ID
+			}
+			accounts = append(accounts, account)
+		}
+		current.Accounts = accounts
+	}
 	cfg.Providers[name] = current
+	return nil
 }
 
 func applyEnv(env map[string]string, cfg *Config) error {

@@ -145,7 +145,7 @@ QStringList Usage::detailRows(const QVariantMap &provider, const QDateTime &now)
     if (!planFacts.isEmpty() || !scopeText(plan).isEmpty()) add(plan, planFacts.isEmpty() ? "Plan" : planFacts.join(" · "), plan);
     for (const auto &v : details["quotas"].toList()) {
         const auto q = v.toMap(); const QString id = q["bucket_id"].toString();
-        const bool sand = id == "weekly_grok_bot" && provider["provider_name"] == "Cursor";
+        const bool sand = id == "weekly_grok_bot" && Usage::providerType(provider) == "Cursor";
         QVariantMap bucket;
         for (const auto &b : provider["buckets"].toList()) if (b.toMap()["id"] == id) bucket = b.toMap();
         if (bucket.isEmpty() && !sand) continue;
@@ -188,7 +188,7 @@ QStringList Usage::detailRows(const QVariantMap &provider, const QDateTime &now)
         add(grants, text, r);
     }
     const auto inventory = details["reset_inventory"].toMap();
-    if (provider["provider_name"].toString().compare("Grok", Qt::CaseInsensitive) == 0) {
+    if (Usage::providerType(provider).compare("Grok", Qt::CaseInsensitive) == 0) {
         QStringList facts;
         if (inventory["reported_count"].toLongLong() > 0) facts << inventory["reported_count"].toString() + " reported";
         if (inventory["state"] == "ok" && !inventory["valid_now_count"].isNull()

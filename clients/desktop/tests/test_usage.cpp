@@ -41,6 +41,9 @@ private slots:
         auto provider = QJsonDocument::fromJson(TestUsage::snapshotWithFetchStatus(
             "2026-10-31T12:00:00.000Z", "secret-credential-epoch")).array()[0].toObject();
         provider["subtitle"] = "secret-account";
+        provider["provider_name"] = "Claude (secret-account)";
+        provider["provider_type"] = "Claude";
+        provider["account"] = QJsonObject{{"id", "work"}, {"label", "secret-account"}};
         auto status = provider["fetch_status"].toObject();
         QJsonObject details{{"operation", "profile"}, {"http_status", 429},
             {"retry_after", "2026-10-31T12:10:00.000Z"}, {"next_attempt_at", "2026-10-31T12:10:00.000Z"},
@@ -51,10 +54,17 @@ private slots:
         QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
         const auto normalized = parsed[0].toMap()["fetch_status"].toMap()["diagnostics"].toMap();
         QVERIFY(!normalized.contains("raw_body")); QVERIFY(!normalized.contains("url"));
-        controller.acceptSnapshot(parsed); controller.acceptSnapshot(parsed);
+        auto codex = QJsonDocument::fromJson(TestUsage::snapshotWithFetchStatus(
+            "2026-10-31T12:00:00.000Z", "codex-epoch")).array()[1].toObject();
+        QCOMPARE(codex["provider_name"].toString(), QStringLiteral("Codex"));
+        QVariantList withCodex;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider, codex}).toJson(), withCodex));
+        controller.acceptSnapshot(withCodex); controller.acceptSnapshot(withCodex);
         auto text = controller.diagnosticText();
+        QVERIFY(text.contains("ChatGPT: fetched"));
         QCOMPARE(text.count("request profile"), 1);
         QVERIFY(text.contains("HTTP 429")); QVERIFY(text.contains("usage ok"));
+        QVERIFY(text.contains("Claude:work: fetched"));
         QVERIFY(text.contains("next_attempt_at 2026-10-31T12:10:00.000Z"));
         QVERIFY(text.contains("desktop PID")); QVERIFY(!text.contains("secret"));
         details["operation"] = "secret-operation"; details["http_status"] = 429.5;
@@ -123,6 +133,139 @@ private slots:
             QVERIFY(!Usage::parse(bad, providers)); QCOMPARE(providers, original);
         }
     }
+    void sharedAccountIdentityContract_data() {
+        QTest::addColumn<QJsonValue>("account");
+        QTest::addColumn<QJsonValue>("providerType");
+        QTest::addColumn<QJsonValue>("expectedAccount");
+        QTest::addColumn<QString>("expectedType");
+        QFile file(QStringLiteral(USAGE_CONTRACT_FIXTURE));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+        QCOMPARE(error.error, QJsonParseError::NoError);
+        QVERIFY(document.isObject());
+        const auto fixture = document.object();
+        const auto ids = fixture["account_ids"].toObject();
+        const auto labels = fixture["account_labels"].toObject();
+        const auto types = fixture["provider_types"].toObject();
+        int index = 0;
+        const auto add = [&](const QJsonValue &account, const QJsonValue &expected) {
+            QTest::newRow(qPrintable(QString("account-%1").arg(index++)))
+                << account << QJsonValue("Claude") << expected << QString("Claude");
+        };
+        for (const auto &id : ids["valid"].toArray())
+            for (const auto &value : labels["valid"].toArray()) {
+                const auto label = value.toObject();
+                add(QJsonObject{{"id", id}, {"label", label["raw"]}},
+                    QJsonObject{{"id", id}, {"label", label["normalized"]}});
+            }
+        for (const auto &id : ids["invalid"].toArray())
+            add(QJsonObject{{"id", id}, {"label", "Work"}}, QJsonValue::Null);
+        for (const auto &label : labels["invalid"].toArray())
+            add(QJsonObject{{"id", "work"}, {"label", label}}, QJsonValue::Null);
+        for (const auto &value : fixture["account_values"].toObject()["null_results"].toArray())
+            add(value, QJsonValue::Null);
+        for (const auto &group : {"valid", "invalid", "invalid_values"})
+            for (const auto &type : types[group].toArray())
+                QTest::newRow(qPrintable(QString("type-%1").arg(index++)))
+                    << QJsonValue(QJsonValue::Null) << QJsonValue(type) << QJsonValue(QJsonValue::Null)
+                    << (QString(group) == "valid" ? type.toString() : QString("Claude (Work)"));
+        const QString supplementary = QString::fromUcs4(U"\U0001f600").repeated(32);
+        QTest::newRow("type-supplementary-boundary") << QJsonValue(QJsonValue::Null)
+            << QJsonValue(supplementary) << QJsonValue(QJsonValue::Null) << supplementary;
+        QTest::newRow("type-supplementary-overlong") << QJsonValue(QJsonValue::Null)
+            << QJsonValue(supplementary + "x") << QJsonValue(QJsonValue::Null) << QString("Claude (Work)");
+    }
+    void sharedAccountIdentityContract() {
+        QFETCH(QJsonValue, account); QFETCH(QJsonValue, providerType);
+        QFETCH(QJsonValue, expectedAccount); QFETCH(QString, expectedType);
+        auto row = QJsonDocument::fromJson(TestUsage::snapshot()).array()[0].toObject();
+        row["provider_name"] = "Claude (Work)"; row["provider_type"] = providerType; row["account"] = account;
+        QVariantList parsed;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{row}).toJson(), parsed));
+        QCOMPARE(parsed.size(), 1);
+        QCOMPARE(QJsonValue::fromVariant(parsed[0].toMap()["account"]), expectedAccount);
+        QCOMPARE(Usage::providerType(parsed[0].toMap()), expectedType);
+    }
+    void accountOrderSurvivesLabelChanges_data() {
+        QTest::addColumn<bool>("pin");
+        QTest::newRow("drag") << false;
+        QTest::newRow("pin") << true;
+    }
+    void accountOrderSurvivesLabelChanges() {
+        QFETCH(bool, pin);
+        QTemporaryDir dir;
+        const auto path = dir.filePath("settings.json");
+        SettingsService initial(path, false);
+        QVERIFY(initial.saveOrder({"Claude", "Claude:absent", "Codex"}, "Claude").isEmpty());
+        auto base = QJsonDocument::fromJson(TestUsage::snapshot()).array()[0].toObject();
+        auto extra = base;
+        extra["provider_name"] = "Claude (Work)"; extra["provider_type"] = "Claude";
+        extra["account"] = QJsonObject{{"id", "work"}, {"label", "Work"}};
+        ControllerFixture controller(path, QJsonDocument(QJsonArray{base, extra}).toJson());
+        controller.refresh();
+        if (pin) controller.setPrimary("Claude (Work)");
+        else controller.moveProvider("Claude (Work)", "Claude", false);
+        SettingsService moved(path, false);
+        QCOMPARE(moved.value().order, (QStringList{"Claude:work", "Claude", "Claude:absent", "Codex", "Cursor", "Grok"}));
+        QCOMPARE(moved.value().primary, "Claude:work");
+        QCOMPARE(controller.primary(), "Claude (Work)");
+        QFile saved(path); QVERIFY(saved.open(QIODevice::ReadOnly));
+        const auto persisted = QJsonDocument::fromJson(saved.readAll()).object();
+        saved.close(); // Windows cannot atomically replace a file that is still open.
+        QCOMPARE(persisted["order"].toArray().first().toString(), "Claude:work");
+        QCOMPARE(persisted["primary"].toString(), "Claude:work");
+        extra["provider_name"] = "Claude (Office)";
+        extra["account"] = QJsonObject{{"id", "work"}, {"label", "Office"}};
+        const auto renamed = QJsonDocument(QJsonArray{base, extra}).toJson();
+        controller.replaceSnapshot(renamed);
+        QCOMPARE(controller.providers().first().toMap()["provider_name"].toString(), "Claude (Office)");
+        QCOMPARE(controller.primary(), "Claude (Office)");
+        QVERIFY(controller.saveSettings("local", "", "", 60, true,
+            controller.settings()["primary"].toString(), false).isEmpty());
+        SettingsService afterPanelSave(path, false);
+        QCOMPARE(afterPanelSave.value().primary, "Claude:work");
+        QCOMPARE(afterPanelSave.value().order, moved.value().order);
+        ControllerFixture reopened(path, renamed); reopened.refresh();
+        QCOMPARE(reopened.primary(), "Claude (Office)");
+        ControllerFixture beforeFirstSnapshot(path, renamed);
+        QVERIFY(beforeFirstSnapshot.providers().isEmpty());
+        QCOMPARE(beforeFirstSnapshot.primary(), "Claude");
+    }
+    void accountIdentityNormalizationAndPrivateBridge() {
+        auto rows = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        auto extra = rows[0].toObject();
+        const QString label = "Work";
+        const QString name = "Claude (" + label + ")";
+        extra["provider_name"] = name;
+        extra["provider_type"] = "Claude";
+        extra["account"] = QJsonObject{{"id", "work"}, {"label", label}};
+        extra["future_field"] = 1;
+        rows.append(extra);
+        QVariantList parsed;
+        QVERIFY(Usage::parse(QJsonDocument(rows).toJson(), parsed));
+        QCOMPARE(parsed[1].toMap()["provider_name"].toString(), name);
+        QCOMPARE(parsed[2].toMap()["provider_name"].toString(), "Codex");
+        QCOMPARE(Usage::providerType(parsed[0].toMap()), "Claude");
+        QVERIFY(parsed[0].toMap()["account"].isNull());
+        QTemporaryDir dir;
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(rows).toJson());
+        controller.refresh();
+        QCOMPARE(controller.providers()[1].toMap()["provider_name"].toString(), name);
+        const auto session = controller.providers()[1].toMap()["buckets"].toList()[0].toMap();
+        QVERIFY(controller.pacing(name, session)["available"].toBool());
+        QVERIFY(controller.pacing(name, session)["detail"].toString().contains("5-hour window"));
+        QCOMPARE(controller.notches(name, session).size(), 4);
+        QVERIFY(controller.concern(name, session)["available"].toBool());
+        const auto bridge = QJsonArray::fromVariantList(controller.providers());
+        QJsonObject bridged;
+        for (const auto &row : bridge)
+            if (row.toObject()["provider_name"] == name) bridged = row.toObject();
+        QCOMPARE(bridged["provider_type"].toString(), "Claude");
+        QCOMPARE(bridged["account"].toObject()["id"].toString(), "work");
+        QCOMPARE(bridged["account"].toObject()["label"].toString(), label);
+        QCOMPARE(bridged["future_field"].toInt(), 1);
+    }
     void explicitBucketsNeverInventMissingWindows() {
         QJsonObject provider{{"provider_name", "Codex"}, {"is_success", true},
             {"error", QJsonValue::Null}, {"needs_reauth", false},
@@ -144,6 +287,7 @@ private slots:
         QTest::addColumn<QString>("provider");
         QTest::newRow("ChatGPT") << QString("Codex");
         QTest::newRow("Claude") << QString("Claude");
+        QTest::newRow("Claude account") << QString("Claude (Work)");
     }
     void bankedResetNotificationsObserveSnapshotsOnly() {
         QFETCH(QString, provider);
@@ -151,10 +295,16 @@ private slots:
         const auto reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);
         auto payload = [&](int count, const QString &fingerprint = QString(64, 'a'),
                            bool failed = false, bool missing = false) {
-            auto providers = QJsonDocument::fromJson(provider == "Claude" ? TestUsage::snapshot()
+            const bool claude = provider.startsWith("Claude");
+            auto providers = QJsonDocument::fromJson(claude ? TestUsage::snapshot()
                 : TestUsage::snapshotWithCodex(0, 41, count, reset)).array();
-            const int index = provider == "Claude" ? 0 : 1;
+            const int index = claude ? 0 : 1;
             auto reading = providers[index].toObject();
+            if (provider == "Claude (Work)") {
+                reading["provider_name"] = provider;
+                reading["provider_type"] = "Claude";
+                reading["account"] = QJsonObject{{"id", "work"}, {"label", "Work"}};
+            }
             if (missing) reading.remove("rate_limit_reset_credits");
             else reading["rate_limit_reset_credits"] = QJsonObject{{"available_count", count}, {"account_fingerprint", fingerprint}};
             if (failed) { reading["is_success"] = false; reading["error"] = "Unavailable"; }
@@ -174,6 +324,7 @@ private slots:
         controller.replaceSnapshot(payload(2)); QCOMPARE(alerts.size(), 2);
         controller.notifications()->present();
         QCOMPARE(controller.notifications()->presented().last().toMap()["delta"].toLongLong(), -2);
+        QCOMPARE(controller.notifications()->presented().last().toMap()["target"].toString(), "bankedResets_" + provider);
         controller.replaceSnapshot(payload(9, QString(64, 'b')));
         QCOMPARE(alerts.size(), 2);
         QCOMPARE(controller.notifications()->unreadCount(), 0);

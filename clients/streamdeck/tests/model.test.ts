@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { decodeUsage, keyView, resetLabel, type Provider, type Snapshot } from "../src/model.js";
+import { decodeUsage, keyView, resetLabel, settings, type Provider, type Snapshot } from "../src/model.js";
 import { renderKey } from "../src/render.js";
 
 export const provider: Provider = {
@@ -55,4 +56,99 @@ test("SVG labels cannot inject markup or control characters", () => {
   assert.ok(!image.includes("\u202e"));
   assert.ok(image.includes("&lt;&amp;&quot;"));
   assert.ok(!image.includes('data-role="usage"'));
+});
+test("blank account selects the default Claude row, not an extra account", () => {
+  const bridge = JSON.stringify([
+    {
+      provider_name: "Claude", provider_type: "Claude", account: null,
+      error: null, is_success: true, needs_reauth: false, auth: { state: "signed_in" },
+      buckets: [{ id: "session", label: "Session", utilization: 20, resets_at: "2026-10-13T08:00:00Z" }],
+    },
+    {
+      provider_name: "Claude (Work🏢)", provider_type: "Claude",
+      account: { id: "work", label: "Work🏢" }, future_field: 1,
+      error: null, is_success: true, needs_reauth: false, auth: { state: "signed_in" },
+      buckets: [{ id: "session", label: "Session", utilization: 42, resets_at: "2026-10-13T08:00:00Z" }],
+    },
+  ]);
+  const rows = decodeUsage(bridge);
+  assert.equal(rows[1].account?.label, "Work🏢");
+  assert.ok("future_field" in rows[1]);
+  assert.equal(rows[1].future_field, 1);
+  const ready: Snapshot = { status: "ready", providers: rows };
+  const blank = keyView(ready, { provider: "Claude" }, now);
+  assert.equal(blank.used, 20);
+  assert.equal(blank.account, undefined);
+  const work = keyView(ready, { provider: "Claude", account: "work" }, now);
+  assert.equal(work.used, 42);
+  assert.equal(work.account, "Work🏢");
+  assert.equal(work.expected, 60);
+  assert.equal(work.pace, "54m under pace");
+  assert.ok(renderKey(work).includes("Work🏢"));
+});
+test("old-server rows without provider_type still match the default account", () => {
+  const ready: Snapshot = {
+    status: "ready",
+    providers: [{
+      provider_name: "Claude", error: null, is_success: true, needs_reauth: false, auth: { state: "signed_in" },
+      buckets: [{ id: "session", label: "Session", utilization: 33, resets_at: "2026-10-13T08:00:00Z" }],
+    }],
+  };
+  assert.equal(keyView(ready, { provider: "Claude" }, now).used, 33);
+  assert.equal(keyView(ready, { provider: "Claude", account: "work" }, now).value, "Disabled");
+});
+test("invalid account settings normalize to blank and skip extra rows", () => {
+  assert.equal(settings({ account: "Work" }).account, "");
+  assert.equal(settings({ account: "work!" }).account, "");
+  assert.equal(settings({ account: "" }).account, "");
+  assert.equal(settings({ account: "work" }).account, "work");
+  const ready: Snapshot = {
+    status: "ready",
+    providers: [{
+      provider_name: "Claude (Work)", provider_type: "Claude", account: { id: "work", label: "Work" },
+      error: null, is_success: true, needs_reauth: false, auth: { state: "signed_in" },
+      buckets: [{ id: "session", label: "Session", utilization: 42, resets_at: "2026-10-13T08:00:00Z" }],
+    }],
+  };
+  assert.equal(keyView(ready, { provider: "Claude", account: "Work" }, now).value, "Disabled");
+});
+test("decodeUsage follows the shared account identity fixture", () => {
+  const fixture: {
+    readonly account_ids: { readonly valid: readonly string[]; readonly invalid: readonly string[] };
+    readonly account_labels: {
+      readonly valid: readonly { readonly raw: string; readonly normalized: string }[];
+      readonly invalid: readonly string[];
+    };
+    readonly provider_types: {
+      readonly valid: readonly string[]; readonly invalid: readonly string[]; readonly invalid_values: readonly unknown[];
+    };
+    readonly account_values: { readonly null_results: readonly unknown[] };
+  } = JSON.parse(readFileSync(new URL("../../../server/internal/usage/testdata/account_identity.json", import.meta.url), "utf8"));
+  const decode = (metadata: { readonly account?: unknown; readonly provider_type?: unknown }): Provider => {
+    const rows = decodeUsage(JSON.stringify([{ ...provider, provider_name: "Claude (Work)", ...metadata }]));
+    assert.equal(rows.length, 1);
+    return rows[0];
+  };
+  for (const id of fixture.account_ids.valid) {
+    for (const label of fixture.account_labels.valid) {
+      assert.deepEqual(decode({ account: { id, label: label.raw } }).account, { id, label: label.normalized });
+    }
+  }
+  for (const id of fixture.account_ids.invalid) {
+    assert.equal(decode({ account: { id, label: "Work" } }).account, null, JSON.stringify(id));
+  }
+  for (const label of fixture.account_labels.invalid) {
+    assert.equal(decode({ account: { id: "work", label } }).account, null, JSON.stringify(label));
+  }
+  for (const account of fixture.account_values.null_results) {
+    assert.equal(decode({ account }).account, null, JSON.stringify(account));
+  }
+  for (const provider_type of [...fixture.provider_types.valid, "\u{1f600}".repeat(32)]) {
+    const row = decode({ provider_type });
+    assert.equal(row.provider_type, provider_type);
+  }
+  for (const provider_type of [...fixture.provider_types.invalid, ...fixture.provider_types.invalid_values, "\u{1f600}".repeat(33)]) {
+    const row = decode({ provider_type });
+    assert.equal(row.provider_type, undefined);
+  }
 });

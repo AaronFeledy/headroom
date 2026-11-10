@@ -24,7 +24,8 @@ func (p *Poller) UpdateCredentials(ctx context.Context, name string, update func
 		return Entry{}, true, err
 	}
 	message := "Credentials updated. Usage pending."
-	state.entry = Entry{Data: usage.UsageData{ProviderName: state.name, Error: &message}}
+	pending := usage.UsageData{ProviderName: state.name, ProviderType: state.providerType, Account: state.account.Clone(), Error: &message}
+	state.entry = Entry{Data: pending}
 	state.hasEntry = true
 	state.lastGood = usage.UsageData{}
 	state.hasLastGood = false

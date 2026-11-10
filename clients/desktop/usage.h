@@ -24,4 +24,6 @@ QVariantMap pacing(const QString &provider, const QVariantMap &bucket,
 QVariantMap concern(const QString &provider, const QVariantMap &bucket,
                     const QDateTime &now = QDateTime::currentDateTimeUtc());
 QString displayName(const QString &provider);
+QString providerType(const QVariantMap &provider);
+QString rowKey(const QVariantMap &row);
 }

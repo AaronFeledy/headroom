@@ -74,7 +74,7 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 				}
 				continue
 			}
-			pace := pacing(provider.ProviderName, bucket, now.UTC())
+			pace := pacing(provider.Type(), bucket, now.UTC())
 			key := strings.ToLower(provider.ProviderName) + "\x00" + bucket.ID
 			window := ""
 			if bucket.ResetsAt != nil {

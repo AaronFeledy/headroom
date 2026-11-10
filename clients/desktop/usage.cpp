@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QUuid>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -47,6 +48,17 @@ QString Usage::displayName(const QString &provider) {
     return provider.compare("Codex", Qt::CaseInsensitive) == 0 ? QString("ChatGPT") : provider;
 }
 
+QString Usage::providerType(const QVariantMap &provider) {
+    const auto type = provider.value("provider_type");
+    return type.metaType().id() == QMetaType::QString && !type.toString().isEmpty()
+        ? type.toString() : provider.value("provider_name").toString();
+}
+
+QString Usage::rowKey(const QVariantMap &row) {
+    return row.value("account").isNull() ? row.value("provider_name").toString()
+        : providerType(row) + ":" + row.value("account").toMap().value("id").toString();
+}
+
 QUrl Usage::endpoint(const QString &base) {
     QUrl ssh;
     if (SshTransport::parseAddress(base.trimmed(), &ssh)) {
@@ -83,6 +95,26 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             || !p["is_success"].isBool() || p["is_success"].toBool() != p["error"].isNull()
             || !p["needs_reauth"].isBool()) return false;
         names.insert(name.toLower());
+        const auto type = p["provider_type"];
+        if (!type.isString() || type.toString().isEmpty() || type.toString().toUcs4().size() > 32)
+            p["provider_type"] = name;
+        QJsonValue account(QJsonValue::Null);
+        if (p["account"].isObject()) {
+            auto candidate = p["account"].toObject();
+            const auto id = candidate["id"];
+            const auto label = candidate["label"].toString().trimmed();
+            const auto points = label.toUcs4();
+            static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9][a-z0-9_-]{0,31}\\z"));
+            if (id.isString() && id.toString().size() <= 32 && idPattern.match(id.toString()).hasMatch()
+                && !points.isEmpty() && points.size() <= 32
+                && std::none_of(points.cbegin(), points.cend(), [](char32_t point) {
+                    return QChar::category(point) == QChar::Other_Control;
+                })) {
+                candidate["label"] = label;
+                account = candidate;
+            }
+        }
+        p["account"] = account;
         QJsonValue resetCredits(QJsonValue::Null);
         if (p["error"].isNull() && p["rate_limit_reset_credits"].isObject()) {
             const auto credits = p["rate_limit_reset_credits"].toObject();
@@ -210,7 +242,11 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
     }
     const QStringList order {"claude", "codex", "cursor", "grok"};
     std::stable_sort(result.begin(), result.end(), [&](const QVariant &a, const QVariant &b) {
-        auto rank = [&](const QVariant &v) { auto i = order.indexOf(v.toMap()["provider_name"].toString().toLower()); return i < 0 ? 99 : i; };
+        auto rank = [&](const QVariant &v) {
+            const auto row = v.toMap();
+            const auto i = order.indexOf(providerType(row).toLower());
+            return (i < 0 ? 99 : i) * 2 + (row["account"].isNull() ? 0 : 1);
+        };
         return rank(a) < rank(b);
     });
     providers = result;

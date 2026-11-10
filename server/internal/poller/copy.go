@@ -33,6 +33,8 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		CredentialEpoch:       copyString(data.CredentialEpoch),
 		Auth:                  copyAuth(data.Auth),
 		ProviderName:          data.ProviderName,
+		ProviderType:          data.ProviderType,
+		Account:               data.Account.Clone(),
 		PrimaryLabel:          data.PrimaryLabel,
 		SecondaryLabel:        data.SecondaryLabel,
 		ShowSecondary:         data.ShowSecondary,

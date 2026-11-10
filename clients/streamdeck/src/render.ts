@@ -52,7 +52,7 @@ export function renderKey(view: KeyView, icon?: string, pulse = 0, critical = 0)
       '<text x="116" y="122" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="18" font-weight="bold" fill="#f8f8f2">?</text></g>';
   }
   // Preserve meter details in the SVG title.
-  const description = [view.provider, view.label, view.value, meter ? view.display ?? "used" : "",
+  const description = [view.provider, view.account, view.label, view.value, meter ? view.display ?? "used" : "",
     view.pace ?? "", view.detail].filter(Boolean).join(" · ");
   return '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">' +
     '<title>' + escape(description, 200) + '</title>' +

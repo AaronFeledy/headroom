@@ -1,0 +1,111 @@
+{
+  "account_ids": {
+    "valid": [
+      "work",
+      "a",
+      "0",
+      "work-2",
+      "my_team",
+      "abcdefghijklmnopqrstuvwxyz012345"
+    ],
+    "invalid": [
+      "",
+      "Work",
+      "-work",
+      "_work",
+      "work!",
+      "bad id",
+      "work\n",
+      "w\u00f6rk",
+      "abcdefghijklmnopqrstuvwxyz0123456"
+    ]
+  },
+  "account_labels": {
+    "valid": [
+      {
+        "raw": "Work",
+        "normalized": "Work"
+      },
+      {
+        "raw": "  Work \t",
+        "normalized": "Work"
+      },
+      {
+        "raw": "\u00a0Work\u00a0",
+        "normalized": "Work"
+      },
+      {
+        "raw": "Work \ud83c\udfe2",
+        "normalized": "Work \ud83c\udfe2"
+      },
+      {
+        "raw": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+        "normalized": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      },
+      {
+        "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    ],
+    "invalid": [
+      "",
+      "   ",
+      "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "Wo\nrk",
+      "\u0007bad",
+      "a\u007fb",
+      "a\u009fb"
+    ]
+  },
+  "provider_types": {
+    "valid": [
+      "Claude",
+      "Codex",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"
+    ],
+    "invalid": [
+      "",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"
+    ],
+    "invalid_values": [
+      12,
+      null,
+      true,
+      {},
+      [
+        "Claude"
+      ]
+    ]
+  },
+  "account_values": {
+    "null_results": [
+      null,
+      "work",
+      1,
+      true,
+      [],
+      {},
+      {
+        "id": "work"
+      },
+      {
+        "label": "Work"
+      },
+      {
+        "id": 1,
+        "label": "Work"
+      },
+      {
+        "id": "work",
+        "label": 1
+      },
+      {
+        "id": "work",
+        "label": null
+      }
+    ]
+  }
+}

@@ -100,7 +100,7 @@ void Controller::retainReadings(const QVariantList &providers, bool removeMissin
             const auto pacedAt = QDateTime::currentDateTimeUtc();
             for (const auto &value : buckets) {
                 const auto bucket = value.toMap();
-                reading.pacing.insert(bucket["id"].toString(), Usage::pacing(name, bucket, pacedAt));
+                reading.pacing.insert(bucket["id"].toString(), Usage::pacing(Usage::providerType(provider), bucket, pacedAt));
             }
             reading.epoch = epoch;
             reading.source = source;

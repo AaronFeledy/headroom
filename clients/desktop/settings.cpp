@@ -11,6 +11,7 @@
 #include <QTemporaryFile>
 #include <QUrl>
 #include <QSslCertificate>
+#include <algorithm>
 
 namespace {
 constexpr int CurrentSchemaVersion = 1;
@@ -199,6 +200,11 @@ QString SettingsService::normalizeProvider(const QString &provider)
     const QString candidate = provider.trimmed();
     for (const QString &known : {QString("Claude"), QString("Codex"), QString("Cursor"), QString("Grok")})
         if (candidate.compare(known, Qt::CaseInsensitive) == 0) return known;
+    const auto points = candidate.toUcs4();
+    if (!points.isEmpty() && points.size() <= 80
+        && std::none_of(points.cbegin(), points.cend(), [](char32_t point) {
+            return QChar::category(point) == QChar::Other_Control;
+        })) return candidate;
     return "Claude";
 }
 
@@ -206,10 +212,15 @@ QStringList SettingsService::normalizeOrder(const QStringList &values, const QSt
 {
     const QStringList defaults{"Claude", "Codex", "Cursor", "Grok"};
     QStringList result;
+    int extras = 0;
     for (const auto &value : values) {
         const QString normalized = normalizeProvider(value);
         const bool recognized = defaults.contains(value.trimmed(), Qt::CaseInsensitive);
-        if (recognized && !result.contains(normalized)) result.append(normalized);
+        if (normalized.compare(value.trimmed(), Qt::CaseInsensitive) != 0) continue;
+        if (result.contains(normalized, Qt::CaseInsensitive)) continue;
+        if (!recognized && extras >= 32) continue;
+        result.append(normalized);
+        if (!recognized) ++extras;
     }
     if (result.isEmpty()) result.append(normalizeProvider(legacyPrimary));
     for (const auto &provider : defaults) if (!result.contains(provider)) result.append(provider);
