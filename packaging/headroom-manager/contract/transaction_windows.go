@@ -178,6 +178,10 @@ var openSynchronizeProcess = func(pid int) (uintptr, error) {
 	return h, callErr
 }
 
+// processCreationChanged has no Windows proof: the creation time is readable
+// only through the same process handle whose open already failed.
+func processCreationChanged(int, string) bool { return false }
+
 func processGone(pid int) bool {
 	h, callErr := openSynchronizeProcess(pid)
 	if h == 0 {

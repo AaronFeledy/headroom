@@ -15,7 +15,9 @@ var errProcessExecutableMismatch = errors.New("process executable identity does 
 
 // A failed identity query is not evidence that a live service was replaced.
 // Only a different kernel identity or a definitely dead PID permits replacing
-// its receipt. The caller holds the install transaction lock.
+// its receipt. A PID reused by another user's process after a reboot hides its
+// executable but not its creation identity. The caller holds the install
+// transaction lock.
 func managedServiceMayRegister(record ManagedServiceRecord) error {
 	token, err := captureProcessToken(record.PID, record.Executable)
 	if err == nil {
@@ -24,7 +26,7 @@ func managedServiceMayRegister(record ManagedServiceRecord) error {
 		}
 		return errors.New("a managed Headroom service is already running")
 	}
-	if errors.Is(err, errProcessExecutableMismatch) || processGone(record.PID) {
+	if errors.Is(err, errProcessExecutableMismatch) || processGone(record.PID) || processCreationChanged(record.PID, record.ProcessToken) {
 		return nil
 	}
 	return errors.New("cannot verify the existing managed Headroom service; its receipt was preserved")

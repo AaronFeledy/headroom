@@ -3,6 +3,7 @@
 package contract
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,5 +81,33 @@ func TestLinuxWatchLiveProcessWaitRemainsBounded(t *testing.T) {
 	watch := &unixWatch{pid: os.Getpid(), executable: executable, token: token}
 	if err := watch.Wait(30 * time.Millisecond); err == nil {
 		t.Fatal("live process reported exited")
+	}
+}
+
+// After a reboot a stale service receipt's PID can name another user's process
+// whose executable link is unreadable. Only its creation identity proves reuse.
+func TestLinuxServiceRegistrationReplacesUnreadableReusedPID(t *testing.T) {
+	const pid = 1
+	if _, err := os.Readlink("/proc/1/exe"); err == nil {
+		t.Skip("PID 1 executable link is readable; this needs another user's process")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureProcessToken(pid, executable); err == nil || errors.Is(err, errProcessExecutableMismatch) {
+		t.Fatalf("unreadable executable must not be a definite identity: %v", err)
+	}
+	start, err := linuxStartToken(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := ManagedServiceRecord{PID: pid, Executable: executable, ProcessToken: start}
+	if err := managedServiceMayRegister(record); err == nil {
+		t.Fatal("unverifiable receipt with a matching creation identity was replaced")
+	}
+	record.ProcessToken = start + "-previous-boot"
+	if err := managedServiceMayRegister(record); err != nil {
+		t.Fatalf("reused PID with a different creation identity refused: %v", err)
 	}
 }
