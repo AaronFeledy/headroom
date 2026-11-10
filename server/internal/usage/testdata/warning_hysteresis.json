@@ -1,0 +1,175 @@
+{
+  "schema": 1,
+  "description": "Levels 0..3 are Normal, Watch, Warning, Critical. Each step supplies percent used and pacing pressure (null means pacing unavailable). Previous starts at 0 unless the case specifies previous, then becomes the prior step's expected level. Select the highest reached tier; previous >= tier uses its exit thresholds. With pacing, pressure OR capacity can hold a tier; without pacing use fallback usage thresholds. Thresholds are inclusive, with 1e-9 subtracted only from pressure thresholds (enter and exit).",
+  "cases": [
+    {
+      "name": "pressure-watch-boundaries",
+      "steps": [
+        {"used": 60, "pressure": 0.099999, "expected": 0},
+        {"used": 60, "pressure": 0.10, "expected": 1},
+        {"used": 60, "pressure": 0.09, "expected": 1},
+        {"used": 60, "pressure": 0.08, "expected": 1},
+        {"used": 60, "pressure": 0.079999, "expected": 0}
+      ]
+    },
+    {
+      "name": "pressure-warning-boundaries",
+      "steps": [
+        {"used": 60, "pressure": 0.249999, "expected": 1},
+        {"used": 60, "pressure": 0.25, "expected": 2},
+        {"used": 60, "pressure": 0.225, "expected": 2},
+        {"used": 60, "pressure": 0.20, "expected": 2},
+        {"used": 60, "pressure": 0.199999, "expected": 1}
+      ]
+    },
+    {
+      "name": "pressure-critical-boundaries",
+      "steps": [
+        {"used": 60, "pressure": 0.499999, "expected": 2},
+        {"used": 60, "pressure": 0.50, "expected": 3},
+        {"used": 60, "pressure": 0.45, "expected": 3},
+        {"used": 60, "pressure": 0.40, "expected": 3},
+        {"used": 60, "pressure": 0.399999, "expected": 2}
+      ]
+    },
+    {
+      "name": "capacity-watch-boundaries",
+      "steps": [
+        {"used": 94.999999, "pressure": 0, "expected": 0},
+        {"used": 95, "pressure": 0, "expected": 1},
+        {"used": 94.5, "pressure": 0, "expected": 1},
+        {"used": 94, "pressure": 0, "expected": 1},
+        {"used": 93.999999, "pressure": 0, "expected": 0}
+      ]
+    },
+    {
+      "name": "capacity-warning-boundaries",
+      "steps": [
+        {"used": 98.999999, "pressure": 0, "expected": 1},
+        {"used": 99, "pressure": 0, "expected": 2},
+        {"used": 98.5, "pressure": 0, "expected": 2},
+        {"used": 98, "pressure": 0, "expected": 2},
+        {"used": 97.999999, "pressure": 0, "expected": 1}
+      ]
+    },
+    {
+      "name": "capacity-critical-boundaries",
+      "steps": [
+        {"used": 99.999999, "pressure": 0, "expected": 2},
+        {"used": 100, "pressure": 0, "expected": 3},
+        {"used": 99.75, "pressure": 0, "expected": 3},
+        {"used": 99.5, "pressure": 0, "expected": 3},
+        {"used": 99.499999, "pressure": 0, "expected": 2}
+      ]
+    },
+    {
+      "name": "fallback-watch-boundaries",
+      "steps": [
+        {"used": 49.999999, "pressure": null, "expected": 0},
+        {"used": 50, "pressure": null, "expected": 1},
+        {"used": 47.5, "pressure": null, "expected": 1},
+        {"used": 45, "pressure": null, "expected": 1},
+        {"used": 44.999999, "pressure": null, "expected": 0}
+      ]
+    },
+    {
+      "name": "fallback-warning-boundaries",
+      "steps": [
+        {"used": 74.999999, "pressure": null, "expected": 1},
+        {"used": 75, "pressure": null, "expected": 2},
+        {"used": 72.5, "pressure": null, "expected": 2},
+        {"used": 70, "pressure": null, "expected": 2},
+        {"used": 69.999999, "pressure": null, "expected": 1}
+      ]
+    },
+    {
+      "name": "fallback-critical-boundaries",
+      "steps": [
+        {"used": 89.999999, "pressure": null, "expected": 2},
+        {"used": 90, "pressure": null, "expected": 3},
+        {"used": 87.5, "pressure": null, "expected": 3},
+        {"used": 85, "pressure": null, "expected": 3},
+        {"used": 84.999999, "pressure": null, "expected": 2}
+      ]
+    },
+    {
+      "name": "pressure-enter-tolerance",
+      "steps": [
+        {"used": 60, "pressure": 0.099999998, "expected": 0},
+        {"used": 60, "pressure": 0.0999999995, "expected": 1},
+        {"used": 60, "pressure": 0.249999998, "expected": 1},
+        {"used": 60, "pressure": 0.2499999995, "expected": 2},
+        {"used": 60, "pressure": 0.499999998, "expected": 2},
+        {"used": 60, "pressure": 0.4999999995, "expected": 3}
+      ]
+    },
+    {
+      "name": "pressure-exit-tolerance",
+      "previous": 3,
+      "steps": [
+        {"used": 60, "pressure": 0.3999999995, "expected": 3},
+        {"used": 60, "pressure": 0.399999998, "expected": 2},
+        {"used": 60, "pressure": 0.1999999995, "expected": 2},
+        {"used": 60, "pressure": 0.199999998, "expected": 1},
+        {"used": 60, "pressure": 0.0799999995, "expected": 1},
+        {"used": 60, "pressure": 0.079999998, "expected": 0}
+      ]
+    },
+    {
+      "name": "capacity-has-no-pressure-tolerance",
+      "steps": [
+        {"used": 94.9999999995, "pressure": 0, "expected": 0},
+        {"used": 95, "pressure": 0, "expected": 1},
+        {"used": 93.9999999995, "pressure": 0, "expected": 0}
+      ]
+    },
+    {
+      "name": "fallback-has-no-pressure-tolerance",
+      "steps": [
+        {"used": 49.9999999995, "pressure": null, "expected": 0},
+        {"used": 50, "pressure": null, "expected": 1},
+        {"used": 44.9999999995, "pressure": null, "expected": 0}
+      ]
+    },
+    {
+      "name": "multi-tier-jumps-and-drops",
+      "steps": [
+        {"used": 60, "pressure": 0, "expected": 0},
+        {"used": 60, "pressure": 0.5, "expected": 3},
+        {"used": 60, "pressure": 0.09, "expected": 1},
+        {"used": 60, "pressure": 0.5, "expected": 3},
+        {"used": 60, "pressure": 0, "expected": 0},
+        {"used": 100, "pressure": 0, "expected": 3},
+        {"used": 94.5, "pressure": 0, "expected": 1},
+        {"used": 0, "pressure": null, "expected": 0},
+        {"used": 90, "pressure": null, "expected": 3},
+        {"used": 0, "pressure": null, "expected": 0}
+      ]
+    },
+    {
+      "name": "pressure-and-capacity-independently-hold",
+      "previous": 3,
+      "steps": [
+        {"used": 99.5, "pressure": 0, "expected": 3},
+        {"used": 60, "pressure": 0.4, "expected": 3},
+        {"used": 98, "pressure": 0, "expected": 2},
+        {"used": 60, "pressure": 0.2, "expected": 2},
+        {"used": 94, "pressure": 0, "expected": 1},
+        {"used": 60, "pressure": 0.08, "expected": 1},
+        {"used": 60, "pressure": 0, "expected": 0}
+      ]
+    },
+    {
+      "name": "pacing-availability-changes",
+      "previous": 2,
+      "steps": [
+        {"used": 72, "pressure": null, "expected": 2},
+        {"used": 72, "pressure": 0, "expected": 0},
+        {"used": 72, "pressure": null, "expected": 1},
+        {"used": 72, "pressure": 0.25, "expected": 2},
+        {"used": 72, "pressure": null, "expected": 2},
+        {"used": 0, "pressure": 0, "expected": 0}
+      ]
+    }
+  ]
+}

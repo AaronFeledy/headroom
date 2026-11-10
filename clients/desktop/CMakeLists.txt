@@ -233,6 +233,7 @@ if(BUILD_TESTING)
     target_link_libraries(headroom-tests PRIVATE headroom-core Qt6::Test)
     target_compile_definitions(headroom-tests PRIVATE
         USAGE_CONTRACT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../server/internal/usage/testdata/account_identity.json"
+        WARNING_CONTRACT_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/../../server/internal/usage/testdata/warning_hysteresis.json"
         MANAGED_FIXTURE_PATH="$<TARGET_FILE:headroom-managed-server-fixture>"
         CREDENTIAL_FIXTURE_PATH="$<TARGET_FILE:headroom-credential-helper-fixture>"
         SSH_FIXTURE_PATH="$<TARGET_FILE:headroom-ssh-fixture>")
