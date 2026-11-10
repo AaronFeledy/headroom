@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class UpdateServiceTest : public QObject {
     Q_OBJECT
@@ -34,6 +35,7 @@ private:
 private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
+        failOnStateMachineWarning();
         qunsetenv("HEADROOM_UPDATE_FIXTURE_ERROR");
         QFile::remove(m_record);
         QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();

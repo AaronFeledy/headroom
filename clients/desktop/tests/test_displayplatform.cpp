@@ -1,9 +1,13 @@
 #include "displayplatform.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class DisplayPlatformTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void selection_data() {
         QTest::addColumn<QString>("session");
         QTest::addColumn<QString>("waylandDisplay");

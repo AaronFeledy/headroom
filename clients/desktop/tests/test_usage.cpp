@@ -5,6 +5,7 @@
 #include "http_assertions.h"
 #include "tls_fixture.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QProcess>
@@ -20,7 +21,11 @@ using TestUsage::disabledCredentials;
 class UsageTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void initTestCase() {
+        failOnStateMachineWarning();
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
     }
     void cleanup() {

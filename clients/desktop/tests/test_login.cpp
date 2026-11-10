@@ -7,6 +7,7 @@
 #include "usagefixture.h"
 #include "http_assertions.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QCryptographicHash>
 #include <QMessageAuthenticationCode>
 #include <QUrlQuery>
@@ -67,7 +68,13 @@ public:
 class LoginTest : public QObject {
     Q_OBJECT
 private slots:
-    void initTestCase() { QVERIFY(TlsFixture::selectNativeTestBackend()); }
+    void init() {
+        failOnStateMachineWarning();
+    }
+    void initTestCase() {
+        failOnStateMachineWarning();
+        QVERIFY(TlsFixture::selectNativeTestBackend());
+    }
     void commandlessAccountExplainsSignInFailure() {
         auto row = provider("signed_out", "cli", "Claude");
         row["provider_name"] = "Claude (Work)";

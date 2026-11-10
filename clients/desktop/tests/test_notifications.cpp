@@ -1,5 +1,6 @@
 #include "notifications.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <limits>
 
 class NotificationsTest : public QObject {
@@ -17,6 +18,9 @@ class NotificationsTest : public QObject {
             {"rate_limit_reset_credits", QVariantMap{{"account_fingerprint", fingerprint}}}};
     }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void earlyUsageResetAcrossProvidersAndWindowChanges_data() {
         QTest::addColumn<QString>("name");
         QTest::addColumn<int>("newDeadline");

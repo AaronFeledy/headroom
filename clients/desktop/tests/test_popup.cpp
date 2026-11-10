@@ -1,10 +1,14 @@
 #include "popup.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QQuickWindow>
 #include <QScreen>
 class PopupTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void toggleAndDismiss() {
         QQuickWindow window;
         window.setFlags(Qt::Tool | Qt::FramelessWindowHint);

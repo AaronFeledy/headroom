@@ -29,6 +29,7 @@
 #include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QAccessible>
 #include <cmath>
 
@@ -61,6 +62,9 @@ public slots:
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void accountCardShowsReadOnlyBankedCount() {
         QTemporaryDir dir;
         const auto samples = QJsonDocument::fromJson(TestUsage::snapshot()).array();

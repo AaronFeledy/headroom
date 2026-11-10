@@ -1,5 +1,6 @@
 #include "resetpolicy.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <cmath>
 #include <limits>
 
@@ -48,6 +49,9 @@ Facts armed(Facts facts) {
 class ResetPolicyTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void codexFloorOffersAndPermitsFromNinety_data() {
         QTest::addColumn<double>("utilization");
         QTest::addColumn<bool>("offered");

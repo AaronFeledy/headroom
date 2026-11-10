@@ -3,6 +3,7 @@
 #include "tls_fixture.h"
 #include "connect_proxy_fixture.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QJsonDocument>
@@ -54,7 +55,11 @@ public:
 class AppInfoTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void initTestCase() {
+        failOnStateMachineWarning();
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
         QCoreApplication::setApplicationVersion("0.1.0");
     }

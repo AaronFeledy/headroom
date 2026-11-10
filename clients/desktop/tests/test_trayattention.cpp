@@ -1,6 +1,7 @@
 #include "trayattention.h"
 #include <QEvent>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class TrayAttentionTest : public QObject {
     Q_OBJECT
@@ -13,6 +14,9 @@ class TrayAttentionTest : public QObject {
         return result;
     }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void fireThenBoundedSlowFlashing() {
         TrayAttentionState state;
         state.update(model(), 100);

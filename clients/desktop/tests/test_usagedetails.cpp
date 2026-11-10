@@ -4,10 +4,14 @@
 #include "trayvisual.h"
 #include "scripted_backend.h"
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class UsageDetailsTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void summariesAndMetadataWithoutMeter() {
         QVariantList ps;
         QVERIFY(Usage::parse(TestUsage::richSnapshot(), ps));

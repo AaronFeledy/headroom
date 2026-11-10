@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QPainter>
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 class TrayTest : public QObject {
     Q_OBJECT
@@ -30,6 +31,9 @@ class TrayTest : public QObject {
         return count;
     }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void accountPrimaryUsesTypeForPacingAndIcon() {
         auto row = provider("Claude (Work)", {meter("session", 12)});
         row["provider_type"] = "Claude";

@@ -13,6 +13,7 @@
 #include <QNetworkProxy>
 #include <QProcess>
 #include <QRegularExpression>
+#include "statemachine_assertions.h"
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -121,8 +122,12 @@ private:
         return result;
     }
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void initTestCase() {
         QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+        failOnStateMachineWarning();
     }
     void cleanup() {
         qunsetenv("HEADROOM_FIXTURE_MODE");

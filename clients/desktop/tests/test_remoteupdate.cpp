@@ -6,6 +6,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include "statemachine_assertions.h"
 
 class RemoteUpdateTest final : public QObject {
     Q_OBJECT
@@ -36,6 +37,7 @@ class RemoteUpdateTest final : public QObject {
     }
 private slots:
     void init() {
+        failOnStateMachineWarning();
         QVERIFY(m_dir.isValid()); QFile::remove(tracePath()); m_logs.clear();
         qputenv("HEADROOM_REMOTE_UPDATE_TRACE", tracePath().toUtf8());
     }

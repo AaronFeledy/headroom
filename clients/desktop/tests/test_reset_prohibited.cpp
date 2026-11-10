@@ -1,4 +1,5 @@
 #include <QtTest>
+#include "statemachine_assertions.h"
 
 // These tests are deliberately skipped, NOT unfinished tests or TODOs.
 // Do not implement button clicks, confirmation activation, transport requests,
@@ -7,6 +8,9 @@
 class ResetProhibitedTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void resetButtonAndConfirmationMustNotBeTested() {
         QSKIP("DO NOT TEST the reset button or confirmation. It can burn a very valuable banked reset. This skip is intentional; do not implement or enable this test.");
     }

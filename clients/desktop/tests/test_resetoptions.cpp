@@ -7,6 +7,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QtTest>
+#include "statemachine_assertions.h"
 #include <optional>
 
 // Renders qml/ResetOptions.qml from synthetic policy output inside an isolated
@@ -56,6 +57,9 @@ QVariantMap synthetic(const Scene &scene) {
 class ResetOptionsTest : public QObject {
     Q_OBJECT
 private slots:
+    void init() {
+        failOnStateMachineWarning();
+    }
     void rendersEveryStateWithoutActions_data() {
         QTest::addColumn<Scene>("scene");
         const QString unknownWindow = "The weekly reset time is unknown.";
