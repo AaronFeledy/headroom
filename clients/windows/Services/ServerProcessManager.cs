@@ -59,7 +59,7 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
                 return _started;
             }
 
-            if (_started is { State: not ServerProcessState.Failed } && (_process == null || !_process.HasExited))
+            if (_started is { State: ServerProcessState.Started } && _process is { HasExited: false })
             {
                 return _started;
             }
