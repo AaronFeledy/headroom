@@ -133,6 +133,44 @@ private slots:
             QVERIFY(!Usage::parse(bad, providers)); QCOMPARE(providers, original);
         }
     }
+    void sharedWarningHysteresisContract_data() {
+        QTest::addColumn<double>("used");
+        QTest::addColumn<bool>("hasPacing");
+        QTest::addColumn<double>("pressure");
+        QTest::addColumn<int>("previous");
+        QTest::addColumn<int>("expected");
+        QFile file(QStringLiteral(WARNING_CONTRACT_FIXTURE));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+        QCOMPARE(error.error, QJsonParseError::NoError);
+        QVERIFY(document.isObject());
+        const auto fixture = document.object();
+        QCOMPARE(fixture["schema"].toInt(), 1);
+        const auto cases = fixture["cases"].toArray();
+        QVERIFY(!cases.isEmpty());
+        for (const auto &value : cases) {
+            const auto scenario = value.toObject();
+            int previous = scenario["previous"].toInt(0);
+            const auto steps = scenario["steps"].toArray();
+            QVERIFY(!steps.isEmpty());
+            int index = 0;
+            for (const auto &entry : steps) {
+                const auto step = entry.toObject();
+                const auto pressure = step["pressure"];
+                const int expected = step["expected"].toInt();
+                QTest::newRow(qPrintable(QString("%1-step-%2").arg(scenario["name"].toString()).arg(++index)))
+                    << step["used"].toDouble() << !pressure.isNull() << pressure.toDouble()
+                    << previous << expected;
+                previous = expected;
+            }
+        }
+    }
+    void sharedWarningHysteresisContract() {
+        QFETCH(double, used); QFETCH(bool, hasPacing); QFETCH(double, pressure);
+        QFETCH(int, previous); QFETCH(int, expected);
+        QCOMPARE(int(Usage::warningLevel(used, hasPacing, pressure, Usage::WarningLevel(previous))), expected);
+    }
     void sharedAccountIdentityContract_data() {
         QTest::addColumn<QJsonValue>("account");
         QTest::addColumn<QJsonValue>("providerType");
