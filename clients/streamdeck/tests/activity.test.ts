@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UsageActivity, CriticalActivity, PULSE_DURATION_MS, CRITICAL_DURATION_MS } from "../src/activity.js";
-import { UsageKeyDisplay, type AnimationClock } from "../src/display.js";
-import type { Snapshot } from "../src/model.js";
+import { UsageKeyDisplay } from "../src/display.js";
 import { renderKey } from "../src/render.js";
+import { FakeClock, flush, svg, reading, rateLimited } from "./display-fixtures.js";
 
 test("each raw increase pulses once; steady readings and pace changes do not restart it", () => {
   const activity = new UsageActivity();
@@ -37,35 +37,6 @@ test("baseline changes and unavailable readings do not look like new activity", 
   recovered.observe(90, "account-b", 150);
   assert.equal(recovered.active, false);
 });
-class FakeClock implements AnimationClock {
-  value = Date.parse("2026-10-13T12:00:00Z");
-  jobs = new Map<number, { at: number; callback: () => void }>();
-  id = 0;
-  now = () => this.value;
-  later = (callback: () => void, delay: number) => {
-    const id = ++this.id;
-    this.jobs.set(id, { at: this.value + delay, callback });
-    return () => { this.jobs.delete(id); };
-  };
-  advance(ms: number): void {
-    const end = this.value + ms;
-    while (true) {
-      const next = [...this.jobs].sort((a, b) => a[1].at - b[1].at)[0];
-      if (!next || next[1].at > end) break;
-      this.value = next[1].at;
-      this.jobs.delete(next[0]);
-      next[1].callback();
-    }
-    this.value = end;
-  }
-}
-const flush = () => new Promise<void>(resolve => setImmediate(resolve));
-const svg = (image: string) => Buffer.from(image.split(",")[1], "base64").toString();
-const reading = (used: number, epoch = "account"): Snapshot => ({ status: "ready", providers: [
-  { provider_name: "Claude", error: null, is_success: true, needs_reauth: false,
-    fetch_status: { credential_epoch: epoch },
-    buckets: [{ id: "session", label: "Session", utilization: used, resets_at: "2026-10-13T14:30:00Z" }] }] });
-
 test("key animation ends on the exact resting image and leaves no idle timers", async () => {
   const time = new FakeClock(), images: string[] = [];
   const display = new UsageKeyDisplay({}, {}, async image => { images.push(svg(image)); }, time);
@@ -85,7 +56,7 @@ test("key animation ends on the exact resting image and leaves no idle timers", 
   display.dispose();
 });
 test("hiding, changing settings, switching accounts and outages cancel animation", async () => {
-  for (const stop of ["hide", "settings", "account", "offline"] as const) {
+  for (const stop of ["hide", "settings", "account", "offline", "rate_limited"] as const) {
     const time = new FakeClock(), images: string[] = [];
     const display = new UsageKeyDisplay({}, {}, async image => { images.push(svg(image)); }, time);
     display.update(reading(35)); await flush();
@@ -96,7 +67,9 @@ test("hiding, changing settings, switching accounts and outages cancel animation
     if (stop === "settings") display.configure({ provider: "Codex" });
     if (stop === "account") display.update(reading(80, "another-account"));
     if (stop === "offline") display.update({ status: "offline", providers: [] });
+    if (stop === "rate_limited") display.update(rateLimited());
     await flush();
+    if (stop === "rate_limited") assert.match(images.at(-1) ?? "", /data-role="usage"[^>]+stroke="#6272a4"/);
     assert.equal(time.jobs.size, 0);
     if (stop !== "hide") assert.ok(!images.at(-1)!.includes('data-role="activity-pulse"'));
     const count = images.length;
@@ -228,7 +201,7 @@ test("critical recovery follows the real warning hysteresis before another alert
 });
 
 test("hiding, settings, account/window changes, outages and recovery stop the critical animation", async () => {
-  for (const stop of ["hide", "settings", "account", "window", "offline", "recovery"] as const) {
+  for (const stop of ["hide", "settings", "account", "window", "offline", "recovery", "rate_limited"] as const) {
     const time = new FakeClock(), images: string[] = [];
     const display = new UsageKeyDisplay({}, {}, async image => { images.push(svg(image)); }, time);
     display.update(reading(70));
@@ -245,7 +218,9 @@ test("hiding, settings, account/window changes, outages and recovery stop the cr
     }
     if (stop === "offline") display.update({ status: "offline", providers: [] });
     if (stop === "recovery") display.update(reading(69));
+    if (stop === "rate_limited") display.update(rateLimited());
     await flush();
+    if (stop === "rate_limited") assert.match(images.at(-1) ?? "", /data-role="usage"[^>]+stroke="#6272a4"/);
     assert.equal(time.jobs.size, 0);
     if (stop !== "hide") assert.ok(!images.at(-1)!.includes('data-role="critical-pulse"'));
     const count = images.length;

@@ -61,7 +61,12 @@ from the inherited environment.
 
 ## Reading the key
 
-Unavailable readings show a muted ring and a status: **Offline**, **Sign in**,
+Temporary provider failures, including rate limits, keep the last-known usage
+meter in muted color for up to 24 hours while the provider remains signed in
+with the same credentials. The usage, pace marker, and meter details stay frozen
+until a successful reading returns; stale meters do not pulse.
+
+Other unavailable readings show an empty muted ring and a status: **Offline**, **Sign in**,
 **Retrying**, **No data**, **Disabled**, or **No meter**. If the CLI reports an
 offline connection, the key hides cached usage.
 **Setup** means the CLI could not be found or its path is invalid. A warning
