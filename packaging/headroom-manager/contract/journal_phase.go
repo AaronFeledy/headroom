@@ -22,3 +22,13 @@ const (
 	journalPhaseObsolete             journalPhase = "obsolete"
 	journalPhaseEntryIntent          journalPhase = "entry-intent"
 )
+
+func writeApplyJournal(path string, journal ApplyJournal) error {
+	if err := writeDurableJSON(path, journal); err != nil {
+		return err
+	}
+	if transactionTestHook != nil {
+		return transactionTestHook(string(journal.Phase))
+	}
+	return nil
+}

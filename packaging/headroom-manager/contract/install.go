@@ -277,6 +277,11 @@ func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath st
 		_ = os.RemoveAll(backup)
 		return InstallState{}, err
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-generation-ready"); err != nil {
+			return InstallState{}, err
+		}
+	}
 	if err = prepareBootstrapBackupWithCLI(installRoot, entryPath, managedCLIEntry, backup); err != nil {
 		_ = os.RemoveAll(generation)
 		return InstallState{}, err
@@ -293,16 +298,36 @@ func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath st
 	if err = applyBootstrapWithCLI(stage.PackageRoot, installRoot, entryPath, managedCLIEntry, manifest); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-bootstrap-applied"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
+	}
 	journal.Phase = journalPhaseStateIntent
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-state-intent"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
+	}
 	if err = writeDurableJSON(statePath, state); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-state-applied"); err != nil {
+			return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+		}
 	}
 	journal.Phase = journalPhaseComplete
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, err
+	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("install-complete"); err != nil {
+			return InstallState{}, err
+		}
 	}
 	_ = os.Remove(filepath.Join(installRoot, "last-apply-result.json"))
 	_ = os.RemoveAll(backup)

@@ -16,6 +16,10 @@ func TestMain(m *testing.M) {
 }
 
 func runTests(m *testing.M) int {
+	if executable := os.Getenv("HEADROOM_CRASH_HELPER_FIXTURE"); executable != "" {
+		fixtureExecutable = executable
+		return m.Run()
+	}
 	if runtime.GOOS == "darwin" {
 		// macOS commonly advertises /var/folders via the /var symlink. Keep
 		// fixtures on real paths; production install roots still reject links.
@@ -40,11 +44,11 @@ func runTests(m *testing.M) int {
 	program := `package main
 import ("encoding/json"; "os"; "path/filepath"; "strconv"; "strings"; "time")
 func main() {
- var ready string
- for i:=1; i<len(os.Args); i++ { if os.Args[i]=="--headroom-ready-file" && i+1<len(os.Args) { ready=os.Args[i+1]; i++ } }
+ var ready string; sleep:=os.Getenv("HEADROOM_FIXTURE_SLEEP_MS"); log:=os.Getenv("HEADROOM_FIXTURE_LAUNCH_LOG")
+ for i:=1; i<len(os.Args); i++ { if i+1<len(os.Args) { switch os.Args[i] { case "--headroom-ready-file": ready=os.Args[i+1]; i++; case "--headroom-fixture-log": log=os.Args[i+1]; i++; case "--headroom-fixture-sleep": sleep=os.Args[i+1]; i++ } } }
  executable,_:=os.Executable(); directory:=filepath.Dir(filepath.Dir(executable)); if filepath.Base(directory)=="Contents" { directory=filepath.Dir(filepath.Dir(directory)) }; generation:=filepath.Base(directory); version:=strings.Split(generation,".generation-")[0]
  if os.Getenv("HEADROOM_FIXTURE_CRASH_VERSION")==version { os.Exit(8) }
- if ready!="" && os.Getenv("HEADROOM_FIXTURE_NO_READY_VERSION")!=version { b,_:=json.Marshal(map[string]any{"nonce":os.Getenv("HEADROOM_READY_NONCE"),"pid":os.Getpid(),"version":version,"executable":executable}); _=os.WriteFile(ready,append(b,'\n'),0600) }
+ if ready!="" && os.Getenv("HEADROOM_FIXTURE_NO_READY_VERSION")!=version { b,_:=json.Marshal(map[string]any{"nonce":os.Getenv("HEADROOM_READY_NONCE"),"pid":os.Getpid(),"version":version,"executable":executable}); if log!="" { f,e:=os.OpenFile(log,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e==nil { _,_=f.Write(append(b,'\n')); _=f.Close() } }; _=os.WriteFile(ready,append(b,'\n'),0600) }
  if evidence:=os.Getenv("USAGE_CONFIG"); evidence!="" && os.Getenv("HEADROOM_MANAGED_SERVICE_RESTART")!="" {
   cwd,_:=os.Getwd(); _=os.WriteFile(evidence,[]byte(cwd+"\n"+os.Getenv("USAGE_LISTEN_ADDR")+"\n"),0600)
   receipt:=filepath.Join(os.Getenv("HEADROOM_INSTALL_ROOT"),"runtime","managed-serve.json")
@@ -62,7 +66,7 @@ func main() {
    time.Sleep(20*time.Millisecond)
   }
  }
- if value:=os.Getenv("HEADROOM_FIXTURE_SLEEP_MS"); value!="" { if n,e:=strconv.Atoi(value); e==nil { time.Sleep(time.Duration(n)*time.Millisecond) } }
+ if sleep!="" { if n,e:=strconv.Atoi(sleep); e==nil { time.Sleep(time.Duration(n)*time.Millisecond) } }
  if os.Getenv("HEADROOM_FIXTURE_FAIL")!="" { os.Exit(9) }
 }`
 	if err = os.WriteFile(source, []byte(program), 0o600); err == nil {

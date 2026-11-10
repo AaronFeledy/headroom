@@ -342,7 +342,7 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 		return PreparedApply{}, err
 	}
 	journal := ApplyJournal{Schema: SchemaVersion, Product: "Headroom", Phase: journalPhasePrepared, Request: request}
-	if err = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
+	if err = writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal); err != nil {
 		return PreparedApply{}, err
 	}
 	failed = false
@@ -552,7 +552,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		originalPhase := journal.Phase
 		var cleanupErr error
 		journal.Error, journal.Phase = boundedError(originalFailure), journalPhaseRollingBack
-		if err := writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
+		if err := writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal); err != nil {
 			cleanupErr = fmt.Errorf("record rollback intent: %w", err)
 		}
 		if journal.CandidatePID > 0 {
@@ -587,8 +587,14 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		if cleanupErr == nil {
 			if journal.Candidate != nil && (originalPhase == journalPhaseBootstrapIntent || originalPhase == journalPhaseBootstrapReady || originalPhase == journalPhaseStateIntent || originalPhase == journalPhaseActivated || originalPhase == journalPhaseCandidateLaunched || originalPhase == journalPhaseComplete) {
 				cleanupErr = rollbackJournal(journal, directory)
+				if cleanupErr == nil {
+					journal.Phase = journalPhaseRollbackRelaunch
+				}
 			} else if journal.GenerationDir != "" {
 				cleanupErr = os.RemoveAll(journal.GenerationDir)
+				if cleanupErr == nil && transactionTestHook != nil {
+					cleanupErr = transactionTestHook("rollback-generation-only-removed")
+				}
 			}
 		}
 		if cleanupErr == nil {
@@ -600,6 +606,10 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			} else if verifyErr := verifyBootstrapRestoreWithCLI(journal.Request.InstallRoot, journal.Request.EntryPath, previous.CLIEntryPath, directory); verifyErr != nil {
 				cleanupErr = verifyErr
 			}
+		}
+		if cleanupErr == nil && journal.Phase != journalPhaseRollbackRelaunch {
+			journal.Phase = journalPhaseRollbackRelaunch
+			cleanupErr = writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal)
 		}
 		if cleanupErr == nil {
 			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
@@ -625,6 +635,11 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		}
 		if persistErr := writeDurableJSON(filepath.Join(journal.Request.InstallRoot, "last-apply-result.json"), result); persistErr != nil {
 			returned = errors.Join(returned, fmt.Errorf("persist apply outcome: %w", persistErr))
+		} else if cleanupErr == nil {
+			journal.Phase = journalPhaseRolledBack
+			if err := writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal); err != nil {
+				returned = errors.Join(returned, err)
+			}
 		}
 	}
 	request, journalPath, err := readApplyRequest(requestPath)
@@ -679,7 +694,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	}
 	defer recoverFailure()
 	journal = ApplyJournal{Schema: SchemaVersion, Product: "Headroom", Phase: journalPhaseWaitingForExit, Request: request, Previous: previous}
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	if err = writeDurableJSON(request.AcknowledgementPath, map[string]any{"schema": SchemaVersion, "product": "Headroom", "accepted": true, "nonce": request.Nonce}); err != nil {
@@ -693,7 +708,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	}
 	appExited = true
 	journal.Phase = journalPhaseCurrentExited
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	if childWatch != nil {
@@ -703,7 +718,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		childExited = true
 	}
 	journal.Phase = journalPhaseStoppingParticipants
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	for _, participant := range additionalWatches {
@@ -731,7 +746,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		}
 	}
 	journal.Phase = journalPhaseParticipantsStopped
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	stage, manifest, err := LoadVerifiedStage(request.InstallRoot, request.StageRecord)
@@ -739,7 +754,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	journal.Phase = journalPhaseCopying
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	candidate, generationDir, err := createGeneration(request.InstallRoot, stage, manifest)
@@ -751,7 +766,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	candidate.ServerEntryPath = previous.ServerEntryPath
 	journal.Candidate, journal.GenerationDir = &candidate, generationDir
 	journal.Phase = journalPhaseGenerationReady
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	if err = prepareBootstrapBackupWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath)); err != nil {
@@ -759,7 +774,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	journal.Phase = journalPhaseBootstrapIntent
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		_ = os.RemoveAll(generationDir)
 		return result, err
 	}
@@ -768,46 +783,50 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		_ = os.RemoveAll(generationDir)
 		return result, err
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("bootstrap-applied"); err != nil {
+			return result, err
+		}
+	}
 	journal.Phase = journalPhaseBootstrapReady
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		_ = restoreBootstrapWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath))
 		return result, err
 	}
 	journal.Phase = journalPhaseStateIntent
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	if err = writeDurableJSON(filepath.Join(request.InstallRoot, StateName), candidate); err != nil {
 		_ = restoreBootstrapWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath))
 		return result, err
 	}
+	if transactionTestHook != nil {
+		if err = transactionTestHook("state-applied"); err != nil {
+			return result, err
+		}
+	}
 	journal.Phase = journalPhaseActivated
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	if err = launchAndAwaitReady(request, candidate, func(pid int, executable, token string) error {
 		journal.CandidatePID, journal.CandidateExe, journal.CandidateToken = pid, executable, token
 		journal.Phase = journalPhaseCandidateLaunched
-		if err := writeDurableJSON(journalPath, journal); err != nil {
-			return err
-		}
-		if transactionTestHook != nil {
-			return transactionTestHook(string(journalPhaseCandidateLaunched))
-		}
-		return nil
+		return writeApplyJournal(journalPath, journal)
 	}); err != nil {
 		return result, err
 	}
 	if hasManagedService(request) {
 		if err = launchManagedService(request, candidate, func(pid int, executable, token string) error {
 			journal.ServicePID, journal.ServiceExe, journal.ServiceToken = pid, executable, token
-			return writeDurableJSON(journalPath, journal)
+			return writeApplyJournal(journalPath, journal)
 		}); err != nil {
 			return result, err
 		}
 	}
 	journal.Phase = journalPhaseComplete
-	if err = writeDurableJSON(journalPath, journal); err != nil {
+	if err = writeApplyJournal(journalPath, journal); err != nil {
 		return result, err
 	}
 	_ = os.RemoveAll(filepath.Dir(filepath.Dir(stage.PackageRoot)))
@@ -853,211 +872,6 @@ func applyRequestsEqual(left, right ApplyRequest) bool {
 	l, _ := json.Marshal(left)
 	r, _ := json.Marshal(right)
 	return string(l) == string(r)
-}
-
-func RecoverInstall(installRoot string) error {
-	root, err := ValidateInstallRoot(installRoot)
-	if err != nil {
-		return err
-	}
-	lock, err := acquireInstallLock(root, 5*time.Second)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	transactions := filepath.Join(root, "transactions")
-	entries, err := os.ReadDir(transactions)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	deferred := make(map[string]bool)
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "install-") {
-			continue
-		}
-		directory := filepath.Join(transactions, entry.Name())
-		journal, readErr := readInstallJournal(filepath.Join(directory, InstallJournalName), root, directory)
-		if readErr == nil && journal.Phase != journalPhaseComplete && journal.Phase != journalPhaseRolledBack && journal.Phase != journalPhaseObsolete {
-			for _, name := range journal.Supersedes {
-				deferred[name] = true
-			}
-		}
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if deferred[entry.Name()] {
-			continue
-		}
-		directory := filepath.Join(transactions, entry.Name())
-		if strings.HasPrefix(entry.Name(), "migrate-entries-") {
-			data, readErr := readBoundedFile(filepath.Join(directory, EntryMigrationJournalName), maxManifestBytes)
-			var journal EntryMigrationJournal
-			if readErr != nil || json.Unmarshal(data, &journal) != nil || journal.Schema != SchemaVersion || journal.Product != "Headroom" || journal.InstallRoot != root {
-				continue
-			}
-			entryPath, entryErr := normalizeAbsolutePath(journal.EntryPath, "migration entry")
-			cliPath, cliErr := normalizeAbsolutePath(journal.CLIEntryPath, "migration CLI entry")
-			if entryErr != nil || cliErr != nil || entryPath != journal.EntryPath || cliPath != journal.CLIEntryPath || !validVersionPath(journal.Previous) || !validVersionPath(journal.Candidate) {
-				continue
-			}
-			current, stateErr := readStateUnchecked(root)
-			if stateErr == nil && statesEqual(current, journal.Candidate) {
-				inspection := InspectInstall(root)
-				if !inspection.TrustedIdentity || !inspection.Complete {
-					return errors.New("interrupted entry migration candidate is incomplete")
-				}
-				_ = os.RemoveAll(directory)
-				continue
-			}
-			if stateErr == nil && statesEqual(current, journal.Previous) {
-				if err = restoreBootstrapWithCLI(root, journal.EntryPath, journal.CLIEntryPath, directory); err != nil {
-					return err
-				}
-				_ = os.RemoveAll(directory)
-				continue
-			}
-			return errors.New("entry migration state requires manual recovery")
-		}
-		if strings.HasPrefix(entry.Name(), "install-") {
-			journal, readErr := readInstallJournal(filepath.Join(directory, InstallJournalName), root, directory)
-			if readErr != nil {
-				continue
-			}
-			if journal.Phase == journalPhaseComplete || journal.Phase == journalPhaseRolledBack {
-				_ = os.RemoveAll(directory)
-				continue
-			}
-			if journal.Phase == journalPhaseObsolete {
-				continue
-			}
-			if err = recoverInstallJournal(journal, directory); err != nil {
-				return err
-			}
-			continue
-		}
-		if !strings.HasPrefix(entry.Name(), "apply-") {
-			continue
-		}
-		journal, readErr := readJournal(filepath.Join(directory, TransactionJournalName))
-		if readErr != nil {
-			continue
-		}
-		if journal.Phase == journalPhasePrepared {
-			request, _, requestErr := readApplyRequest(filepath.Join(directory, TransactionRequestName))
-			if requestErr == nil && applyRequestsEqual(request, journal.Request) {
-				_ = os.RemoveAll(directory)
-			}
-			continue
-		}
-		if validateApplyJournal(journal, root, directory) != nil {
-			continue
-		}
-		if journal.Phase == journalPhaseComplete || journal.Phase == journalPhaseRolledBack {
-			_ = os.RemoveAll(directory)
-			continue
-		}
-		if journal.CandidatePID > 0 && (journal.Phase == journalPhaseCandidateLaunched || journal.Phase == journalPhaseActivated || journal.Phase == journalPhaseRollingBack || journal.Phase == journalPhaseRollbackRelaunch) {
-			if err = stopRecordedProcess(journal.CandidatePID, journal.CandidateExe, journal.CandidateToken, 5*time.Second); err != nil {
-				return err
-			}
-		}
-		if journal.Request.ManagedServiceSupervisor != "" && hasManagedService(journal.Request) &&
-			(journal.Phase == journalPhaseCandidateLaunched || journal.Phase == journalPhaseActivated || journal.Phase == journalPhaseRollingBack || journal.Phase == journalPhaseRollbackRelaunch) {
-			if err = stopManagedServiceSupervisor(journal.Request.ManagedServiceSupervisor); err != nil {
-				return err
-			}
-			if err = clearSupervisedManagedServiceRestart(root); err != nil {
-				return err
-			}
-		} else if journal.ServicePID > 0 && (journal.Phase == journalPhaseCandidateLaunched || journal.Phase == journalPhaseActivated || journal.Phase == journalPhaseRollingBack || journal.Phase == journalPhaseRollbackRelaunch) {
-			if journal.Request.ManagedServiceSupervisor != "" {
-				err = stopManagedServiceSupervisor(journal.Request.ManagedServiceSupervisor)
-			} else {
-				err = stopRecordedProcess(journal.ServicePID, journal.ServiceExe, journal.ServiceToken, 5*time.Second)
-			}
-			if err != nil {
-				return err
-			}
-		}
-		current, stateErr := readStateUnchecked(root)
-		isPrior := stateErr == nil && journal.Previous != nil && statesEqual(current, *journal.Previous)
-		isCandidate := stateErr == nil && journal.Candidate != nil && statesEqual(current, *journal.Candidate)
-		if journal.Phase == journalPhaseWaitingForExit && isPrior {
-			_ = os.RemoveAll(directory)
-			continue
-		}
-		if (journal.Phase == journalPhaseCurrentExited || journal.Phase == journalPhaseStoppingParticipants || journal.Phase == journalPhaseParticipantsStopped || journal.Phase == journalPhaseCopying) && isPrior {
-			postStopIntent := journal.Phase != journalPhaseCurrentExited
-			if postStopIntent && hasManagedService(journal.Request) {
-				if err = finishManagedServiceStopForRecovery(root, journal.Request); err != nil {
-					return err
-				}
-			}
-			relaunch := journal.Request
-			relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
-			relaunch.Nonce, _ = randomHex(24)
-			if relaunchErr := launchAndAwaitReady(relaunch, *journal.Previous, nil); relaunchErr != nil {
-				return relaunchErr
-			}
-			if hasManagedService(journal.Request) {
-				if _, serviceErr := ReadManagedService(root); postStopIntent || serviceErr != nil {
-					if serviceErr = launchManagedService(journal.Request, *journal.Previous, nil); serviceErr != nil {
-						return serviceErr
-					}
-				}
-			}
-			_ = os.RemoveAll(directory)
-			continue
-		}
-		acted := false
-		if isCandidate || (isPrior && (journal.Phase == journalPhaseBootstrapIntent || journal.Phase == journalPhaseBootstrapReady || journal.Phase == journalPhaseStateIntent)) {
-			if err = rollbackJournal(journal, directory); err != nil {
-				return err
-			}
-			acted = true
-		} else if isPrior && journal.GenerationDir != "" {
-			if err = os.RemoveAll(journal.GenerationDir); err != nil {
-				return err
-			}
-			acted = true
-		} else if isPrior && (journal.Phase == journalPhaseRollingBack || journal.Phase == journalPhaseRollbackRelaunch) {
-			acted = true
-		} else if !isPrior && !isCandidate {
-			journal.Phase = journalPhaseObsolete
-			_ = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal)
-			continue
-		}
-		journal.Phase = journalPhaseRollbackRelaunch
-		if err = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
-			return err
-		}
-		if acted && journal.Previous != nil {
-			relaunch := journal.Request
-			relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
-			relaunch.Nonce, _ = randomHex(24)
-			if relaunchErr := launchAndAwaitReady(relaunch, *journal.Previous, nil); relaunchErr != nil {
-				return relaunchErr
-			}
-			if hasManagedService(journal.Request) {
-				if serviceErr := launchManagedService(journal.Request, *journal.Previous, nil); serviceErr != nil {
-					return serviceErr
-				}
-			}
-			journal.Phase = journalPhaseRolledBack
-			if err = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
-				return err
-			}
-			_ = writeDurableJSON(filepath.Join(root, "last-apply-result.json"), ApplyResult{Schema: SchemaVersion, Product: "Headroom",
-				Status: "rolled_back", Version: journal.Previous.ActiveVersion, VersionPath: journal.Previous.VersionPath,
-				RolledBack: true, FailureReason: "An interrupted update was rolled back."})
-		}
-	}
-	return nil
 }
 
 func readStateUnchecked(root string) (InstallState, error) {
@@ -1308,12 +1122,19 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 			return errors.New("apply participant executable is invalid")
 		}
 	}
+	candidateRemoved := false
 	if journal.Candidate != nil {
 		expected := filepath.Join(root, filepath.FromSlash(journal.Candidate.VersionPath))
 		if !validVersionPath(*journal.Candidate) || journal.GenerationDir != expected {
 			return errors.New("apply candidate path is invalid")
 		}
-		if candidateInspection, candidateErr := inspectState(root, *journal.Candidate); candidateErr != nil || !candidateInspection.TrustedIdentity {
+		if journal.Phase == journalPhaseRollingBack || journal.Phase == journalPhaseRollbackRelaunch || journal.Phase == journalPhaseRolledBack {
+			current, stateErr := readStateUnchecked(root)
+			_, generationErr := os.Lstat(expected)
+			candidateRemoved = stateErr == nil && statesEqual(current, *journal.Previous) && errors.Is(generationErr, os.ErrNotExist) &&
+				(journal.CandidatePID <= 0 || processGone(journal.CandidatePID)) && (journal.ServicePID <= 0 || processGone(journal.ServicePID))
+		}
+		if candidateInspection, candidateErr := inspectState(root, *journal.Candidate); !candidateRemoved && (candidateErr != nil || !candidateInspection.TrustedIdentity) {
 			return errors.New("apply candidate identity is invalid")
 		}
 	}
@@ -1323,14 +1144,14 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 	if journal.ServicePID > 0 && (journal.ServiceExe == "" || journal.ServiceToken == "" || journal.Candidate == nil) {
 		return errors.New("managed service candidate identity is invalid")
 	}
-	if journal.ServicePID > 0 && journal.Candidate != nil {
+	if journal.ServicePID > 0 && journal.Candidate != nil && !candidateRemoved {
 		candidateManifest, candidateErr := installedManifest(root, *journal.Candidate)
 		expected := installedComponentPath(root, journal.Candidate.VersionPath, PackageCLIPath(candidateManifest.Platform, candidateManifest.PackageKind))
 		if candidateErr != nil || !samePath(journal.ServiceExe, expected) {
 			return errors.New("managed service candidate executable is invalid")
 		}
 	}
-	if journal.CandidatePID > 0 && journal.Candidate != nil {
+	if journal.CandidatePID > 0 && journal.Candidate != nil && !candidateRemoved {
 		candidateManifest, candidateErr := installedManifest(root, *journal.Candidate)
 		candidatePath := candidateManifest.Components.Application.Path
 		if journal.Request.CandidateRole == RoleCLI {
@@ -1784,9 +1605,14 @@ func rollbackJournal(journal ApplyJournal, directory string) error {
 		if err := os.RemoveAll(expected); err != nil {
 			return err
 		}
+		if transactionTestHook != nil {
+			if err := transactionTestHook("rollback-generation-removed"); err != nil {
+				return err
+			}
+		}
 	}
-	journal.Phase = journalPhaseRolledBack
-	return writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal)
+	journal.Phase = journalPhaseRollbackRelaunch
+	return writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal)
 }
 
 func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func(int, string, string) error) error {
