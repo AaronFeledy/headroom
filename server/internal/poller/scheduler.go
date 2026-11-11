@@ -103,8 +103,10 @@ func (p *Poller) RequestRefresh() (RefreshResult, error) {
 	for _, s := range states {
 		s.mu.RLock()
 		limited := now.Before(s.rateUntil)
+		spaced := s.insideSpacingWindow(now)
 		s.mu.RUnlock()
-		if limited {
+		// A spaced provider is skipped for this round without delaying others.
+		if limited || spaced {
 			continue
 		}
 		p.round[s] = true
@@ -137,7 +139,8 @@ func (s *providerState) release() {
 func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usage.FetchFailure) {
 	now := entry.FetchedAt
 	success := entry.Data.Error == nil
-	delay := s.interval
+	interval := s.effectiveInterval()
+	delay := interval
 	if success {
 		s.transientRetries = 0
 	}
@@ -156,10 +159,15 @@ func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usag
 		cooldown := max(0, failure.RetryAfter.Sub(now))
 		// Zero or elapsed deadlines must not turn a 429 into a rapid retry loop.
 		if cooldown == 0 || failure.RateLimitFallback {
-			s.rateDelay = min(max(s.interval, 5*time.Minute), max(max(s.interval, time.Minute), s.rateDelay*2))
+			s.rateDelay = min(max(interval, 5*time.Minute), max(max(interval, time.Minute), s.rateDelay*2))
 			cooldown = max(cooldown, s.rateDelay)
 		}
-		s.rateUntil = now.Add(cooldown)
+		// A provider-declared floor applies only to an unusable Retry-After and
+		// never shortens a later deadline already in force.
+		cooldown = max(cooldown, failure.MinCooldown)
+		if until := now.Add(cooldown); until.After(s.rateUntil) {
+			s.rateUntil = until
+		}
 		if success {
 			delay = max(delay, cooldown)
 		} else {

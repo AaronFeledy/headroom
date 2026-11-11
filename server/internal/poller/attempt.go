@@ -9,11 +9,22 @@ import (
 )
 
 func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) Entry {
+	current := now()
 	s.mu.RLock()
 	rateUntil := s.rateUntil
+	spaced := s.insideSpacingWindow(current)
 	entry := copyEntry(s.entry)
 	s.mu.RUnlock()
-	if !rateUntil.IsZero() && now().Before(rateUntil) {
+	if !rateUntil.IsZero() && current.Before(rateUntil) {
+		return entry
+	}
+	if spaced {
+		// Spacing is not a rate-limit cooldown: only the next due time moves.
+		s.mu.Lock()
+		if until := s.responseAt.Add(s.minInterval); s.nextDue.Before(until) {
+			s.nextDue = until
+		}
+		s.mu.Unlock()
 		return entry
 	}
 
@@ -46,10 +57,22 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 		failure = &usage.FetchFailure{Kind: *kind}
 	}
 	entry.Data.FetchFailure = copyFetchFailure(failure)
+	if receivedHTTPResponse(entry, err, failure) {
+		s.responseAt = completed
+	}
 	s.schedule(ctx, entry, failure)
 	entry.Data.FetchStatus.Diagnostics = s.diagnostics(entry, failure)
 	s.logAttempt(ctx, entry, failure)
 	s.entry = copyEntry(entry)
 	s.hasEntry = true
 	return copyEntry(entry)
+}
+
+// receivedHTTPResponse distinguishes an upstream reply (success or HTTP
+// failure) from a transport failure that never reached the provider.
+func receivedHTTPResponse(entry Entry, err error, failure *usage.FetchFailure) bool {
+	if failure != nil && failure.HTTPStatus != 0 {
+		return true
+	}
+	return err == nil && entry.Data.Error == nil
 }
