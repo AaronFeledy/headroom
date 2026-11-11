@@ -90,6 +90,37 @@ inline QByteArray snapshotWithCodex(double sessionUsed, double weeklyUsed, int r
     return QJsonDocument(providers).toJson();
 }
 
+inline QJsonObject claudeResetKind(const QString &id, const QString &label, int count, bool usableNow,
+                                   const QJsonArray &refills, bool givesBackWeekly = false,
+                                   const QJsonValue &expiresAt = QJsonValue(QJsonValue::Null)) {
+    return QJsonObject{{"id", id}, {"label", label}, {"available_count", count},
+        {"usable_now", usableNow}, {"refills", refills},
+        {"gives_back_weekly", givesBackWeekly}, {"expires_at", expiresAt}};
+}
+
+inline QByteArray snapshotWithClaudeKinds(double sessionUsed, double weeklyUsed, const QJsonArray &kinds,
+                                          const QString &fingerprint = QString(64, 'b'),
+                                          bool usableNow = true) {
+    auto providers = QJsonDocument::fromJson(snapshot()).array();
+    auto claude = providers[0].toObject();
+    auto buckets = claude["buckets"].toArray();
+    for (int i = 0; i < buckets.size(); ++i) {
+        auto bucket = buckets[i].toObject();
+        if (bucket["id"] == "session") bucket["utilization"] = sessionUsed;
+        if (bucket["id"] == "weekly") bucket["utilization"] = weeklyUsed;
+        buckets[i] = bucket;
+    }
+    int total = 0;
+    for (const auto &entry : kinds) total += entry.toObject()["available_count"].toInt();
+    claude["buckets"] = buckets;
+    claude["rate_limit_reset_credits"] = QJsonObject{{"available_count", total},
+        {"account_fingerprint", fingerprint}, {"usable_now", usableNow}, {"kinds", kinds}};
+    claude["fetch_status"] = QJsonObject{{"fetched_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+        {"failure_kind", QJsonValue::Null}, {"credential_epoch", QJsonValue::Null}};
+    providers[0] = claude;
+    return QJsonDocument(providers).toJson();
+}
+
 inline QByteArray snapshotWithClaude(double sessionUsed, double weeklyUsed, int resetCount,
                                     const QJsonValue &usableNow, const QString &fingerprint = QString(64, 'b')) {
     auto providers = QJsonDocument::fromJson(snapshot()).array();

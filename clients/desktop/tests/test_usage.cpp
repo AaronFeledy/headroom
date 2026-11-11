@@ -713,6 +713,139 @@ private slots:
         provider["is_success"] = false;
         verify(QJsonObject{{"available_count", 3}}, true, -1);
     }
+    void claudeResetKindsAreValidatedAndSanitized() {
+        const auto parse = [](const QJsonValue &kinds, bool include = true) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 60, 3, true)).array();
+            auto claude = providers[0].toObject();
+            auto credits = claude["rate_limit_reset_credits"].toObject();
+            if (include) credits["kinds"] = kinds;
+            else credits.remove("kinds");
+            claude["rate_limit_reset_credits"] = credits;
+            providers[0] = claude;
+            QVariantList parsed;
+            if (!Usage::parse(QJsonDocument(providers).toJson(), parsed)) return QVariantMap{};
+            return parsed.first().toMap()["rate_limit_reset_credits"].toMap();
+        };
+        const auto weekly = TestUsage::claudeResetKind("weekly", "weekly reset", 1, true,
+            {"weekly", "weekly_fable"}, false, "2026-12-10T22:00:00Z");
+        auto fable = TestUsage::claudeResetKind("fable", "Fable reset", 2, true,
+            {"weekly_fable"}, true, QJsonValue::Null);
+        fable["extra"] = "dropped";
+        const auto valid = parse(QJsonArray{weekly, fable});
+        QCOMPARE(valid["available_count"].toLongLong(), qint64(3));
+        const auto kinds = valid["kinds"].toList();
+        QCOMPARE(kinds.size(), 2);
+        const auto first = kinds[0].toMap();
+        QCOMPARE(first["id"].toString(), QString("weekly"));
+        QCOMPARE(first["label"].toString(), QString("weekly reset"));
+        QCOMPARE(first["available_count"].toLongLong(), qint64(1));
+        QCOMPARE(first["usable_now"].toBool(), true);
+        QCOMPARE(first["refills"].toStringList(), (QStringList{"weekly", "weekly_fable"}));
+        QCOMPARE(first["gives_back_weekly"].toBool(), false);
+        QCOMPARE(first["expires_at"].toString(), QString("2026-12-10T22:00:00Z"));
+        QVERIFY(!first.contains("extra"));
+        const auto second = kinds[1].toMap();
+        QVERIFY(second["expires_at"].isNull());
+        QCOMPARE(second["gives_back_weekly"].toBool(), true);
+        auto absentGivesBack = TestUsage::claudeResetKind("session", "5-hour reset", 1, true, {"session"});
+        absentGivesBack.remove("gives_back_weekly");
+        const auto defaulted = parse(QJsonArray{absentGivesBack})["kinds"].toList().first().toMap();
+        QCOMPARE(defaulted["gives_back_weekly"].toBool(), false);
+
+        for (const auto &value : {QJsonValue(QJsonValue::Null), QJsonValue(QJsonObject{}),
+                 QJsonValue("kinds"), QJsonValue(3)}) {
+            const auto credits = parse(value);
+            QVERIFY(credits.contains("kinds"));
+            QVERIFY(credits["kinds"].isNull());
+            QCOMPARE(credits["available_count"].toLongLong(), qint64(3));
+        }
+        QVERIFY(parse(QJsonValue::Null, false)["kinds"].isNull());
+        QCOMPARE(parse(QJsonArray{})["kinds"].toList().size(), 0);
+
+        QJsonArray tooMany;
+        for (int i = 0; i < 9; ++i)
+            tooMany.append(TestUsage::claudeResetKind(QString("kind_%1").arg(i), "kind", 1, true, {}));
+        QVERIFY(parse(tooMany)["kinds"].isNull());
+
+        QJsonArray thirteenRefills;
+        for (int i = 0; i < 13; ++i) thirteenRefills.append(QString("refill_%1").arg(i));
+        const QJsonArray entries{
+            QJsonObject{{"id", "Upper"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", QString(33, 'a')}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", ""}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", QString(65, 'a')}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", -1}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1.5}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 9007199254740992.0}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", "1"}, {"usable_now", true}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", "yes"}, {"refills", QJsonArray{}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", "weekly"}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", thirteenRefills}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{"Weekly"}}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}, {"gives_back_weekly", "yes"}},
+            QJsonObject{{"id", "ok"}, {"label", "x"}, {"available_count", 1}, {"usable_now", true}, {"refills", QJsonArray{}}, {"expires_at", 3}},
+            QJsonValue("not an object")
+        };
+        for (const auto &entry : entries) {
+            const auto credits = parse(QJsonArray{entry});
+            QVERIFY(credits["kinds"].isNull());
+            QCOMPARE(credits["available_count"].toLongLong(), qint64(3));
+            QVERIFY(credits.contains("account_fingerprint"));
+        }
+        const auto duplicate = parse(QJsonArray{weekly, weekly});
+        QVERIFY(duplicate["kinds"].isNull());
+        QCOMPARE(duplicate["available_count"].toLongLong(), qint64(3));
+    }
+    void claudeResetKindsGateSelectionWithoutSpending() {
+        QTemporaryDir dir;
+        const QJsonArray kinds{
+            TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"}),
+            TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)};
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithClaudeKinds(40, 60, kinds));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        const auto credits = controller.providers().first().toMap()["rate_limit_reset_credits"].toMap();
+        QCOMPARE(credits["kinds"].toList().size(), 2);
+        QVERIFY(controller.resetState("Claude")["visible"].toBool());
+        QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        // Opening the options is read-only; it only binds the dialog identity.
+        QVERIFY(controller.prepareReset("Claude"));
+        auto action = controller.resetAction();
+        QCOMPARE(action["provider"].toString(), QString("Claude"));
+        QCOMPARE(action["kinds"].toList().size(), 2);
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QVERIFY(action["useNowReason"].toString().contains("Choose"));
+        QVERIFY(action["automaticReason"].toString().contains("Choose"));
+        QVERIFY(!action["canConfirm"].toBool());
+        QVERIFY(!action["canSchedule"].toBool());
+        QVERIFY(controller.selectResetKind("fable"));
+        action = controller.resetAction();
+        QCOMPARE(action["selectedKind"].toString(), QString("fable"));
+        QCOMPARE(action["selectedKindTrigger"].toString(), QString("Uses it when Fable reaches 100%"));
+        QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+        QVERIFY(!controller.selectResetKind("missing"));
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("fable"));
+        controller.cancelResetConfirmation();
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString());
+        // A choice that leaves the reading is never replaced by another kind,
+        // even when only one kind remains.
+        QVERIFY(controller.selectResetKind("fable"));
+        controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(40, 60,
+            QJsonArray{TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly"})}));
+        QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 1);
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString());
+        QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        // Closing the options drops the stale choice; with no choice at all,
+        // a sole kind is preselected.
+        controller.cancelResetConfirmation();
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("weekly"));
+        QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+        // Legacy readings keep the top-level flag and no kind selection.
+        controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, 60, 3, true));
+        QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 0);
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString());
+        QCOMPARE(controller.resetAction()["kindsKnown"].toBool(), false);
+        QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+    }
     void malformedMeters() {
         auto list = QJsonDocument::fromJson(TestUsage::snapshot()).array();
         auto p = list[0].toObject(); auto buckets = p["buckets"].toArray(); auto b = buckets[0].toObject();

@@ -34,6 +34,53 @@ QJsonObject normalizeFetchDiagnostics(const QJsonValue &value) {
         result["http_status"] = int(code);
     return result;
 }
+
+// The additive kind breakdown is all-or-nothing: one malformed entry makes
+// the whole list unknown, while the rest of the reset-credit object survives.
+// Unknown keys inside an entry are dropped instead of being forwarded.
+QJsonValue normalizeResetKinds(const QJsonValue &value) {
+    if (!value.isArray()) return QJsonValue(QJsonValue::Null);
+    const auto input = value.toArray();
+    if (input.size() > 8) return QJsonValue(QJsonValue::Null);
+    static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9_]{1,32}\\z"));
+    static const QRegularExpression refillPattern(QStringLiteral("\\A[a-z0-9_]{1,64}\\z"));
+    constexpr double maxSafeInteger = 9007199254740991.0;
+    QSet<QString> ids;
+    QJsonArray result;
+    for (const auto &entry : input) {
+        if (!entry.isObject()) return QJsonValue(QJsonValue::Null);
+        const auto kind = entry.toObject();
+        const auto id = kind["id"];
+        const auto label = kind["label"];
+        const auto countValue = kind["available_count"];
+        const double count = countValue.toDouble(-1);
+        const auto refills = kind["refills"];
+        const auto givesBack = kind["gives_back_weekly"];
+        const auto expires = kind["expires_at"];
+        const QString labelText = label.toString();
+        if (!id.isString() || !idPattern.match(id.toString()).hasMatch() || ids.contains(id.toString())
+            || !label.isString() || labelText.trimmed().isEmpty() || labelText.toUcs4().size() > 64
+            || !countValue.isDouble() || !std::isfinite(count) || count < 0
+            || count > maxSafeInteger || std::floor(count) != count
+            || !kind["usable_now"].isBool()
+            || !refills.isArray() || refills.toArray().size() > 12
+            || (!givesBack.isUndefined() && !givesBack.isBool())
+            || (!expires.isNull() && !expires.isUndefined() && !expires.isString()))
+            return QJsonValue(QJsonValue::Null);
+        QJsonArray normalizedRefills;
+        for (const auto &refill : refills.toArray()) {
+            if (!refill.isString() || !refillPattern.match(refill.toString()).hasMatch())
+                return QJsonValue(QJsonValue::Null);
+            normalizedRefills.append(refill);
+        }
+        ids.insert(id.toString());
+        result.append(QJsonObject{{"id", id}, {"label", label}, {"available_count", count},
+            {"usable_now", kind["usable_now"]}, {"refills", normalizedRefills},
+            {"gives_back_weekly", givesBack.toBool(false)},
+            {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)}});
+    }
+    return result;
+}
 }
 
 bool Usage::isPercent(const QVariantMap &bucket) {
@@ -128,7 +175,8 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 QJsonObject normalized{{"available_count", count},
                     {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
                         ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)},
-                    {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)}};
+                    {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)},
+                    {"kinds", normalizeResetKinds(credits["kinds"])}};
                 // Evidence is an optional, bounded list of canonical request
                 // UUIDs. A malformed list cannot retire any local receipt.
                 const auto evidence = credits["reconciled_request_ids"];
