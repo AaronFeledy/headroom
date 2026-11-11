@@ -16,6 +16,7 @@ Popup {
     signal automaticRequested()
     signal cancelAutomaticRequested()
     signal usagePageRequested()
+    signal kindSelected(string kind)
     readonly property bool claude: action.provider === "Claude"
     // The API provider key stays Codex; people know it as ChatGPT.
     readonly property string providerName: claude ? "Claude" : "ChatGPT"
@@ -30,6 +31,14 @@ Popup {
     readonly property string useNowReason: action.useNowReason || ""
     readonly property string automaticReason: action.automaticReason || ""
     readonly property string message: action.message || ""
+    // The additive breakdown. Null or an empty list keeps the legacy dialog.
+    readonly property var kinds: action.kinds || []
+    readonly property bool kindAware: claude && kinds.length > 0
+    readonly property string selectedKindId: action.selectedKind || ""
+    readonly property var selectedKindInfo: {
+        for (const kind of kinds) if (kind.id === selectedKindId) return kind
+        return null
+    }
     readonly property string title: {
         switch (phase) {
         case "submitting": return "Using a banked " + providerName + " reset"
@@ -42,15 +51,22 @@ Popup {
     readonly property string summary: {
         switch (phase) {
         case "submitting": return "Waiting for the server's answer. Keep Headroom running."
-        case "armed": return claude
-            ? "One Claude reset will be used when a usage update reports a session or weekly limit and Anthropic allows a reset. The choice ends with this weekly window; quitting Headroom cancels it."
-            : "One reset will be used when a usage update reports 100% weekly usage. The choice ends with this weekly window; quitting Headroom cancels it."
+        case "armed":
+            if (kindAware && selectedKindInfo)
+                return "One " + selectedKindInfo.label + " will be used when a usage update reports the limit below and Anthropic allows it. The choice ends with this weekly window; quitting Headroom cancels it."
+            return claude
+                ? "One Claude reset will be used when a usage update reports a session or weekly limit and Anthropic allows a reset. The choice ends with this weekly window; quitting Headroom cancels it."
+                : "One reset will be used when a usage update reports 100% weekly usage. The choice ends with this weekly window; quitting Headroom cancels it."
         case "paused": return "Usage is unavailable, so monitoring is paused. The choice still ends with this weekly window; quitting Headroom cancels it."
         case "reconciling": return "A previous request is still being reconciled with updated usage. Nothing can be used until then."
         // The irreversible-spend warning sits under Use now wherever it can be chosen.
-        default: return claude
-            ? "Use one Claude reset now when Anthropic allows it, or automatically once usage reports a session or weekly limit."
-            : "Use one reset now, or automatically once a usage update reports 100% weekly usage."
+        default:
+            if (kindAware) return selectedKindInfo
+                ? "Use one " + selectedKindInfo.label + " now when Anthropic allows it, or automatically at its limit."
+                : "Choose which banked reset to use now, or which one the automatic choice may use."
+            return claude
+                ? "Use one Claude reset now when Anthropic allows it, or automatically once usage reports a session or weekly limit."
+                : "Use one reset now, or automatically once a usage update reports 100% weekly usage."
         }
     }
     anchors.centerIn: parent
@@ -75,9 +91,62 @@ Popup {
         }
         Text {
             objectName: "resetOptionsBalance"
-            visible: options.availableCount > 0
-            text: "Banked resets: " + options.availableCount
+            visible: options.kindAware || options.availableCount > 0
+            text: options.kindAware
+                ? (options.selectedKindInfo ? "Banked: " + options.selectedKindInfo.countText
+                    : "Choose which banked reset to use")
+                : "Banked resets: " + options.availableCount
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12
+            Layout.fillWidth: true; wrapMode: Text.WordWrap
+            Accessible.name: text
+        }
+        // One row per listed kind: capitalized label, count, refills, and
+        // whether Anthropic permits it now. Selecting a row records a choice;
+        // it never spends or authorizes anything by itself.
+        ColumnLayout {
+            objectName: "resetKindChooser"
+            visible: options.kindAware && !options.armed && !options.busy
+            Layout.fillWidth: true; spacing: 6
+            Text {
+                objectName: "resetKindHeading"
+                text: "Choose a banked reset"
+                textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium
+                Layout.fillWidth: true
+            }
+            Repeater {
+                model: options.kinds
+                delegate: ColumnLayout {
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 2
+                    ActionButton {
+                        objectName: "resetKind_" + modelData.id
+                        text: modelData.title
+                        accent: options.selectedKindId === modelData.id
+                        implicitHeight: 32
+                        Layout.fillWidth: true
+                        Accessible.role: Accessible.RadioButton
+                        Accessible.checked: options.selectedKindId === modelData.id
+                        Accessible.description: modelData.countText
+                            + (modelData.refillText.length ? ". " + modelData.refillText : "")
+                        onClicked: options.kindSelected(modelData.id)
+                    }
+                    Text {
+                        objectName: "resetKindDetails_" + modelData.id
+                        text: modelData.countText
+                            + (modelData.refillText.length ? " · " + modelData.refillText : "")
+                            + " · " + (modelData.usableNow ? "Can be used now" : "Anthropic cannot apply it right now")
+                        textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                }
+            }
+        }
+        Text {
+            objectName: "resetOptionsKindTrigger"
+            visible: options.kindAware && options.selectedKindInfo !== null
+                && options.selectedKindInfo.triggerText.length > 0
+            text: options.selectedKindInfo ? options.selectedKindInfo.triggerText : ""
+            textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 12
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }

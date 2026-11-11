@@ -22,6 +22,8 @@ struct Scene {
     bool canConfirm = false, canSchedule = false, canCancel = false, busy = false;
     QString useNowReason, automaticReason, message, deadline;
     std::optional<qint64> availableCount = 3;
+    QVariantList kinds;
+    QString selectedKind;
 };
 Q_DECLARE_METATYPE(Scene)
 
@@ -42,6 +44,14 @@ QQuickItem *findItem(QQuickItem *root, const QString &name) {
     return nullptr;
 }
 
+QVariantMap syntheticKind(const QString &id, const QString &label, int count, bool usable,
+                          const QString &refillText, const QString &triggerText) {
+    return {{"id", id}, {"label", label}, {"availableCount", count}, {"usableNow", usable},
+        {"countText", QString("%1 %2%3").arg(count).arg(label).arg(count == 1 ? QString() : QStringLiteral("s"))},
+        {"title", label.left(1).toUpper() + label.mid(1)},
+        {"refillText", refillText}, {"triggerText", triggerText}};
+}
+
 QVariantMap synthetic(const Scene &scene) {
     // The same keys the Controller publishes; the values are invented for rendering.
     const bool armed = scene.phase == "armed" || scene.phase == "paused";
@@ -50,7 +60,9 @@ QVariantMap synthetic(const Scene &scene) {
         {"automatic", armed}, {"awaitingUsage", scene.phase == "reconciling"},
         {"phase", scene.phase}, {"canConfirm", scene.canConfirm}, {"canSchedule", scene.canSchedule},
         {"canCancel", scene.canCancel}, {"useNowReason", scene.useNowReason},
-        {"automaticReason", scene.automaticReason}, {"windowEndsAt", QString()}};
+        {"automaticReason", scene.automaticReason}, {"windowEndsAt", QString()},
+        {"kinds", scene.kinds}, {"kindsKnown", !scene.kinds.isEmpty()},
+        {"selectedKind", scene.selectedKind}};
 }
 }
 
@@ -93,6 +105,19 @@ private slots:
             QTest::newRow(prefix + "large-balance") << Scene{prefix + "large-balance", provider, "choices", true, true, false, false,
                 "", "", "", "", qint64(4294967296LL)};
         }
+        const QVariantMap weeklyKind = syntheticKind("weekly", "weekly reset", 1, true,
+            "Refills Weekly and Fable", "Uses it when Weekly reaches 100%");
+        const QVariantMap fableKind = syntheticKind("fable", "Fable reset", 2, true,
+            "Refills Fable", "Uses it when Fable reaches 100%");
+        QTest::newRow("claude-kind-one") << Scene{"claude-kind-one", "Claude", "choices", true, true, false, false,
+            "", "", "", "", qint64(3), QVariantList{weeklyKind}, "weekly"};
+        QTest::newRow("claude-kind-many-unselected") << Scene{"claude-kind-many-unselected", "Claude", "choices", false, false, false, false,
+            "Choose which banked reset to use.", "Choose which banked reset to use.", "", "", qint64(3),
+            QVariantList{weeklyKind, fableKind}, ""};
+        QTest::newRow("claude-kind-many-selected") << Scene{"claude-kind-many-selected", "Claude", "choices", true, true, false, false,
+            "", "", "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
+        QTest::newRow("claude-kind-armed") << Scene{"claude-kind-armed", "Claude", "armed", true, false, true, false,
+            "", "Automatic use is already set.", "", "Sunday at 10:00 PM", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
     }
     void rendersEveryStateWithoutActions() {
         QFETCH(Scene, scene);
@@ -117,7 +142,10 @@ private slots:
         QVERIFY(QDir().mkpath(captureDir));
         const bool armed = scene.phase == "armed" || scene.phase == "paused";
         auto overlay = options->property("parent").value<QQuickItem *>(); QVERIFY(overlay);
-        for (const QSize size : {QSize(460, 420), QSize(1000, 700)}) {
+        const QList<QSize> sizes = scene.kinds.isEmpty()
+            ? QList<QSize>{QSize(460, 420), QSize(1000, 700)}
+            : QList<QSize>{QSize(460, 620), QSize(1000, 700)};
+        for (const QSize size : sizes) {
             window->resize(size);
             // window->size() changes at once; the content item and overlay only follow
             // the delivered resize event, so wait for the scene before opening.
@@ -152,6 +180,8 @@ private slots:
             auto automaticReason = findItem(window->contentItem(), "automaticReason"); QVERIFY(automaticReason);
             auto deadline = findItem(window->contentItem(), "resetOptionsDeadline"); QVERIFY(deadline);
             auto message = findItem(window->contentItem(), "resetOptionsMessage"); QVERIFY(message);
+            auto chooser = findItem(window->contentItem(), "resetKindChooser"); QVERIFY(chooser);
+            auto kindTrigger = findItem(window->contentItem(), "resetOptionsKindTrigger"); QVERIFY(kindTrigger);
             QCOMPARE(confirm->isEnabled(), scene.canConfirm);
             QCOMPARE(confirm->property("text").toString(), scene.busy ? QString("Using reset…") : QString("Use now"));
             QCOMPARE(schedule->isVisible(), !armed);
@@ -159,8 +189,52 @@ private slots:
             QCOMPARE(cancel->isVisible(), armed);
             if (armed) QCOMPARE(cancel->isEnabled(), scene.canCancel);
             // A known positive balance is shown; an unknown one is never invented.
-            QCOMPARE(balance->isVisible(), scene.availableCount.has_value() && *scene.availableCount > 0);
-            if (balance->isVisible()) QVERIFY(balance->property("text").toString().contains(QString::number(*scene.availableCount)));
+            // With kinds, the line names the chosen kind or asks for a choice.
+            const bool kindAware = !scene.kinds.isEmpty();
+            QCOMPARE(balance->isVisible(), kindAware || (scene.availableCount.has_value() && *scene.availableCount > 0));
+            if (kindAware) {
+                QString chosen, chosenLabel;
+                for (const auto &value : scene.kinds) {
+                    if (value.toMap()["id"].toString() != scene.selectedKind) continue;
+                    chosen = value.toMap()["countText"].toString();
+                    chosenLabel = value.toMap()["label"].toString();
+                }
+                QCOMPARE(balance->property("text").toString(),
+                    chosen.isEmpty() ? QString("Choose which banked reset to use") : "Banked: " + chosen);
+                // One reset is spent, so the summary names one reset of the chosen
+                // kind and never quotes the whole balance as the amount used.
+                if (!chosen.isEmpty()) {
+                    const QString text = summary->property("text").toString();
+                    QVERIFY2(text.contains("ne " + chosenLabel), qPrintable(text));
+                    QVERIFY2(!text.contains(chosen) || chosen.startsWith("1 "), qPrintable(text));
+                }
+            } else if (balance->isVisible()) {
+                QVERIFY(balance->property("text").toString().contains(QString::number(*scene.availableCount)));
+            }
+            // The kind chooser only appears before a spend and is never preselected
+            // when several kinds are listed; rendering never activates a row.
+            QCOMPARE(chooser->isVisible(), kindAware && !armed && !scene.busy);
+            QCOMPARE(kindTrigger->isVisible(), kindAware && !scene.selectedKind.isEmpty());
+            if (kindAware) {
+                if (!scene.selectedKind.isEmpty())
+                    QVERIFY(kindTrigger->property("text").toString().contains("100%"));
+                for (const auto &value : scene.kinds) {
+                    const auto kind = value.toMap();
+                    auto row = findItem(window->contentItem(), "resetKind_" + kind["id"].toString()); QVERIFY(row);
+                    // The chooser is offered only before a spend or an arm.
+                    QCOMPARE(row->isVisible(), !armed && !scene.busy);
+                    QCOMPARE(row->property("text").toString(), kind["title"].toString());
+                    QCOMPARE(row->property("accent").toBool(), scene.selectedKind == kind["id"].toString());
+                    auto details = findItem(window->contentItem(), "resetKindDetails_" + kind["id"].toString()); QVERIFY(details);
+                    QVERIFY(details->property("text").toString().contains(kind["countText"].toString()));
+                    QVERIFY(details->property("text").toString().contains(kind["refillText"].toString()));
+                    QVERIFY(details->property("text").toString().contains(
+                        kind["usableNow"].toBool() ? "Can be used now" : "cannot"));
+                }
+            } else {
+                QVERIFY(!chooser->isVisible());
+                QVERIFY(!kindTrigger->isVisible());
+            }
             // Wherever Use now can be chosen, armed included, the spend is marked
             // irreversible once: beside the choice, not again in the summary.
             QCOMPARE(warning->isVisible(), scene.canConfirm);

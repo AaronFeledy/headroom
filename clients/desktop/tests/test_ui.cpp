@@ -136,6 +136,20 @@ private slots:
         const bool invoked = QMetaObject::invokeMethod(count, "openUsage");
         QDesktopServices::unsetUrlHandler("https");
         QVERIFY(invoked); QVERIFY(urls.urls.isEmpty());
+        // The additive breakdown still belongs to a read-only account row:
+        // counts are shown, and no reset action is added.
+        auto withKinds = extra;
+        withKinds["rate_limit_reset_credits"] = QJsonObject{{"available_count", 3},
+            {"account_fingerprint", QString(64, 'a')}, {"usable_now", true},
+            {"kinds", QJsonArray{
+                TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"}),
+                TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)}}};
+        controller.replaceSnapshot(QJsonDocument(QJsonArray{withKinds, samples[1]}).toJson());
+        auto kindCount = findItem(window->contentItem(), "bankedResets_Claude (Work)"); QVERIFY(kindCount);
+        QTRY_COMPARE(kindCount->property("text").toString(), QString("1 weekly reset · 2 Fable resets"));
+        auto kindButton = findItem(window->contentItem(), "useBankedReset_Claude (Work)"); QVERIFY(kindButton);
+        QVERIFY(!kindButton->isVisible());
+        QVERIFY(!kindCount->activeFocusOnTab());
     }
     void richReadOnlyDetails() {
         QTemporaryDir dir;
@@ -1170,6 +1184,72 @@ private slots:
         claude["error"] = "Unavailable"; claude["is_success"] = false; noWeekly[0] = claude;
         controller.replaceSnapshot(QJsonDocument(noWeekly).toJson());
         QTRY_VERIFY(!button() || !button()->isVisible());
+    }
+    void claudeBankedResetKindsShowBreakdownWithoutInvokingActions() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QJsonArray kinds{
+            TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"},
+                false, "2026-12-10T22:00:00Z"),
+            TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true,
+                "2027-03-09T07:59:00Z")};
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithClaudeKinds(40, 60, kinds));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto label = [&] { return findItem(window->contentItem(), "bankedResets_Claude"); };
+        QVERIFY(label());
+        QTRY_VERIFY(label()->isVisible());
+        // At the compact width the weekly meter cannot hold the breakdown beside
+        // the options button, so each kind takes its own line. It stays readable
+        // in full and inside the meter instead of spilling out of the card.
+        auto footer = [&] { return findItem(window->contentItem(), "meterResetDetails_Claude_weekly"); };
+        QVERIFY(footer());
+        auto leftEdge = [&](QQuickItem *item) { return item->mapToItem(window->contentItem(), QPointF(0, 0)).x(); };
+        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset\n2 Fable resets"));
+        QTRY_VERIFY2(!label()->property("truncated").toBool(), "the kind breakdown is elided");
+        QTRY_VERIFY2(leftEdge(label()) >= leftEdge(footer()) - 0.5,
+            qPrintable(QString("label starts at %1, meter at %2").arg(leftEdge(label())).arg(leftEdge(footer()))));
+        const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QDir().mkpath(capture);
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath("claude-reset-kinds.png")));
+        }
+        // With room to spare, the breakdown returns to one line.
+        const QSize compactSize = window->size();
+        window->resize(1400, compactSize.height());
+        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset · 2 Fable resets"));
+        QTRY_VERIFY(!label()->property("truncated").toBool());
+        QTRY_VERIFY(leftEdge(label()) >= leftEdge(footer()) - 0.5);
+        if (!capture.isEmpty())
+            QVERIFY(window->grabWindow().save(QDir(capture).filePath("claude-reset-kinds-wide.png")));
+        window->resize(compactSize);
+        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset\n2 Fable resets"));
+        // Hover details explain each kind without adding any action.
+        const QString details = label()->property("detailText").toString();
+        QVERIFY(details.contains("1 weekly reset"));
+        QVERIFY(details.contains("2 Fable resets"));
+        QVERIFY(details.contains("Refills Weekly and Fable"));
+        QVERIFY(details.contains("Returns what Fable used to your weekly limit"));
+        QVERIFY(details.contains("Expires"));
+        auto button = findItem(window->contentItem(), "useBankedReset_Claude"); QVERIFY(button);
+        QVERIFY(button->isVisible());
+        // Removing the breakdown restores the exact legacy text.
+        controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, 60, 3, true));
+        QTRY_COMPARE(label()->property("text").toString(), QString("3 banked resets"));
+        QVERIFY(!label()->property("detailText").toString().contains("Refills"));
     }
     void codexBankedResetButtonAppearsAt90WithoutInvokingActions() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
