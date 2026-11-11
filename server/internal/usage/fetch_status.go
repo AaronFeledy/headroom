@@ -56,9 +56,13 @@ type FetchFailure struct {
 	Kind              FailureKind
 	RetryAfter        time.Time
 	RateLimitFallback bool
-	Operation         FetchOperation
-	HTTPStatus        int
-	err               error
+	// MinCooldown is an optional provider-declared floor used when the
+	// upstream 429 carries no usable Retry-After. Diagnostics keep reporting
+	// RetryAfter as the bare upstream header.
+	MinCooldown time.Duration
+	Operation   FetchOperation
+	HTTPStatus  int
+	err         error
 }
 
 func (f *FetchFailure) Error() string { return "usage request failed" }

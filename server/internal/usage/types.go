@@ -18,6 +18,13 @@ type AccountProvider interface {
 	Account() *Account
 }
 
+// MinIntervalProvider is implemented by providers that require a minimum gap
+// between upstream usage attempts. The poller never fetches such a provider
+// sooner than this after an attempt that received an HTTP response.
+type MinIntervalProvider interface {
+	MinPollInterval() time.Duration
+}
+
 type UsageBucket struct {
 	Utilization float64
 	ResetsAt    *time.Time
