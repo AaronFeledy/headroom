@@ -25,6 +25,7 @@ const resetWriteTimeout = 65 * time.Second
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var resetKindPattern = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
 type handler struct {
 	authToken            string
@@ -85,6 +86,9 @@ type codexResetRequest struct {
 	RequestID          string `json:"request_id"`
 	Confirmed          bool   `json:"confirmed"`
 	AccountFingerprint string `json:"account_fingerprint"`
+	// Kind is accepted only on the Claude route; Codex rejects that key.
+	Kind        string `json:"kind"`
+	kindPresent bool
 }
 
 type codexResetResponse struct {
@@ -124,7 +128,7 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxResetBodyBytes)
 	defer r.Body.Close()
 	decoder := json.NewDecoder(r.Body)
-	request, err := decodeCodexResetRequest(decoder)
+	request, err := decodeResetRequest(decoder, provider == "claude")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -155,15 +159,36 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 	}
 	expectedAccountID := ""
 	if !known {
+		if provider == "claude" && request.Kind != "" {
+			kind := request.Kind
+			eligible = func(entry poller.Entry) bool { return eligibleForClaudeResetKind(entry, kind) }
+		}
 		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
 		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
 			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
 			return
 		}
+		if provider == "claude" && request.Kind == "" && claudeResetKindAmbiguous(entry) {
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
+			writeError(w, http.StatusConflict, multiKindResetMessage)
+			return
+		}
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
-	outcome, ambiguous, err := resetter.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	var outcome string
+	var ambiguous bool
+	if request.Kind != "" {
+		kindResetter, kindOK := resetter.(ProviderKindResetter)
+		if !kindOK {
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
+			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
+			return
+		}
+		outcome, ambiguous, err = kindResetter.ConsumeResetCreditKind(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint, request.Kind)
+	} else {
+		outcome, ambiguous, err = resetter.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	}
 	// Reconcile even an uncertain response with a delayed read-only fetch. Never
 	// repeat ConsumeResetCredit automatically or exercise this flow in tests.
 	h.scheduleResetUsageRefresh(provider)
@@ -230,7 +255,7 @@ func (h *handler) scheduleResetUsageRefresh(provider string) {
 	}()
 }
 
-func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
+func decodeResetRequest(decoder *json.Decoder, allowKind bool) (codexResetRequest, error) {
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
 		return codexResetRequest{}, fmt.Errorf("invalid JSON")
@@ -251,6 +276,12 @@ func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
 			err = decoder.Decode(&request.Confirmed)
 		case "account_fingerprint":
 			err = decoder.Decode(&request.AccountFingerprint)
+		case "kind":
+			if !allowKind {
+				return codexResetRequest{}, fmt.Errorf("invalid JSON")
+			}
+			request.kindPresent = true
+			err = decoder.Decode(&request.Kind)
 		default:
 			return codexResetRequest{}, fmt.Errorf("invalid JSON")
 		}
@@ -259,10 +290,13 @@ func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
 		}
 	}
 	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') || len(seen) != 3 {
+	if err != nil || closing != json.Delim('}') || len(seen) < 3 || len(seen) > 4 || len(seen) == 4 && !allowKind {
 		return codexResetRequest{}, fmt.Errorf("invalid JSON")
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return codexResetRequest{}, fmt.Errorf("invalid JSON")
+	}
+	if request.kindPresent && !resetKindPattern.MatchString(request.Kind) {
 		return codexResetRequest{}, fmt.Errorf("invalid JSON")
 	}
 	return request, nil

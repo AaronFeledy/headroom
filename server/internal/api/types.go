@@ -35,6 +35,12 @@ type ProviderResetRejectionFinalizer interface {
 	RecordResetNotSubmitted(context.Context, string, string) error
 }
 
+// ProviderKindResetter optionally redeems one specific banked-reset kind.
+// Providers without it keep the legacy whole-bank contract untouched.
+type ProviderKindResetter interface {
+	ConsumeResetCreditKind(context.Context, string, string, string, string) (outcome string, ambiguous bool, err error)
+}
+
 type ProviderPoller interface {
 	PollProvider(context.Context, string) (poller.Entry, bool, error)
 	UpdateCredentials(context.Context, string, func() error) (poller.Entry, bool, error)

@@ -77,3 +77,40 @@ func Test_CodexManualEligibility_when_requiredEvidenceIsAbsent(t *testing.T) {
 		})
 	}
 }
+
+func claudeKindEntry(kinds ...usage.ResetCreditKind) poller.Entry {
+	usable := true
+	return poller.Entry{Data: usage.UsageData{
+		ProviderAccountID:     "account-fixture",
+		RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3, UsableNow: &usable, Kinds: kinds},
+	}}
+}
+
+func Test_ClaudeKindEligibility_requires_listed_usable_kind(t *testing.T) {
+	// Given
+	entry := claudeKindEntry(
+		usage.ResetCreditKind{ID: "weekly", AvailableCount: 1, UsableNow: true},
+		usage.ResetCreditKind{ID: "fable", AvailableCount: 2, UsableNow: false},
+	)
+	// Then
+	if !eligibleForClaudeResetKind(entry, "weekly") {
+		t.Fatal("listed usable kind was refused")
+	}
+	if eligibleForClaudeResetKind(entry, "fable") {
+		t.Fatal("unusable kind was eligible")
+	}
+	if eligibleForClaudeResetKind(entry, "full") {
+		t.Fatal("absent kind was eligible")
+	}
+	// Legacy eligibility still checks the whole bank.
+	if !eligibleForClaudeReset(entry) {
+		t.Fatal("legacy eligibility was lost")
+	}
+	// More than one listed kind is ambiguous for a kind-less request.
+	if !claudeResetKindAmbiguous(entry) {
+		t.Fatal("multi-kind reading was not ambiguous")
+	}
+	if claudeResetKindAmbiguous(claudeKindEntry(usage.ResetCreditKind{ID: "weekly", AvailableCount: 1, UsableNow: true})) {
+		t.Fatal("single-kind reading was ambiguous")
+	}
+}
