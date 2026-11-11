@@ -157,11 +157,14 @@ quota rings. Stream Deck ignores detail metadata and uses real stable meter IDs,
 not invented financial key modes.
 
 Claude and Codex may expose read-only `rate_limit_reset_credits`; `usable_now`
-is a nullable boolean (Codex leaves it null). Claude's confirmed reset uses
-token-bound account/organization identity and a fresh banked-status GET.
-Consume methods, HTTP reset routes, and SSH reset forwarding must never be
-executed in tests, including against fakes: banked resets have real value.
-Keep their safety tests skip-only and never enable live provider tests for validation.
+is a nullable boolean (Codex leaves it null). Claude usage polling uses one
+`GET /api/oauth/usage?cedar_ember=1` per attempt, spaced at least three minutes
+apart, and applies a five-minute floor to a 429 without a usable `Retry-After`.
+Claude's confirmed reset uses token-bound account/organization identity and a
+fresh banked-status GET. Consume methods, HTTP reset routes, and SSH reset
+forwarding must never be executed in tests, including against fakes: banked
+resets have real value. Keep their safety tests skip-only and never enable live
+provider tests for validation.
 
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
