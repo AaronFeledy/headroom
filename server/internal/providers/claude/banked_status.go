@@ -5,8 +5,6 @@ import (
 	"math"
 	"regexp"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 var grantIDPattern = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
@@ -94,28 +92,4 @@ func parseBankStatus(body []byte) *bankStatus {
 		return nil
 	}
 	return status
-}
-
-func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
-	if s == nil {
-		return nil
-	}
-	var available int64
-	usable := false
-	for _, grant := range s.grants {
-		if *grant.ResetsLeft <= 0 {
-			continue
-		}
-		if *grant.Paused {
-			continue
-		}
-		available += *grant.ResetsLeft
-		if grant.ID == s.nextGrantID && *grant.UsableNow {
-			usable = true
-		}
-	}
-	// A validated empty/ineligible reading is known zero, not unknown. Keep
-	// it serializable so an account-bound desktop receipt can be reconciled.
-	usable = usable && s.eligible && (s.cooldownUntil == nil || !s.cooldownUntil.After(now))
-	return &usage.RateLimitResetCredits{AvailableCount: available, UsableNow: &usable}
 }

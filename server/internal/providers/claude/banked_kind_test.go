@@ -1,0 +1,146 @@
+package claude
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+// fixtureBankStatus is the observed live shape with identifiers replaced.
+const fixtureBankStatus = `{"cedar_ember":{"eligible":true,"ineligible_reason":null,"at_limit":false,"exhausted":[],"grants":[{"id":"grant_a","label":"One full limit reset (November 2026)","resets_total":1,"resets_left":1,"starts_at":"2026-11-10T21:30:00+00:00","ends_at":"2026-12-10T22:00:00+00:00","clears":["seven_day","seven_day_overage_included"],"paused":false,"usable_now":true,"use_requires_limit":false,"percent_used":{"seven_day":43,"seven_day_overage_included":21},"blocking":[],"arm":null,"type":"weekly","unavailable_reason":null,"gives_back_weekly":false},{"id":"grant_b","label":"New model launch: one Fable reset for Max, Team Premium and Enterprise Premium","resets_total":1,"resets_left":0,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","clears":["seven_day_overage_included"],"paused":false,"usable_now":false,"use_requires_limit":false,"percent_used":{"seven_day_overage_included":21,"seven_day":43},"blocking":[],"arm":null,"type":"full","unavailable_reason":"unavailable","gives_back_weekly":true},{"id":"grant_c","label":"New model launch: one more Fable reset at 12 months tenure","resets_total":1,"resets_left":1,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","clears":["seven_day_overage_included"],"paused":false,"usable_now":true,"use_requires_limit":false,"percent_used":{"seven_day_overage_included":21,"seven_day":43},"blocking":[],"arm":null,"type":"full","unavailable_reason":null,"gives_back_weekly":true},{"id":"grant_d","label":"New model launch: one more Fable reset at 6 months tenure","resets_total":1,"resets_left":1,"starts_at":"2026-11-09T18:00:00+00:00","ends_at":"2027-03-09T07:59:00+00:00","clears":["seven_day_overage_included"],"paused":false,"usable_now":true,"use_requires_limit":false,"percent_used":{"seven_day_overage_included":21,"seven_day":43},"blocking":[],"arm":null,"type":"full","unavailable_reason":null,"gives_back_weekly":true}],"next_grant_id":"grant_a","weekly_resets_at":"2026-11-16T03:00:00+00:00","cooldown_until":null,"paused_held":false}}`
+
+func Test_BankedStatus_classifies_kinds_and_matches_live_fixture(t *testing.T) {
+	// Given
+	status := parseBankStatus([]byte(fixtureBankStatus))
+	if status == nil {
+		t.Fatal("fixture status did not parse")
+	}
+	// When
+	credits := status.credits(time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC))
+	// Then
+	if credits == nil || credits.AvailableCount != 3 || credits.UsableNow == nil || !*credits.UsableNow {
+		t.Fatalf("top-level credits = %+v, want 3 usable", credits)
+	}
+	if len(credits.Kinds) != 2 {
+		t.Fatalf("kinds = %+v, want weekly and fable only", credits.Kinds)
+	}
+	weekly, fable := credits.Kinds[0], credits.Kinds[1]
+	if weekly.ID != resetKindWeekly || weekly.Label != "weekly reset" || weekly.AvailableCount != 1 || !weekly.UsableNow ||
+		weekly.GivesBackWeekly || weekly.ExpiresAt == nil || *weekly.ExpiresAt != "2026-12-10T22:00:00Z" ||
+		len(weekly.Refills) != 2 || weekly.Refills[0] != "weekly" || weekly.Refills[1] != "weekly_fable" {
+		t.Fatalf("weekly kind = %+v", weekly)
+	}
+	if fable.ID != resetKindFable || fable.Label != "Fable reset" || fable.AvailableCount != 2 || !fable.UsableNow ||
+		!fable.GivesBackWeekly || fable.ExpiresAt == nil || *fable.ExpiresAt != "2027-03-09T07:59:00Z" ||
+		len(fable.Refills) != 1 || fable.Refills[0] != "weekly_fable" {
+		t.Fatalf("fable kind = %+v", fable)
+	}
+}
+
+func Test_BankedStatus_classifies_grant_kind(t *testing.T) {
+	// Given
+	cases := []struct {
+		name      string
+		givesBack bool
+		grantType string
+		clears    []string
+		want      string
+	}{
+		{"gives back weekly wins", true, "weekly", []string{"seven_day"}, resetKindFable},
+		{"explicit session", false, "session", nil, resetKindSession},
+		{"explicit weekly", false, "weekly", nil, resetKindWeekly},
+		{"explicit full", false, "full", nil, resetKindFull},
+		{"five hour only", false, "", []string{"five_hour"}, resetKindSession},
+		{"no five hour", false, "", []string{"seven_day"}, resetKindWeekly},
+		{"empty clears", false, "", nil, resetKindWeekly},
+		{"five hour plus other", false, "", []string{"five_hour", "seven_day"}, resetKindFull},
+		{"fable limit clear", false, "", []string{"seven_day_overage_included"}, resetKindWeekly},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			grant := bankGrant{GivesBackWeekly: tc.givesBack, Type: tc.grantType, Clears: tc.clears}
+			if got := grant.kind(); got != tc.want {
+				t.Fatalf("kind = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func Test_BankedStatus_kind_counts_sum_to_top_level(t *testing.T) {
+	// Given
+	cases := []string{
+		fixtureBankStatus,
+		`{"cedar_ember":{"eligible":true,"grants":[]}}`,
+		`{"cedar_ember":{"eligible":false,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":2,"paused":false,"usable_now":true,"clears":["five_hour"]}]}}`,
+		`{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":1,"resets_left":1,"paused":false,"usable_now":true,"clears":["seven_day_opus"]},{"id":"b","resets_total":4,"resets_left":4,"paused":false,"usable_now":false,"type":"full"}]}}`,
+	}
+	for _, body := range cases {
+		credits := parseBankStatus([]byte(body)).credits(time.Now())
+		var sum int64
+		for _, kind := range credits.Kinds {
+			if kind.AvailableCount <= 0 {
+				t.Fatalf("listed kind has no resets: %+v", kind)
+			}
+			sum += kind.AvailableCount
+		}
+		if sum != credits.AvailableCount {
+			t.Fatalf("kind sum = %d, top-level = %d", sum, credits.AvailableCount)
+		}
+	}
+}
+
+func testGrant(id, kind string, left int64, usable bool) bankGrant {
+	total := left
+	paused := false
+	return bankGrant{ID: id, ResetsTotal: &total, ResetsLeft: &left, Paused: &paused, UsableNow: &usable, Type: kind}
+}
+
+func int64Pointer(value int64) *int64 { return &value }
+func boolPointer(value bool) *bool    { return &value }
+
+func Test_BankedStatus_selects_grant_by_kind_and_time(t *testing.T) {
+	// Given
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	future := "2027-01-01T00:00:00Z"
+	past := "2026-01-01T00:00:00Z"
+	bad := "not-a-time"
+	build := func(grants ...bankGrant) *bankStatus {
+		return &bankStatus{eligible: true, nextGrantID: grants[0].ID, grants: grants}
+	}
+	weeklyA := testGrant("weekly_a", resetKindWeekly, 1, true)
+	weeklyB := testGrant("weekly_b", resetKindWeekly, 2, true)
+	weeklyB.EndsAt = &future
+	weeklyB.StartsAt = &past
+	cases := []struct {
+		name    string
+		status  *bankStatus
+		kind    string
+		grantID string
+		wantErr error
+	}{
+		{"next candidate wins", build(weeklyA, weeklyB), resetKindWeekly, "weekly_a", nil},
+		{"first candidate without next", func() *bankStatus { s := build(weeklyA, weeklyB); s.nextGrantID = "missing"; return s }(), resetKindWeekly, "weekly_a", nil},
+		{"expired disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].EndsAt = &past; return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"unparsable end disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].EndsAt = &bad; return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"future start disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].StartsAt = &future; return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"unparsable start disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].StartsAt = &bad; return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"paused disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].Paused = boolPointer(true); return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"exhausted disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].ResetsLeft = int64Pointer(0); return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"unusable disqualifies", func() *bankStatus { s := build(weeklyA); s.grants[0].UsableNow = boolPointer(false); return s }(), resetKindWeekly, "", errResetKindUnavailable},
+		{"other kind disqualifies", build(weeklyA), resetKindFable, "", errResetKindUnavailable},
+		{"legacy single kind", build(weeklyA), "", "weekly_a", nil},
+		{"legacy multiple kinds", build(weeklyA, testGrant("fable_a", resetKindFable, 1, true)), "", "", errResetKindAmbiguous},
+		{"nil status", nil, resetKindWeekly, "", errResetUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			grant, err := selectResetGrant(tc.status, tc.kind, now)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && (grant == nil || grant.ID != tc.grantID) {
+				t.Fatalf("grant = %+v, want %s", grant, tc.grantID)
+			}
+		})
+	}
+}

@@ -64,6 +64,9 @@ func Test_BankedMetadata_one_usage_request_carries_status(t *testing.T) {
 	if err != nil || second.RateLimitResetCredits == nil || second.RateLimitResetCredits.AvailableCount != 3 || second.RateLimitResetCredits.UsableNow == nil || !*second.RateLimitResetCredits.UsableNow {
 		t.Fatalf("missing banked metadata: %+v %v", second.RateLimitResetCredits, err)
 	}
+	if len(second.RateLimitResetCredits.Kinds) != 1 || second.RateLimitResetCredits.Kinds[0].ID != resetKindWeekly {
+		t.Fatalf("status kinds not classified from the usage body: %+v", second.RateLimitResetCredits.Kinds)
+	}
 	if second.ProviderAccountID != "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222" || !matchesAccountFingerprint(second.ProviderAccountID, *second.RateLimitResetCredits.AccountFingerprint) {
 		t.Fatal("account binding missing")
 	}
