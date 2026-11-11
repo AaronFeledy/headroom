@@ -502,6 +502,17 @@ count at the right of its weekly meter's bottom text row. The label turns red on
 while that provider's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open that provider's usage and reset controls in a browser.
+
+When Claude reports the additive `kinds` breakdown, the label names each kind
+instead of the total ("1 weekly reset · 2 Fable resets"), with one kind per line
+when the meter is too narrow to hold that beside the options button. Hovering it describes
+what each kind refills using the visible meter labels, any return of Fable usage
+to the weekly limit, and its expiry. A kind-aware Claude dialog asks which kind
+to use: a sole kind is preselected, while several kinds start unselected and both
+choices stay disabled until one is chosen. A chosen kind that leaves the reading
+is cleared, never swapped for another kind. The automatic choice and the redeem
+request are bound to that kind; the request carries it only for a reading that
+lists kinds. ChatGPT keeps the total-count label and its existing request.
 For either provider, **Reset options…** appears at 90% usage when an account-bound
 banked reset is available. An active automatic choice or pending request keeps
 its management controls available. The options separate **Use now** from
@@ -540,12 +551,15 @@ banked reset is available. Update both the desktop and server for these rules.
 Claude uses the same confirmation and selected Local, HTTP(S), or SSH transport.
 Its **Reset options…** button appears with an account-bound banked reset when Anthropic
 reports that it can be used now, or when session or weekly usage reaches 90%.
-**Use now** requires Anthropic's explicit `usable_now: true`; an unknown or false
-value blocks immediate use with an explanation, but does not block planning
-automatic use. **Use automatically at limit** authorizes one reset when a fresh
-reading reports session or weekly usage at 100% and
-`usable_now: true`. Automatic use requires a known future weekly reset deadline,
-so authorization cannot survive an unknown window. The same 15-second cache polling, weekly-window expiry,
+**Use now** requires Anthropic's explicit `usable_now: true` for the chosen kind;
+an unknown or false value blocks immediate use with an explanation, but does not
+block planning automatic use. **Use automatically at limit** authorizes one
+reset when a fresh reading reports 100% on one of that kind's trigger meters and
+the kind is usable now. Trigger meters come from what the kind refills, minus a
+bucket owned by a narrower available kind, so an armed weekly reset waits for the
+weekly meter when Fable resets can cover the Fable bucket. Automatic use requires
+a known future weekly reset deadline, so authorization cannot survive an unknown
+window; losing the kind, its count, or its trigger meter retires the arm. The same 15-second cache polling, weekly-window expiry,
 identity checks, and cancellation on connection/account changes, exhausted credits,
 or an existing request apply. Provider errors pause monitoring, with cancellation
 still available. Unlike ChatGPT, Claude does not cancel merely because usage falls below a floor.
