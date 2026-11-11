@@ -137,6 +137,18 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
             const auto current = value.toMap();
             if (current.value("provider_name").toString() != provider) continue;
             facts.readingAvailable = current.value("is_success").toBool();
+            if (facts.readingAvailable) {
+                for (const auto &entry : current.value("buckets").toList()) {
+                    const auto meter = entry.toMap();
+                    ResetPolicy::Bucket bucket;
+                    bucket.id = meter.value("id").toString();
+                    bucket.label = meter.value("label").toString();
+                    bool valid = false;
+                    const double used = meter.value("utilization").toDouble(&valid);
+                    if (valid && std::isfinite(used)) bucket.utilization = used;
+                    if (!bucket.id.isEmpty()) facts.buckets.append(bucket);
+                }
+            }
             break;
         }
     }
@@ -146,6 +158,24 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     const double utilization = reading.value("utilization").toDouble(&validUsage);
     if (facts.readingAvailable && validUsage) facts.utilization = utilization;
     if (reading.value("usable_now").metaType().id() == QMetaType::Bool) facts.usableNow = reading.value("usable_now").toBool();
+    // The additive kind breakdown is already validated by the usage parser.
+    // Only a real array counts as a known list; null or absent stays legacy.
+    const auto kindsValue = reading.value("kinds");
+    if (provider == "Claude" && kindsValue.metaType().id() == QMetaType::QVariantList) {
+        facts.kindsKnown = true;
+        for (const auto &entry : kindsValue.toList()) {
+            const auto kind = entry.toMap();
+            ResetPolicy::Kind parsed;
+            parsed.id = kind.value("id").toString();
+            parsed.label = kind.value("label").toString();
+            parsed.availableCount = kind.value("available_count").toLongLong();
+            parsed.usableNow = kind.value("usable_now").toBool();
+            parsed.refills = kind.value("refills").toStringList();
+            parsed.givesBackWeekly = kind.value("gives_back_weekly").toBool();
+            parsed.expiresAt = kind.value("expires_at").toString();
+            facts.kinds.append(parsed);
+        }
+    }
     facts.accountBound = validFingerprint(reading.value("account_fingerprint").toString());
     const QString window = canonicalWindow(reading);
     facts.window = windowState(window);
@@ -162,6 +192,18 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     facts.armIdentityCurrent = facts.armed && m_autoResetConnection == resetConnectionIdentity();
     facts.armWindowCurrent = facts.armed && window == m_autoResetWindow;
     facts.armWindow = windowState(m_autoResetWindow);
+    // The dialog choice is session-only. An armed kind is the effective choice
+    // when the dialog is closed. A sole listed kind is preselected only when
+    // nothing was chosen: a choice that has left the reading stays unselected
+    // and is never replaced by a different kind.
+    QString selection = m_resetKind;
+    if (selection.isEmpty() && facts.armed) selection = m_autoResetKind;
+    if (selection.isEmpty()) {
+        if (facts.kinds.size() == 1) facts.selectedKind = facts.kinds.first().id;
+    } else if (const auto chosen = ResetPolicy::findKind(facts, selection)) {
+        facts.selectedKind = chosen->id;
+    }
+    if (facts.armed && !m_autoResetKind.isEmpty()) facts.armKind = m_autoResetKind;
     return facts;
 }
 
@@ -222,6 +264,18 @@ QVariantMap Controller::resetAction() const {
     const auto facts = resetFacts(m_resetProvider);
     const auto capabilities = ResetPolicy::evaluate(facts);
     const bool armed = !m_autoResetConnection.isEmpty();
+    QVariantList kinds;
+    for (const auto &kind : facts.kinds) {
+        kinds.append(QVariantMap{{"id", kind.id}, {"label", kind.label},
+            {"availableCount", QVariant::fromValue(kind.availableCount)},
+            {"usableNow", kind.usableNow}, {"refills", kind.refills},
+            {"givesBackWeekly", kind.givesBackWeekly}, {"expiresAt", kind.expiresAt},
+            {"countText", ResetPolicy::kindCountText(kind)}, {"title", ResetPolicy::kindTitle(kind)},
+            {"refillText", ResetPolicy::kindRefillText(facts, kind)},
+            {"triggerText", ResetPolicy::kindTriggerText(facts, kind)},
+            {"returnText", ResetPolicy::kindReturnText(facts, kind)}});
+    }
+    const auto selected = ResetPolicy::findKind(facts, facts.selectedKind);
     return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", armed},
         {"availableCount", facts.availableCount ? QVariant::fromValue(*facts.availableCount) : QVariant()},
         {"awaitingUsage", facts.awaitingUsage},
@@ -231,6 +285,11 @@ QVariantMap Controller::resetAction() const {
         {"canCancel", capabilities.canCancelArm},
         {"useNowReason", ResetPolicy::reasonText(capabilities.useNowReason, facts.provider)},
         {"automaticReason", ResetPolicy::reasonText(capabilities.armReason, facts.provider)},
+        {"kinds", kinds}, {"kindsKnown", facts.kindsKnown},
+        {"selectedKind", selected ? selected->id : QString()},
+        {"selectedKindTitle", selected ? ResetPolicy::kindTitle(*selected) : QString()},
+        {"selectedKindCount", selected ? ResetPolicy::kindCountText(*selected) : QString()},
+        {"selectedKindTrigger", selected ? ResetPolicy::kindTriggerText(facts, *selected) : QString()},
         {"windowEndsAt", armed ? m_autoResetWindow : canonicalWindow(resetReading(m_resetProvider))}};
 }
 
@@ -241,6 +300,9 @@ bool Controller::prepareReset(const QString &provider) {
     if (provider != "Codex" && provider != "Claude") return false;
     if (!ResetPolicy::evaluate(resetFacts(provider)).canOpen) return false;
     m_resetProvider = provider;
+    // A closed dialog starts with no choice when several kinds are listed;
+    // reopening an arm restores the kind that arm already owns.
+    m_resetKind = m_autoResetConnection.isEmpty() ? QString() : m_autoResetKind;
     m_resetConfirmation.clear();
     m_resetMessage.clear();
     const QString fingerprint = resetReading(provider).value("account_fingerprint").toString();
@@ -280,15 +342,29 @@ bool Controller::prepareReset(const QString &provider) {
 }
 
 void Controller::cancelResetConfirmation() {
-    m_resetConfirmation.clear(); emit changed();
+    m_resetConfirmation.clear();
+    m_resetKind.clear();
+    emit changed();
+}
+
+bool Controller::selectResetKind(const QString &kind) {
+    // Recording a choice is not permission and never spends: the current
+    // reading and the policy still decide whether it may be used.
+    const auto facts = resetFacts("Claude");
+    if (!ResetPolicy::findKind(facts, kind)) return false;
+    m_resetKind = kind;
+    emit changed();
+    return true;
 }
 
 bool Controller::scheduleReset() {
     // This button explicitly authorizes ONE future submission. DO NOT invoke
     // it during testing, even with a mock transport or synthetic usage.
-    if (!resetAction().value("canSchedule").toBool()) return false;
+    const auto facts = resetFacts(m_resetProvider);
+    if (!ResetPolicy::evaluate(facts).canSchedule) return false;
     m_autoResetConnection = m_resetConfirmation;
     m_autoResetWindow = canonicalWindow(resetReading(m_resetProvider));
+    m_autoResetKind = facts.selectedKind.value_or(QString());
     m_resetConfirmation.clear();
     m_resetMessage.clear();
     // Read the server's usage cache promptly without changing its provider
@@ -301,6 +377,7 @@ bool Controller::scheduleReset() {
 void Controller::clearScheduledReset() {
     m_autoResetConnection.clear();
     m_autoResetWindow.clear();
+    m_autoResetKind.clear();
     if (m_startPolling && m_poll.isActive()) m_poll.start(m_interval * 1000);
 }
 
@@ -339,11 +416,14 @@ void Controller::observeScheduledReset() {
     if (decision.outcome == ResetPolicy::ArmOutcome::Cancel) { retireScheduledReset(decision.reason); return; }
     if (decision.outcome != ResetPolicy::ArmOutcome::Submit) return;
     const QString authorization = m_autoResetConnection;
+    const QString kind = m_autoResetKind;
     // Disarm before any I/O, including receipt creation. A failure
     // or ambiguous result must never schedule another attempt.
     clearScheduledReset();
     m_resetConfirmation = authorization;
-    // Claude also requires usable_now == true. DO NOT TEST or invoke this path.
+    // The redeem request carries the kind this arm was bound to. DO NOT TEST
+    // or invoke this path: Claude also requires that kind to be usable now.
+    m_resetKind = kind;
     submitReset(true);
     if (!m_resetBusy && m_notifications && !m_resetMessage.isEmpty())
         m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
@@ -417,12 +497,22 @@ void Controller::submitReset(bool automatic) {
         m_resetConfirmation.clear(); emit changed(); return;
     }
     const QString requestWindow = canonicalWindow(weekly);
+    // The redeem body carries a kind only when this Claude reading lists kinds
+    // and one is chosen. Without kinds, the legacy three-key body is unchanged.
+    QString kind;
+    if (m_resetProvider == "Claude") {
+        const auto facts = resetFacts("Claude");
+        if (facts.kindsKnown)
+            if (const auto *chosen = ResetPolicy::findKind(facts, facts.selectedKind)) kind = chosen->id;
+    }
     receipt = {{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
         {"completed", false}, {"account_fingerprint", fingerprint}, {"provider", m_resetProvider},
         {"available_count", weekly.value("available_count").toLongLong()},
         {"submitted_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {"reading_fetched_at", weekly.value("fetched_at").toString()},
         {"weekly_resets_at", requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow)}};
+    // Optional receipt metadata; older receipts without it stay readable.
+    if (!kind.isEmpty()) receipt.insert("kind", kind);
     if (!writeReceipt(receiptPath, receipt)) {
         m_resetMessage = "The reset request could not be saved safely. No reset was requested.";
         m_resetConfirmation.clear(); emit changed(); return;
@@ -440,8 +530,10 @@ void Controller::submitReset(bool automatic) {
         : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
     ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
-    const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")},
-        {"confirmed", true}, {"account_fingerprint", fingerprint}}).toJson(QJsonDocument::Compact);
+    QJsonObject payload{{"request_id", receipt.value("request_id")},
+        {"confirmed", true}, {"account_fingerprint", fingerprint}};
+    if (!kind.isEmpty()) payload.insert("kind", kind);
+    const auto body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
     request.setHeader(QNetworkRequest::ContentLengthHeader, qint64(body.size()));
     request.setAttribute(QNetworkRequest::DoNotBufferUploadDataAttribute, true);
     request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);

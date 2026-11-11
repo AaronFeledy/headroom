@@ -44,6 +44,22 @@ Facts armed(Facts facts) {
     facts.armed = true; facts.armIdentityCurrent = true; facts.armWindowCurrent = true; facts.armWindow = Window::Future;
     return facts;
 }
+Kind kind(const QString &id, const QString &label, qint64 count, bool usable, const QStringList &refills,
+          bool givesBack = false) {
+    Kind result;
+    result.id = id; result.label = label; result.availableCount = count;
+    result.usableNow = usable; result.refills = refills; result.givesBackWeekly = givesBack;
+    return result;
+}
+// The example reading: one weekly reset plus two Fable resets.
+Facts kinded(Facts facts) {
+    facts.kindsKnown = true;
+    facts.kinds = {kind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"}),
+        kind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)};
+    facts.buckets = {Bucket{"session", "5-Hour", 40.0}, Bucket{"weekly", "Weekly", 60.0},
+        Bucket{"weekly_fable", "Fable", 27.0}};
+    return facts;
+}
 }
 
 class ResetPolicyTest : public QObject {
@@ -236,6 +252,145 @@ private slots:
             QCOMPARE(result.openReason, Reason::ForeignOwner);
         }
     }
+    void kindLabelsComposeFromServerText() {
+        const Facts facts = kinded(baseline(Provider::Claude, 100));
+        QCOMPARE(kindCountText(facts.kinds[0]), QString("1 weekly reset"));
+        QCOMPARE(kindCountText(facts.kinds[1]), QString("2 Fable resets"));
+        QCOMPARE(kindTitle(facts.kinds[0]), QString("Weekly reset"));
+        QCOMPARE(kindTitle(facts.kinds[1]), QString("Fable reset"));
+        QCOMPARE(kindRefillText(facts, facts.kinds[0]), QString("Refills Weekly and Fable"));
+        QCOMPARE(kindRefillText(facts, facts.kinds[1]), QString("Refills Fable"));
+        QCOMPARE(kindTriggerText(facts, facts.kinds[0]), QString("Uses it when Weekly reaches 100%"));
+        QCOMPARE(kindTriggerText(facts, facts.kinds[1]), QString("Uses it when Fable reaches 100%"));
+        QCOMPARE(kindReturnText(facts, facts.kinds[1]), QString("Returns what Fable used to your weekly limit"));
+        QVERIFY(kindReturnText(facts, facts.kinds[0]).isEmpty());
+    }
+    void kindTriggerBucketsRespectNarrowerOwnership() {
+        Facts facts = kinded(baseline(Provider::Claude, 100));
+        QCOMPARE(triggerBuckets(facts, "weekly"), (QStringList{"weekly"}));
+        QCOMPARE(triggerBuckets(facts, "fable"), (QStringList{"weekly_fable"}));
+        QCOMPARE(triggerUtilization(facts, "weekly"), std::optional<double>(60.0));
+        // With no Fable resets left, the weekly kind owns both buckets again.
+        facts.kinds[1].availableCount = 0;
+        QCOMPARE(triggerBuckets(facts, "weekly"), (QStringList{"weekly", "weekly_fable"}));
+        QCOMPARE(triggerUtilization(facts, "weekly"), std::optional<double>(60.0));
+        // A bucket that is not in the reading can never trigger.
+        Facts missing = kinded(baseline(Provider::Claude, 100));
+        missing.kinds[1].refills = {"weekly_missing"};
+        QVERIFY(triggerBuckets(missing, "fable").isEmpty());
+        QVERIFY(!triggerUtilization(missing, "fable"));
+        // The session meter never triggers a kind that does not refill it.
+        Facts session = kinded(baseline(Provider::Claude, 100));
+        session.buckets.append(Bucket{"session_extra", "Session", 100.0});
+        QVERIFY(!triggerBuckets(session, "weekly").contains("session_extra"));
+    }
+    void kindAwareUseNowNeedsTheChosenKind() {
+        Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        auto result = evaluate(facts);
+        QVERIFY(!result.canUseNow);
+        QCOMPARE(result.useNowReason, Reason::KindRequired);
+        facts.selectedKind = "weekly";
+        result = evaluate(facts);
+        QVERIFY(result.canUseNow);
+        QCOMPARE(result.useNowReason, Reason::None);
+        facts.selectedKind = "fable";
+        facts.kinds[1].usableNow = false;
+        result = evaluate(facts);
+        QVERIFY(!result.canUseNow);
+        QCOMPARE(result.useNowReason, Reason::ProviderRefused);
+        facts.kinds[1].availableCount = 0;
+        result = evaluate(facts);
+        QCOMPARE(result.useNowReason, Reason::NoCredits);
+        // Shared blockers still apply before the kind's own answer.
+        Facts stale = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        stale.selectedKind = "weekly"; stale.fresh = false;
+        QCOMPARE(evaluate(stale).useNowReason, Reason::Stale);
+        // Legacy readings keep the top-level usable_now rule unchanged.
+        Facts legacy = withUsable(baseline(Provider::Claude, 100), 1);
+        QVERIFY(evaluate(legacy).canUseNow);
+        QCOMPARE(evaluate(legacy).useNowReason, Reason::None);
+    }
+    void kindAwareArmingNeedsAChosenTrigger() {
+        Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        auto result = evaluate(facts);
+        QVERIFY(!result.canArm);
+        QCOMPARE(result.armReason, Reason::KindRequired);
+        facts.selectedKind = "fable";
+        QVERIFY(evaluate(facts).canArm);
+        // A kind whose refills are absent from the reading cannot be armed.
+        facts.buckets.removeIf([](const Bucket &bucket) { return bucket.id == "weekly_fable"; });
+        result = evaluate(facts);
+        QVERIFY(!result.canArm);
+        QCOMPARE(result.armReason, Reason::NoTrigger);
+        // The future weekly window still gates arming.
+        Facts ended = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        ended.selectedKind = "weekly"; ended.window = Window::Ended;
+        QCOMPARE(evaluate(ended).armReason, Reason::WindowEnded);
+    }
+    void kindAwareArmFiresOnlyOnItsOwnedTriggers() {
+        Facts facts = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        facts.armKind = "weekly"; facts.selectedKind = "weekly";
+        facts.buckets = {Bucket{"session", "5-Hour", 100.0}, Bucket{"weekly", "Weekly", 40.0},
+            Bucket{"weekly_fable", "Fable", 40.0}};
+        // The session meter is at 100%, but this kind does not refill it.
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Keep);
+        facts.buckets[1].utilization = 100.0;
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Submit);
+        // An armed Fable kind waits for its own meter, not the weekly one.
+        facts.armKind = "fable"; facts.selectedKind = "fable";
+        facts.buckets = {Bucket{"session", "5-Hour", 40.0}, Bucket{"weekly", "Weekly", 100.0},
+            Bucket{"weekly_fable", "Fable", 40.0}};
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Keep);
+        facts.buckets[2].utilization = 100.0;
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Submit);
+        // Anthropic's current answer gates firing, not arming.
+        facts.kinds[1].usableNow = false;
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Wait);
+        // Losing the kind or the trigger retires the arm.
+        facts.kinds[1].availableCount = 0;
+        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Cancel);
+        QCOMPARE(observeArm(facts).reason, Reason::KindUnavailable);
+        Facts vanished = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        vanished.armKind = "fable"; vanished.selectedKind = "fable";
+        vanished.kindsKnown = false;
+        QCOMPARE(observeArm(vanished).outcome, ArmOutcome::Cancel);
+        QCOMPARE(observeArm(vanished).reason, Reason::KindUnavailable);
+        Facts noTrigger = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        noTrigger.armKind = "fable"; noTrigger.selectedKind = "fable";
+        noTrigger.kinds[1].refills = {"weekly_missing"};
+        QCOMPARE(observeArm(noTrigger).outcome, ArmOutcome::Cancel);
+        QCOMPARE(observeArm(noTrigger).reason, Reason::NoTrigger);
+        // With no Fable resets, the weekly kind owns both of its buckets.
+        Facts wider = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        wider.armKind = "weekly"; wider.selectedKind = "weekly";
+        wider.kinds[1].availableCount = 0;
+        wider.buckets = {Bucket{"session", "5-Hour", 40.0}, Bucket{"weekly", "Weekly", 40.0},
+            Bucket{"weekly_fable", "Fable", 100.0}};
+        QCOMPARE(observeArm(wider).outcome, ArmOutcome::Submit);
+        // A stale reading at the limit cannot prove a spend and keeps the arm.
+        Facts stale = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        stale.armKind = "fable"; stale.selectedKind = "fable"; stale.fresh = false;
+        stale.buckets[2].utilization = 100.0;
+        QCOMPARE(observeArm(stale).outcome, ArmOutcome::Keep);
+        // The armed kind governs firing, not whatever the dialog has selected,
+        // and firing still needs every blocker Use now has.
+        Facts other = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        other.armKind = "fable"; other.selectedKind = "weekly";
+        other.buckets[2].utilization = 100.0;
+        QCOMPARE(observeArm(other).outcome, ArmOutcome::Submit);
+        other.kinds[0].usableNow = false;
+        QCOMPARE(observeArm(other).outcome, ArmOutcome::Submit);
+        other.accountBound = false;
+        QCOMPARE(observeArm(other).outcome, ArmOutcome::Keep);
+        other.accountBound = true; other.availableCount = 0;
+        QCOMPARE(observeArm(other).outcome, ArmOutcome::Keep);
+        // A pending request retires it through the existing path.
+        Facts pending = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
+        pending.armKind = "fable"; pending.selectedKind = "fable"; pending.awaitingUsage = true;
+        pending.buckets[2].utilization = 100.0;
+        QCOMPARE(observeArm(pending).outcome, ArmOutcome::Cancel);
+        QCOMPARE(observeArm(pending).reason, Reason::AwaitingUsage);
+    }
     void armObservationDecisions_data() {
         QTest::addColumn<Provider>("provider");
         QTest::addColumn<double>("utilization");
@@ -343,7 +498,7 @@ private slots:
         for (const int phase : {0, 1, 2, 3, 4, 5}) QVERIFY(!phaseName(Phase(phase)).isEmpty());
         for (const auto provider : {Provider::Codex, Provider::Claude}) {
             QVERIFY(reasonText(Reason::None, provider).isEmpty());
-            for (int reason = int(Reason::Unavailable); reason <= int(Reason::IdentityChanged); ++reason)
+            for (int reason = int(Reason::Unavailable); reason <= int(Reason::NoTrigger); ++reason)
                 QVERIFY2(!reasonText(Reason(reason), provider).isEmpty(), qPrintable(QString::number(reason)));
             QVERIFY(!awaitingUsageText(provider, false).isEmpty());
             QVERIFY(!awaitingUsageText(provider, true).isEmpty());
@@ -352,6 +507,8 @@ private slots:
         QVERIFY(reasonText(Reason::ForeignOwner, Provider::Codex).contains("Claude"));
         QVERIFY(reasonText(Reason::ForeignOwner, Provider::Claude).contains("ChatGPT"));
         QVERIFY(!cancellationText(Reason::None).isEmpty());
+        QVERIFY(!cancellationText(Reason::KindUnavailable).isEmpty());
+        QVERIFY(!cancellationText(Reason::NoTrigger).isEmpty());
     }
 };
 

@@ -6,6 +6,8 @@
 // and owns every request. DO NOT turn these decisions into test actions; a
 // Submit outcome is an eligibility fact, never something a test may execute.
 #include <QString>
+#include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 #include <optional>
 
@@ -17,9 +19,26 @@ enum class Phase { Hidden, Choices, Submitting, Armed, Paused, Reconciling };
 enum class Reason {
     None, Unavailable, Stale, NoCredits, Unbound, BelowFloor, ProviderRefused, ProviderUnknown,
     AwaitingUsage, Busy, ForeignOwner, WindowUnknown, WindowEnded, AlreadyArmed, ConfirmationStale,
-    IdentityChanged
+    IdentityChanged, KindRequired, KindUnavailable, NoTrigger
 };
 enum class ArmOutcome { Keep, Wait, Cancel, Submit };
+
+// One additive kind of banked reset, as the server reports it.
+struct Kind {
+    QString id;
+    QString label;
+    qint64 availableCount = 0;
+    bool usableNow = false;
+    QStringList refills;
+    bool givesBackWeekly = false;
+    QString expiresAt; // empty when the server reported no expiry
+};
+// One meter in the provider reading, used for labels and trigger ownership.
+struct Bucket {
+    QString id;
+    QString label;
+    std::optional<double> utilization;
+};
 
 struct Facts {
     Provider provider = Provider::Codex;
@@ -42,6 +61,13 @@ struct Facts {
     bool armIdentityCurrent = false;   // the arm matches the current identity
     bool armWindowCurrent = false;     // the reading's weekly window is the arm's window
     Window armWindow = Window::Unknown; // the arm's recorded deadline; it ends even offline
+    // The server's additive kind breakdown. kindsKnown means the reading
+    // explicitly reported an array; that array may itself be empty.
+    bool kindsKnown = false;
+    QVector<Kind> kinds;
+    QVector<Bucket> buckets;            // the provider's meters, for labels and triggers
+    std::optional<QString> selectedKind; // the dialog's choice, if any
+    std::optional<QString> armKind;      // the armed choice; empty for a legacy arm
 };
 
 struct Capabilities {
@@ -71,6 +97,20 @@ ArmDecision observeArm(const Facts &facts);
 Reason armExpiry(Window armWindow);
 // A successful reading below the manual floor releases a Codex receipt latch.
 bool releasesCodexReceipt(std::optional<double> utilization);
+// The kind whose id matches, or nullptr. Unknown ids never match.
+const Kind *findKind(const Facts &facts, const std::optional<QString> &id);
+const Kind *findKind(const Facts &facts, const QString &id);
+// Meters a kind may fire on: its refills that are present in the reading,
+// minus every bucket owned by a listed kind with a positive count and
+// strictly fewer refills (the narrower kind owns its bucket).
+QStringList triggerBuckets(const Facts &facts, const QString &kindId);
+// Highest present trigger utilization, or nothing when none can be read.
+std::optional<double> triggerUtilization(const Facts &facts, const QString &kindId);
+QString kindCountText(const Kind &kind);
+QString kindTitle(const Kind &kind);
+QString kindRefillText(const Facts &facts, const Kind &kind);
+QString kindTriggerText(const Facts &facts, const Kind &kind);
+QString kindReturnText(const Facts &facts, const Kind &kind);
 
 QString phaseName(Phase phase);
 QString reasonText(Reason reason, Provider provider);

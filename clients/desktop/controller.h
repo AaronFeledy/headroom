@@ -79,6 +79,9 @@ public:
     // A reset is valuable and irreversible; the skip-only tests are intentional.
     Q_INVOKABLE bool prepareReset(const QString &provider);
     Q_INVOKABLE void cancelResetConfirmation();
+    // Records which listed kind the options are about. Selection only: the
+    // reset policy still decides whether that kind may be used or armed.
+    Q_INVOKABLE bool selectResetKind(const QString &kind);
     Q_INVOKABLE void consumeReset();
     Q_INVOKABLE bool scheduleReset();
     Q_INVOKABLE void cancelScheduledReset();
@@ -207,6 +210,8 @@ private:
     bool m_resetBusy = false;
     // One-shot authorization is session-only and bound to this account,
     // transport, and weekly window. Never restore it on an app restart.
-    QString m_autoResetConnection, m_autoResetWindow;
+    QString m_autoResetConnection, m_autoResetWindow, m_autoResetKind;
+    // Session-only kind choice for the open options and the redeem request.
+    QString m_resetKind;
     QTimer m_poll, m_clock;
 };
