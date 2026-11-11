@@ -107,7 +107,25 @@ func copyResetCredits(value *usage.RateLimitResetCredits) *usage.RateLimitResetC
 		usable := *value.UsableNow
 		copy.UsableNow = &usable
 	}
+	copy.Kinds = copyResetKinds(value.Kinds)
 	return &copy
+}
+
+func copyResetKinds(kinds []usage.ResetCreditKind) []usage.ResetCreditKind {
+	if kinds == nil {
+		return nil
+	}
+	copied := make([]usage.ResetCreditKind, len(kinds))
+	for index, kind := range kinds {
+		copied[index] = kind
+		copied[index].ExpiresAt = copyString(kind.ExpiresAt)
+		if kind.Refills != nil {
+			refills := make([]string, len(kind.Refills))
+			copy(refills, kind.Refills)
+			copied[index].Refills = refills
+		}
+	}
+	return copied
 }
 
 func copyBucket(bucket usage.UsageBucket) usage.UsageBucket {
