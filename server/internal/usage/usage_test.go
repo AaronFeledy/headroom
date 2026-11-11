@@ -90,6 +90,64 @@ func Test_UsageData_MarshalJSON_emits_optional_reset_credit_metadata(t *testing.
 	assertJSONField(t, encoded, "rate_limit_reset_credits", `null`)
 }
 
+func Test_UsageData_MarshalJSON_reset_credit_kinds_null_empty_and_populated(t *testing.T) {
+	// Given provider credits without kind classification.
+	data := usage.UsageData{ProviderName: "Codex", RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3}}
+	// When
+	encoded, err := json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nullKinds struct {
+		Credits *struct {
+			Kinds json.RawMessage `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &nullKinds); err != nil || nullKinds.Credits == nil || string(nullKinds.Credits.Kinds) != "null" {
+		t.Fatalf("kinds = %s, want null", nullKinds.Credits.Kinds)
+	}
+	// Given a classified provider with no available kind.
+	data.RateLimitResetCredits.Kinds = []usage.ResetCreditKind{}
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var emptyKinds struct {
+		Credits *struct {
+			Kinds json.RawMessage `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &emptyKinds); err != nil || emptyKinds.Credits == nil || string(emptyKinds.Credits.Kinds) != "[]" {
+		t.Fatalf("kinds = %s, want []", emptyKinds.Credits.Kinds)
+	}
+	// Given a populated kind.
+	expires := "2026-12-10T22:00:00Z"
+	data.ProviderName = "Claude"
+	data.RateLimitResetCredits.Kinds = []usage.ResetCreditKind{{
+		ID: "weekly", Label: "weekly reset", AvailableCount: 1, UsableNow: true,
+		Refills: []string{"weekly", "weekly_fable"}, GivesBackWeekly: false, ExpiresAt: &expires,
+	}}
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var populated struct {
+		Credits struct {
+			Kinds []usage.ResetCreditKind `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &populated); err != nil {
+		t.Fatal(err)
+	}
+	kind := populated.Credits.Kinds
+	if len(kind) != 1 || kind[0].ID != "weekly" || kind[0].Label != "weekly reset" || kind[0].AvailableCount != 1 ||
+		!kind[0].UsableNow || kind[0].GivesBackWeekly || kind[0].ExpiresAt == nil || *kind[0].ExpiresAt != expires ||
+		len(kind[0].Refills) != 2 || kind[0].Refills[0] != "weekly" || kind[0].Refills[1] != "weekly_fable" {
+		t.Fatalf("populated kind = %+v", kind)
+	}
+}
+
 func Test_RefreshResult_String_returns_stable_wire_text_for_all_variants(t *testing.T) {
 	tests := []struct {
 		name string
