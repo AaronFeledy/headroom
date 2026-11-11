@@ -81,7 +81,7 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `GET /api/v1/tls/proof?nonce=<64 hex>` - unauthenticated TLS identity proof; available only over HTTPS when a bearer token is configured.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 - `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 90% and an available banked reset. Browser-origin requests are rejected.
-- `POST /api/v1/providers/claude/reset` - explicitly confirmed banked reset for Claude. Uses the same three JSON fields and browser-origin rejection as the Codex route. New requests require fresh successful Claude usage, a positive available count, `usable_now: true`, and a matching account fingerprint.
+- `POST /api/v1/providers/claude/reset` - explicitly confirmed banked reset for Claude. Uses the same three JSON fields and browser-origin rejection as the Codex route, plus an optional `kind`. A kind identifies exactly which banked reset to redeem; without it, the request is refused with `409` when more than one kind has resets available. New requests require fresh successful Claude usage, a positive available count, `usable_now: true`, and a matching account fingerprint.
 
 ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
 allowance produces one `weekly` bucket; an absent five-hour window does not
@@ -130,10 +130,19 @@ Anthropic's banked-reset status, profile, and consumption endpoints are
 undocumented. One `GET /api/oauth/usage?cedar_ember=1` returns the ordinary
 windows and the reset-status block, so each ordinary poll makes one usage
 request. Successful usage may include the same `rate_limit_reset_credits`
-object, with `available_count`, nullable `account_fingerprint`, and boolean
-`usable_now`. Available counts sum unpaused grants with remaining resets.
-`usable_now` additionally requires eligibility, no active cooldown, and a usable
-next grant. Valid status with no available grants
+object, with `available_count`, nullable `account_fingerprint`, boolean
+`usable_now`, and `kinds`. Available counts sum unpaused grants with remaining
+resets. `usable_now` additionally requires eligibility, no active cooldown, and a
+usable next grant. Claude always reports `kinds` as an array (empty when nothing
+is available); Codex reports `kinds: null`. Each entry contains `id`, `label`,
+`available_count`, `usable_now`, `refills`, `gives_back_weekly`, and nullable
+`expires_at`, ordered `session`, `weekly`, `fable`, `full`, and lists only kinds
+with resets available. Grant kinds mirror Anthropic's client: a grant whose
+`gives_back_weekly` is true is `fable`; otherwise its reported `type`; otherwise an
+empty type is derived from `clears` (`five_hour` only is `session`, no
+`five_hour` is `weekly`, anything else is `full`). `refills` is the union of
+mapped `clears` in the order `session`, `weekly`, `weekly_opus`, `weekly_sonnet`,
+`weekly_fable`; other keys are ignored. Valid status with no available grants
 reports zero available resets and `usable_now: false`, retaining the verified
 account fingerprint so the desktop can reconcile a pending receipt. Absent or
 malformed status and provider usage errors report null metadata. A malformed,
@@ -154,11 +163,20 @@ account binding after a server restart without reusing another token's identity.
 
 The Claude reset route applies the same JSON size/shape, confirmation, UUID,
 fingerprint, browser-header, authentication, shared in-flight lock, and deadline
-guards as Codex. Ineligible new requests return `409` with
+guards as Codex, and accepts an optional `kind` (`^[a-z0-9_]{1,32}$`); any other
+extra key is rejected. With `kind`, the request redeems exactly that kind, which
+must be listed with `available_count > 0` and `usable_now: true`. Without
+`kind`, at most one kind may have resets available; otherwise the route returns
+`409` with
+`This account has more than one kind of banked reset. Update Headroom to choose which one to use.`
+Ineligible new requests return `409` with
 `fresh eligible Claude usage is required`. Immediately before submission, the
 provider checks fresh credentials, the token-bound profile identity, and a fresh
-status GET. Claude outcomes are `reset`, `already_redeemed`, `nothing_to_reset`,
-or `unavailable`; Codex retains its existing outcomes including `no_credit`.
+status GET, then selects a counted, usable grant of the requested kind whose time
+window is open (upstream `next_grant_id` when it is a candidate, otherwise the
+first candidate). Claude outcomes are `reset`, `already_redeemed`,
+`nothing_to_reset`, or `unavailable`; Codex retains its existing outcomes
+including `no_credit`.
 Successful outcomes return `200`; uncertain or unavailable submissions return
 `502` without retry. Invalid JSON/confirmation/identity fields return `400`,
 browser headers `403`, and non-JSON content `415`, as on the Codex route.
