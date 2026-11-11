@@ -13,8 +13,9 @@ import (
 )
 
 func Test_BankedMetadata_incomplete_grants_keep_pending_gate(t *testing.T) {
-	// Seed an unresolved request directly. Only a local status GET runs; no
-	// consumer, reset route, reset transport, or real credentials are involved.
+	// Seed an unresolved request directly. Only the parsed response status is
+	// attached; no consumer, reset route, reset transport, or real credentials
+	// are involved.
 	valid := `{"id":"a","resets_total":1,"resets_left":1,"paused":false,"usable_now":true}`
 	cases := []struct{ name, next, grants string }{
 		{"malformed selected grant", `"next_grant_id":"b",`, valid + `,{"id":"b","resets_total":2,"resets_left":2,"paused":false,"usable_now":"true"}`},
@@ -27,21 +28,13 @@ func Test_BankedMetadata_incomplete_grants_keep_pending_gate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/usage" || r.URL.RawQuery != "cedar_ember=1&skip_spend=1" {
-					t.Error("only the read-only status GET is permitted")
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
-				writeResponse(t, w, fmt.Sprintf(`{"cedar_ember":{"eligible":true,%s"grants":[%s]}}`, tc.next, tc.grants))
-			}))
-			defer server.Close()
-			c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
+			body := fmt.Sprintf(`{"cedar_ember":{"eligible":true,%s"grants":[%s]}}`, tc.next, tc.grants)
+			c := New(Options{})
 			accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 			c.bank = bankCache{token: "fixture", accountID: accountID}
 			seedPendingJournal(t, c, accountID, 3)
 			data := usage.UsageData{}
-			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, parseBankStatus([]byte(body)))
 			if c.bank.status != nil || data.RateLimitResetCredits != nil {
 				t.Fatal("incomplete grants must remain unknown, not imply depletion or refusal")
 			}
@@ -63,24 +56,16 @@ func Test_BankedMetadata_zero_credits_preserve_verified_binding(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/cached=%t", tc.name, cached), func(t *testing.T) {
 				var profileCalls atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.Method != http.MethodGet {
-						t.Error("only read-only GETs are permitted")
+					if r.Method != http.MethodGet || r.URL.Path != "/api/oauth/profile" || r.URL.RawQuery != "" {
+						t.Error("only the read-only profile GET is permitted")
 						w.WriteHeader(http.StatusMethodNotAllowed)
 						return
 					}
-					switch {
-					case r.URL.Path == "/usage" && r.URL.RawQuery == "cedar_ember=1&skip_spend=1":
-						writeResponse(t, w, tc.body)
-					case r.URL.Path == "/api/oauth/profile" && r.URL.RawQuery == "":
-						profileCalls.Add(1)
-						writeResponse(t, w, `{"account":{"uuid":"22222222-2222-2222-2222-222222222222"},"organization":{"uuid":"11111111-1111-1111-1111-111111111111"}}`)
-					default:
-						t.Error("unexpected read path")
-						w.WriteHeader(http.StatusNotFound)
-					}
+					profileCalls.Add(1)
+					writeResponse(t, w, `{"account":{"uuid":"22222222-2222-2222-2222-222222222222"},"organization":{"uuid":"11111111-1111-1111-1111-111111111111"}}`)
 				}))
 				defer server.Close()
-				c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
+				c := New(Options{APIBaseURL: server.URL, HTTPClient: server.Client()})
 				accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 				c.bank = bankCache{token: "fixture"}
 				if cached {
@@ -88,7 +73,7 @@ func Test_BankedMetadata_zero_credits_preserve_verified_binding(t *testing.T) {
 				}
 				seedPendingJournal(t, c, accountID, 1)
 				data := usage.UsageData{}
-				c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+				c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, parseBankStatus([]byte(tc.body)))
 				credits := data.RateLimitResetCredits
 				if credits == nil || credits.AvailableCount != 0 || credits.UsableNow == nil || *credits.UsableNow {
 					t.Fatal("valid empty status must expose authoritative zero and refusal")
@@ -124,29 +109,21 @@ func Test_BankedMetadata_zero_credits_preserve_verified_binding(t *testing.T) {
 func Test_BankedMetadata_zero_credits_do_not_reuse_previous_token_binding(t *testing.T) {
 	var profileCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Error("only read-only GETs are permitted")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/oauth/profile" || r.URL.RawQuery != "" {
+			t.Error("only the read-only profile GET is permitted")
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		switch {
-		case r.URL.Path == "/usage" && r.URL.RawQuery == "cedar_ember=1&skip_spend=1":
-			writeResponse(t, w, `{"cedar_ember":{"eligible":true,"grants":[]}}`)
-		case r.URL.Path == "/api/oauth/profile" && r.URL.RawQuery == "":
-			profileCalls.Add(1)
-			w.WriteHeader(http.StatusServiceUnavailable)
-		default:
-			t.Error("unexpected read path")
-			w.WriteHeader(http.StatusNotFound)
-		}
+		profileCalls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
+	c := New(Options{APIBaseURL: server.URL, HTTPClient: server.Client()})
 	accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 	c.bank = bankCache{token: "previous-token", accountID: accountID}
 	seedPendingJournal(t, c, accountID, 1)
 	data := usage.UsageData{}
-	c.attachResetCredits(context.Background(), &credentials{accessToken: "new-token"}, &data)
+	c.attachResetCredits(context.Background(), &credentials{accessToken: "new-token"}, &data, parseBankStatus([]byte(`{"cedar_ember":{"eligible":true,"grants":[]}}`)))
 	if profileCalls.Load() != 1 || data.RateLimitResetCredits == nil || data.RateLimitResetCredits.AccountFingerprint != nil || data.ProviderAccountID != "" {
 		t.Fatal("failed profile lookup reused another token's zero-credit binding")
 	}

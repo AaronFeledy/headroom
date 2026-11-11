@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -56,33 +55,6 @@ func (e statusError) message() string {
 		return "Rate limited. Will retry."
 	}
 	return fmt.Sprintf("API error (%d): %s", e.statusCode, e.body)
-}
-
-func (c *Client) fetchUsage(ctx context.Context, creds *credentials) (usage.UsageData, *statusError, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.usageURL, nil)
-	if err != nil {
-		return usage.UsageData{}, nil, fmt.Errorf("build usage request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+creds.accessToken)
-	req.Header.Set("anthropic-beta", betaHeader)
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return usage.UsageData{}, nil, usage.TransportFailure(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return usage.UsageData{}, &statusError{statusCode: resp.StatusCode, body: string(body), failure: usage.HTTPFailure(resp)}, nil
-	}
-	if err != nil {
-		return usage.UsageData{}, nil, usage.TransportFailure(err)
-	}
-	parsed, err := parseUsageResponse(body, creds.subscriptionType)
-	if err != nil {
-		return usage.UsageData{}, nil, err
-	}
-	return parsed, nil, nil
 }
 
 func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, error) {

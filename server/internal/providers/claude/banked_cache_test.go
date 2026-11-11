@@ -12,39 +12,40 @@ import (
 )
 
 func Test_BankedMetadata_refresh_cadence(t *testing.T) {
-	// Given
+	// The ordinary path never issues its own status GET: the usage response
+	// carries it, and last-good metadata simply expires after fifteen minutes.
 	cases := []struct {
 		name        string
-		age         time.Duration
+		goodAtAge   time.Duration
 		utilization float64
-		wantCalls   int32
+		wantCredits bool
 	}{
-		{"ordinary cached", 4 * time.Minute, 50, 0},
-		{"ordinary expired", 6 * time.Minute, 50, 1},
-		{"near limit cached", 30 * time.Second, 95, 0},
-		{"near limit expired", 61 * time.Second, 95, 1},
+		{"ordinary cached", 4 * time.Minute, 50, true},
+		{"ordinary expired", 16 * time.Minute, 50, false},
+		{"near limit cached", 30 * time.Second, 95, true},
+		{"near limit old response", 61 * time.Second, 95, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.RawQuery != "cedar_ember=1&skip_spend=1" {
-					t.Error("unexpected status request")
-					w.WriteHeader(400)
-					return
-				}
 				calls.Add(1)
-				writeResponse(t, w, `{"cedar_ember":{"eligible":true,"grants":[]}}`)
+				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			defer server.Close()
 			c := New(Options{UsageURL: server.URL, APIBaseURL: server.URL, HTTPClient: server.Client()})
-			c.bank = bankCache{token: "fixture", accountID: "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222", attemptedAt: time.Now().Add(-tc.age), goodAt: time.Now(), status: &bankStatus{eligible: true}}
+			total, left := int64(2), int64(2)
+			paused, usable := false, true
+			c.bank = bankCache{token: "fixture", accountID: "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222", goodAt: time.Now().Add(-tc.goodAtAge), status: &bankStatus{eligible: true, nextGrantID: "a", grants: []bankGrant{{ID: "a", ResetsTotal: &total, ResetsLeft: &left, Paused: &paused, UsableNow: &usable}}}}
 			data := usage.UsageData{Buckets: []usage.Bucket{{ID: usage.BucketWeekly, Utilization: tc.utilization}}}
 			// When
-			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, nil)
 			// Then
-			if calls.Load() != tc.wantCalls {
-				t.Fatalf("status GETs = %d, want %d", calls.Load(), tc.wantCalls)
+			if calls.Load() != 0 {
+				t.Fatalf("auxiliary GETs = %d, want 0", calls.Load())
+			}
+			if (data.RateLimitResetCredits != nil) != tc.wantCredits {
+				t.Fatalf("credits visible = %t, want %t", data.RateLimitResetCredits != nil, tc.wantCredits)
 			}
 		})
 	}
@@ -62,22 +63,13 @@ func Test_BankedMetadata_only_valid_ineligible_status_releases_pending_gate(t *t
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/usage" || r.URL.RawQuery != "cedar_ember=1&skip_spend=1" {
-					t.Error("only the read-only status GET is permitted")
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
-				writeResponse(t, w, tc.body)
-			}))
-			defer server.Close()
-			c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
+			c := New(Options{})
 			accountID := "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
 			c.bank = bankCache{token: "fixture", accountID: accountID}
 			seedPendingJournal(t, c, accountID, 2)
 			data := usage.UsageData{}
 			// When
-			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, parseBankStatus([]byte(tc.body)))
 			// Then
 			credits := data.RateLimitResetCredits
 			if tc.blocked {
@@ -98,37 +90,34 @@ func Test_BankedMetadata_profile_failure_clears_binding_on_token_change(t *testi
 	// Given
 	var profileCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Error("only GET permitted")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/oauth/profile" {
+			t.Error("only the profile GET is permitted")
 			w.WriteHeader(405)
 			return
 		}
-		if r.URL.Path == "/api/oauth/profile" {
-			profileCalls.Add(1)
-			w.WriteHeader(503)
-			return
-		}
-		writeResponse(t, w, `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":2,"resets_left":2,"paused":false,"usable_now":true}]}}`)
+		profileCalls.Add(1)
+		w.WriteHeader(503)
 	}))
 	defer server.Close()
-	c := New(Options{UsageURL: server.URL, APIBaseURL: server.URL, HTTPClient: server.Client()})
+	c := New(Options{APIBaseURL: server.URL, HTTPClient: server.Client()})
 	c.bank = bankCache{token: "previous-token", accountID: "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"}
+	status := parseBankStatus([]byte(`{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":2,"resets_left":2,"paused":false,"usable_now":true}]}}`))
 	data := usage.UsageData{}
 	// When
-	c.attachResetCredits(context.Background(), &credentials{accessToken: "new-token"}, &data)
+	c.attachResetCredits(context.Background(), &credentials{accessToken: "new-token"}, &data, status)
 	// Then
 	if profileCalls.Load() != 1 || data.RateLimitResetCredits == nil || data.RateLimitResetCredits.AvailableCount != 2 || data.RateLimitResetCredits.AccountFingerprint != nil || data.ProviderAccountID != "" {
 		t.Fatal("profile failure reused a previous token's account binding or lost the count")
 	}
 }
 
-func Test_BankedMetadata_skips_status_when_plain_usage_fails(t *testing.T) {
+func Test_BankedMetadata_failed_usage_makes_one_parameterized_request(t *testing.T) {
 	// Given
 	path := writeClaudeCredentials(t, credentialFixture{Access: "fixture", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t)})
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.RawQuery != "" {
-			t.Error("unexpected auxiliary read after failed main usage")
+		if r.Method != http.MethodGet || r.URL.RawQuery != "cedar_ember=1" {
+			t.Errorf("unexpected auxiliary read after failed main usage: %s", r.URL.RawQuery)
 		}
 		calls.Add(1)
 		w.WriteHeader(429)

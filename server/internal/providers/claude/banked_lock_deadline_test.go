@@ -33,7 +33,7 @@ func Test_BankedMetadata_deadline_omits_evidence_behind_local_mutexes(t *testing
 			defer cancel()
 			done := make(chan struct{})
 			go func() {
-				c.attachResetCredits(ctx, &credentials{accessToken: "fixture"}, &data)
+				c.attachResetCredits(ctx, &credentials{accessToken: "fixture"}, &data, nil)
 				close(done)
 			}()
 			select {
@@ -78,7 +78,7 @@ func Test_BankedMetadata_deadline_omits_evidence_behind_journal_lock(t *testing.
 	data := usage.UsageData{}
 	done := make(chan struct{})
 	go func() {
-		c.attachResetCredits(ctx, &credentials{accessToken: "fixture"}, &data)
+		c.attachResetCredits(ctx, &credentials{accessToken: "fixture"}, &data, nil)
 		close(done)
 	}()
 	select {

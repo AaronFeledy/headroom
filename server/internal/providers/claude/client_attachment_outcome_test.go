@@ -34,8 +34,8 @@ type usageOnlyTransport struct {
 }
 
 func (t *usageOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Method != http.MethodGet || req.URL.Path != "/usage" || req.URL.RawQuery != "" {
-		return nil, fmt.Errorf("only the plain read-only usage GET is allowed: %s %s", req.Method, req.URL)
+	if req.Method != http.MethodGet || req.URL.Path != "/usage" || req.URL.RawQuery != "cedar_ember=1" {
+		return nil, fmt.Errorf("only the parameterized read-only usage GET is allowed: %s %s", req.Method, req.URL)
 	}
 	call := t.calls.Add(1)
 	utilization := 96
@@ -46,7 +46,7 @@ func (t *usageOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error
 	} else if call == 4 {
 		utilization = 97
 	}
-	body := fmt.Sprintf(`{"five_hour":{"utilization":%d},"seven_day":{"utilization":95}}`, utilization)
+	body := fmt.Sprintf(`{"five_hour":{"utilization":%d},"seven_day":{"utilization":95},"cedar_ember":{"eligible":true,"next_grant_id":"fixture","grants":[{"id":"fixture","resets_total":2,"resets_left":2,"paused":false,"usable_now":true}]}}`, utilization)
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: &closeSignalBody{
 		Reader: strings.NewReader(body), onClose: func() { t.closed <- call },
 	}, Request: req}, nil
@@ -66,7 +66,7 @@ func (p *recordingClaudeProvider) Fetch(ctx context.Context) (usage.UsageData, e
 }
 
 func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t *testing.T) {
-	// The transport permits only a plain usage GET. Bank metadata and the
+	// The transport permits only the parameterized usage GET. Bank metadata and the
 	// journal are seeded; no consumer, arming, preparation, or reset route runs.
 	transport := &usageOnlyTransport{closed: make(chan int32, 4)}
 	credentialsPath := writeClaudeCredentials(t, credentialFixture{Access: "fixture", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t)})
@@ -112,11 +112,11 @@ func Test_BankedMetadata_attachment_context_failure_preserves_poller_last_good(t
 		case got := <-transport.closed:
 			if got != wantGET {
 				release()
-				t.Fatalf("plain usage GET = %d, want %d", got, wantGET)
+				t.Fatalf("usage GET = %d, want %d", got, wantGET)
 			}
 		case <-time.After(3 * time.Second):
 			release()
-			t.Fatal("plain usage GET did not finish")
+			t.Fatal("usage GET did not finish")
 		}
 		if afterGET != nil {
 			afterGET()

@@ -31,6 +31,12 @@ const (
 	defaultTimeout    = 15 * time.Second
 	expirySkew        = 60 * time.Second
 	reauthCommandText = "claude auth login"
+
+	// Claude accepts roughly one usage request per two minutes per token.
+	// These bounds keep ordinary polling inside that budget.
+	minPollInterval      = 3 * time.Minute
+	rateLimitMinCooldown = 5 * time.Minute
+	paramRejectionTTL    = 30 * time.Minute
 )
 
 type Options struct {
@@ -69,6 +75,9 @@ type Client struct {
 	resetMu            sync.Mutex
 	resetStateDir      string
 	resetJournalFailed atomic.Bool
+	emberMu            sync.Mutex
+	emberToken         string
+	emberUntil         time.Time
 }
 
 func New(opts Options) *Client {
@@ -135,6 +144,9 @@ func (c *Client) Name() string { return c.name }
 
 func (c *Client) ProviderType() string { return providerName }
 
+// MinPollInterval keeps Claude usage requests at least three minutes apart.
+func (c *Client) MinPollInterval() time.Duration { return minPollInterval }
+
 func (c *Client) Account() *usage.Account { return c.account.Clone() }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
@@ -192,7 +204,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		creds = ready
 		epoch = usage.CredentialEpoch(c.name, creds.path, fmt.Sprint(creds.source), creds.accessToken)
-		data, statusErr, err := c.fetchUsage(ctx, creds)
+		data, bank, statusErr, err := c.fetchUsage(ctx, creds)
 		if err != nil {
 			var typed *usage.FetchFailure
 			if errors.As(err, &typed) {
@@ -202,7 +214,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		if statusErr == nil {
 			authExpired = false
-			c.attachResetCredits(ctx, creds, &data)
+			c.attachResetCredits(ctx, creds, &data, bank)
 			failure = data.FetchFailure
 			// A canceled bank attachment has no trustworthy reset binding.
 			// Let the poller retain last-good display data as a failed fetch so
