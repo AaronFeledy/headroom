@@ -72,11 +72,6 @@ func parseBankStatus(body []byte) *bankStatus {
 			return nil
 		}
 		seen[grant.ID] = true
-		switch grant.Type {
-		case "", "session", "weekly", "full":
-		default:
-			return nil
-		}
 		if status.nextGrantID == "" && !*grant.Paused && *grant.ResetsLeft > 0 && *grant.UsableNow {
 			return nil
 		}

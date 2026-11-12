@@ -22,7 +22,7 @@ func Test_BankedMetadata_incomplete_grants_keep_pending_gate(t *testing.T) {
 		{"malformed other grant", `"next_grant_id":"a",`, valid + `,{"id":"b","resets_total":2,"resets_left":2,"paused":false,"usable_now":false,"label":42}`},
 		{"duplicate grant", `"next_grant_id":"a",`, valid + `,` + valid},
 		{"null grant", `"next_grant_id":"a",`, valid + `,null`},
-		{"unsupported grant type", `"next_grant_id":"a",`, valid + `,{"id":"b","resets_total":2,"resets_left":2,"paused":false,"usable_now":false,"type":"unknown"}`},
+		{"non-string grant type", `"next_grant_id":"a",`, valid + `,{"id":"b","resets_total":2,"resets_left":2,"paused":false,"usable_now":false,"type":42}`},
 		{"unknown selected grant", `"next_grant_id":"missing",`, valid},
 		{"missing selected grant", "", valid},
 	}

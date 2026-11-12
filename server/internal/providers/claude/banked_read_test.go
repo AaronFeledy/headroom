@@ -11,7 +11,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-const fixtureUsageWithStatus = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10},"cedar_ember":{"eligible":true,"next_grant_id":"fixture","grants":[{"id":"fixture","resets_total":4,"resets_left":3,"paused":false,"usable_now":true}]}}`
+const fixtureUsageWithStatus = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10},"cedar_ember":{"eligible":true,"next_grant_id":"fixture","grants":[{"id":"fixture","resets_total":4,"resets_left":3,"paused":false,"usable_now":true,"type":"weekly"}]}}`
 
 const fixtureUsageOnly = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10}}`
 

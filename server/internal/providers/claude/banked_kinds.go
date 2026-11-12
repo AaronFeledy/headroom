@@ -34,28 +34,57 @@ var resetRefillByClear = map[string]string{
 	"seven_day_overage_included": "weekly_fable",
 }
 
+// knownLimitKeys are the clears values Anthropic's client derives a kind from.
+var knownLimitKeys = map[string]bool{
+	"five_hour":                  true,
+	"seven_day":                  true,
+	"seven_day_overage_included": true,
+	"seven_day_opus":             true,
+	"seven_day_sonnet":           true,
+	"seven_day_cowork":           true,
+	"seven_day_omelette":         true,
+	"seven_day_oauth_apps":       true,
+}
+
 var errResetKindAmbiguous = errors.New("multiple reset kinds available")
 var errResetKindUnavailable = errors.New("reset kind unavailable")
 
-// kind classifies one grant. An unknown non-empty type never reaches here;
-// parseBankStatus rejects it so the whole reading stays unknown.
+// recognized reports whether Anthropic's client can map this grant to a kind.
+// Unknown types are tolerated and treated as absent so a new upstream type does
+// not erase every banked-reset count.
+func (g bankGrant) recognized() bool {
+	switch g.Type {
+	case "", resetKindSession, resetKindWeekly, resetKindFull:
+		return true
+	default:
+		return false
+	}
+}
+
+// kind classifies one grant exactly like Anthropic's client: an explicit type
+// when recognized, otherwise the limit keys it clears.
 func (g bankGrant) kind() string {
 	if g.GivesBackWeekly {
 		return resetKindFable
 	}
-	if g.Type != "" {
+	if g.recognized() && g.Type != "" {
 		return g.Type
 	}
 	hasFiveHour := false
+	hasOther := false
 	for _, clear := range g.Clears {
 		if clear == "five_hour" {
 			hasFiveHour = true
+			continue
+		}
+		if knownLimitKeys[clear] {
+			hasOther = true
 		}
 	}
 	switch {
-	case hasFiveHour && len(g.Clears) == 1:
+	case hasFiveHour && !hasOther:
 		return resetKindSession
-	case !hasFiveHour:
+	case hasOther && !hasFiveHour:
 		return resetKindWeekly
 	default:
 		return resetKindFull
@@ -119,7 +148,7 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 			continue
 		}
 		available += *grant.ResetsLeft
-		if grant.ID == s.nextGrantID && *grant.UsableNow {
+		if grant.recognized() && grant.ID == s.nextGrantID && *grant.UsableNow {
 			usable = true
 		}
 		kind := grant.kind()
@@ -129,7 +158,7 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 			accumulated[kind] = accumulator
 		}
 		accumulator.available += *grant.ResetsLeft
-		if *grant.UsableNow {
+		if grant.recognized() && *grant.UsableNow {
 			accumulator.usable = true
 		}
 		if grant.EndsAt != nil {
@@ -166,7 +195,7 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 				refills = append(refills, refill)
 			}
 		}
-		kinds = append(kinds, usage.ResetCreditKind{
+		entry := usage.ResetCreditKind{
 			ID:              id,
 			Label:           resetKindLabels[id],
 			AvailableCount:  accumulator.available,
@@ -174,15 +203,16 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 			Refills:         refills,
 			GivesBackWeekly: id == resetKindFable,
 			ExpiresAt:       expires,
-		})
+		}
+		kinds = append(kinds, entry)
 	}
 	return &usage.RateLimitResetCredits{AvailableCount: available, UsableNow: &usable, Kinds: kinds}
 }
 
 // selectResetGrant is the pure pre-submission choice over a parsed status.
-// Kind-aware redemption requires an open, counted, usable grant of that kind.
-// Legacy redemption keeps next_grant_id, but only when at most one kind has
-// resets available.
+// Kind-aware redemption requires an open, counted, usable, recognized grant of
+// that kind. Legacy redemption keeps next_grant_id, but only when at most one
+// kind has resets available; an unrecognized next grant is always a refusal.
 func selectResetGrant(status *bankStatus, kind string, now time.Time) (*bankGrant, error) {
 	if status == nil {
 		return nil, errResetUnavailable
@@ -198,16 +228,21 @@ func selectResetGrant(status *bankStatus, kind string, now time.Time) (*bankGran
 			return nil, errResetKindAmbiguous
 		}
 		for index := range status.grants {
-			if status.grants[index].ID == status.nextGrantID {
-				return &status.grants[index], nil
+			grant := &status.grants[index]
+			if grant.ID != status.nextGrantID {
+				continue
 			}
+			if !grant.recognized() {
+				return nil, errResetUnavailable
+			}
+			return grant, nil
 		}
 		return nil, errResetUnavailable
 	}
 	var candidates []*bankGrant
 	for index := range status.grants {
 		grant := &status.grants[index]
-		if grant.kind() != kind || !grant.counted() || !*grant.UsableNow || !grant.windowOpen(now) {
+		if !grant.recognized() || grant.kind() != kind || !grant.counted() || !*grant.UsableNow || !grant.windowOpen(now) {
 			continue
 		}
 		candidates = append(candidates, grant)

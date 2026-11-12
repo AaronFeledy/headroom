@@ -52,9 +52,14 @@ func Test_BankedStatus_classifies_grant_kind(t *testing.T) {
 		{"explicit full", false, "full", nil, resetKindFull},
 		{"five hour only", false, "", []string{"five_hour"}, resetKindSession},
 		{"no five hour", false, "", []string{"seven_day"}, resetKindWeekly},
-		{"empty clears", false, "", nil, resetKindWeekly},
+		{"empty clears", false, "", nil, resetKindFull},
 		{"five hour plus other", false, "", []string{"five_hour", "seven_day"}, resetKindFull},
 		{"fable limit clear", false, "", []string{"seven_day_overage_included"}, resetKindWeekly},
+		{"unknown type with five hour", false, "mystery", []string{"five_hour"}, resetKindSession},
+		{"unknown type with weekly clear", false, "mystery", []string{"seven_day_oauth_apps"}, resetKindWeekly},
+		{"unknown type with unknown clear", false, "mystery", []string{"mystery_limit"}, resetKindFull},
+		{"unknown type with mixed clears", false, "mystery", []string{"five_hour", "seven_day"}, resetKindFull},
+		{"gives back weekly beats unknown type", true, "mystery", []string{"five_hour"}, resetKindFable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,5 +147,77 @@ func Test_BankedStatus_selects_grant_by_kind_and_time(t *testing.T) {
 				t.Fatalf("grant = %+v, want %s", grant, tc.grantID)
 			}
 		})
+	}
+}
+
+func Test_BankedStatus_unknown_type_keeps_counts_and_derives_kind(t *testing.T) {
+	// Given
+	body := `{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":1,"resets_left":2,"paused":false,"usable_now":true,"type":"future","clears":["seven_day"]}]}}`
+	// When
+	status := parseBankStatus([]byte(body))
+	// Then
+	if status == nil {
+		t.Fatal("unknown grant type must not make the reading unknown")
+	}
+	credits := status.credits(time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC))
+	if credits == nil || credits.AvailableCount != 2 {
+		t.Fatalf("credits = %+v, want count 2", credits)
+	}
+	if len(credits.Kinds) != 1 || credits.Kinds[0].ID != resetKindWeekly || credits.Kinds[0].AvailableCount != 2 || credits.Kinds[0].UsableNow {
+		t.Fatalf("kinds = %+v, want counted weekly that is not usable", credits.Kinds)
+	}
+}
+
+func Test_BankedStatus_unrecognized_grant_counts_toward_totals(t *testing.T) {
+	// Given
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	body := `{"cedar_ember":{"eligible":true,"next_grant_id":"known","grants":[` +
+		`{"id":"known","resets_total":1,"resets_left":1,"paused":false,"usable_now":true,"type":"weekly"},` +
+		`{"id":"future","resets_total":2,"resets_left":2,"paused":false,"usable_now":true,"type":"future","clears":["five_hour"]}]}}`
+	status := parseBankStatus([]byte(body))
+	if status == nil {
+		t.Fatal("unrecognized grant must not make the reading unknown")
+	}
+	// When
+	credits := status.credits(now)
+	// Then
+	if credits == nil || credits.AvailableCount != 3 {
+		t.Fatalf("credits = %+v, want top-level count 3", credits)
+	}
+	var sum, sessionCount, weeklyCount int64
+	var sessionUsable, weeklyUsable bool
+	for _, kind := range credits.Kinds {
+		sum += kind.AvailableCount
+		switch kind.ID {
+		case resetKindSession:
+			sessionCount, sessionUsable = kind.AvailableCount, kind.UsableNow
+		case resetKindWeekly:
+			weeklyCount, weeklyUsable = kind.AvailableCount, kind.UsableNow
+		}
+	}
+	if sum != credits.AvailableCount {
+		t.Fatalf("kind sum = %d, top-level = %d", sum, credits.AvailableCount)
+	}
+	if sessionCount != 2 || sessionUsable {
+		t.Fatalf("unrecognized kind = count %d usable %t, want counted and unusable", sessionCount, sessionUsable)
+	}
+	if weeklyCount != 1 || !weeklyUsable {
+		t.Fatalf("recognized kind = count %d usable %t, want counted and usable", weeklyCount, weeklyUsable)
+	}
+}
+
+func Test_BankedStatus_unrecognized_grant_is_never_selected(t *testing.T) {
+	// Given
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	unrecognized := testGrant("future", "", 1, true)
+	unrecognized.Type = "future"
+	unrecognized.Clears = []string{"five_hour"}
+	status := &bankStatus{eligible: true, nextGrantID: "future", grants: []bankGrant{unrecognized}}
+	// When / Then
+	if grant, err := selectResetGrant(status, resetKindSession, now); !errors.Is(err, errResetKindUnavailable) || grant != nil {
+		t.Fatalf("kind selection = %+v, %v, want refusal", grant, err)
+	}
+	if grant, err := selectResetGrant(status, "", now); !errors.Is(err, errResetUnavailable) || grant != nil {
+		t.Fatalf("legacy selection = %+v, %v, want refusal", grant, err)
 	}
 }
