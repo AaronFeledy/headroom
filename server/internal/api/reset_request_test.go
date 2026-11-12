@@ -23,6 +23,9 @@ func Test_decodeResetRequest_accepts_optional_kind_only_when_allowed(t *testing.
 	if err != nil || request.Kind != "fable" || request.RequestID != resetFixtureID || !request.Confirmed {
 		t.Fatalf("claude kind decode = %+v, %v", request, err)
 	}
+	if request.AccountFingerprint != resetFixtureFingerprint {
+		t.Fatalf("account fingerprint = %q, want %q", request.AccountFingerprint, resetFixtureFingerprint)
+	}
 	request, err = decodeResetFixture(t, `{`+base+`}`, true)
 	if err != nil || request.Kind != "" {
 		t.Fatalf("claude legacy decode = %+v, %v", request, err)
