@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
@@ -166,6 +167,17 @@ bool Controller::resetReadingFresh(const QString &provider) const {
         && (provider != "Claude" || fetchedAt.isValid());
 }
 
+QVariantMap Controller::resetAutomation(const QString &provider) const {
+    if (provider != "Codex" && provider != "Claude") return {};
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        if (row.value("provider_name").toString() != provider) continue;
+        const auto state = row.value("reset_automation");
+        return state.isValid() && !state.isNull() ? state.toMap() : QVariantMap{};
+    }
+    return {};
+}
+
 ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     // Facts only: the pure policy decides what they permit. Unknown values
     // stay unknown rather than defaulting to a permissive reading.
@@ -180,6 +192,13 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
             if (facts.readingAvailable) appendResetBuckets(current.value("buckets").toList(), facts);
             break;
         }
+    }
+    const auto automation = resetAutomation(provider);
+    facts.automationSupported = !automation.isEmpty();
+    if (facts.automationSupported) {
+        facts.automationArmed = automation.value("armed").toBool();
+        facts.automationKinds = automation.value("kinds").toStringList();
+        facts.automationWindowEndsAt = automation.value("window_ends_at").toString();
     }
     facts.fresh = resetReadingFresh(provider);
     if (reading.contains("available_count")) facts.availableCount = reading.value("available_count").toLongLong();
@@ -202,22 +221,18 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     facts.owner = provider == m_resetProvider;
     facts.confirmed = !m_resetConfirmation.isEmpty();
     facts.confirmationCurrent = facts.confirmed && m_resetConfirmation == resetConnectionIdentity();
-    facts.armed = !m_autoResetConnection.isEmpty();
-    facts.armIdentityCurrent = facts.armed && m_autoResetConnection == resetConnectionIdentity();
-    facts.armWindowCurrent = facts.armed && window == m_autoResetWindow;
-    facts.armWindow = windowState(m_autoResetWindow);
-    // The dialog choice is session-only. An armed kind is the effective choice
-    // when the dialog is closed. A sole listed kind is preselected only when
-    // nothing was chosen: a choice that has left the reading stays unselected
-    // and is never replaced by a different kind.
-    QString selection = m_resetKind;
-    if (selection.isEmpty() && facts.armed) selection = m_autoResetKind;
-    if (selection.isEmpty()) {
+    // The dialog choice is session-only. With several kinds an empty choice
+    // means "Any matching reset"; a sole listed kind is preselected. A choice
+    // that has left the reading stays unselected and is never replaced.
+    const QString selection = m_resetKind;
+    if (selection.isEmpty() && facts.automationArmed && facts.automationKinds.size() == 1) {
+        if (const auto chosen = ResetPolicy::findKind(facts, facts.automationKinds.first()))
+            facts.selectedKind = chosen->id;
+    } else if (selection.isEmpty()) {
         if (facts.kinds.size() == 1) facts.selectedKind = facts.kinds.first().id;
     } else if (const auto chosen = ResetPolicy::findKind(facts, selection)) {
         facts.selectedKind = chosen->id;
     }
-    if (facts.armed && !m_autoResetKind.isEmpty()) facts.armKind = m_autoResetKind;
     return facts;
 }
 
@@ -277,7 +292,8 @@ QVariantMap Controller::resetState(const QString &provider) const {
 QVariantMap Controller::resetAction() const {
     const auto facts = resetFacts(m_resetProvider);
     const auto capabilities = ResetPolicy::evaluate(facts);
-    const bool armed = !m_autoResetConnection.isEmpty();
+    using ResetPolicy::Phase;
+    const bool armed = capabilities.phase == Phase::Armed || capabilities.phase == Phase::Paused;
     QVariantList kinds;
     for (const auto &kind : facts.kinds) {
         kinds.append(QVariantMap{{"id", kind.id}, {"label", kind.label},
@@ -286,10 +302,17 @@ QVariantMap Controller::resetAction() const {
             {"givesBackWeekly", kind.givesBackWeekly}, {"expiresAt", kind.expiresAt},
             {"countText", ResetPolicy::kindCountText(kind)}, {"title", ResetPolicy::kindTitle(kind)},
             {"refillText", ResetPolicy::kindRefillText(facts, kind)},
-            {"triggerText", ResetPolicy::kindTriggerText(facts, kind)},
+            {"triggerText", ResetPolicy::kindApplicabilityText(facts, kind)},
             {"returnText", ResetPolicy::kindReturnText(facts, kind)},
             {"nextText", ResetPolicy::kindNextText(kind, Usage::resetTimeLabel(kind.nextExpiresAt))}});
     }
+    QVariantList allowed;
+    for (const auto &id : facts.automationKinds) {
+        const auto *kind = ResetPolicy::findKind(facts, id);
+        allowed.append(kind ? kind->label : id);
+    }
+    const auto automation = resetAutomation(m_resetProvider);
+    const auto lastEvent = automation.value("last_event").toMap();
     const auto selected = ResetPolicy::findKind(facts, facts.selectedKind);
     return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", armed},
         {"availableCount", facts.availableCount ? QVariant::fromValue(*facts.availableCount) : QVariant()},
@@ -304,9 +327,13 @@ QVariantMap Controller::resetAction() const {
         {"selectedKind", selected ? selected->id : QString()},
         {"selectedKindTitle", selected ? ResetPolicy::kindTitle(*selected) : QString()},
         {"selectedKindCount", selected ? ResetPolicy::kindCountText(*selected) : QString()},
-        {"selectedKindTrigger", selected ? ResetPolicy::kindTriggerText(facts, *selected) : QString()},
+        {"selectedKindTrigger", selected ? ResetPolicy::kindApplicabilityText(facts, *selected) : QString()},
+        {"automaticEffect", ResetPolicy::automaticEffectText(facts)},
+        {"automaticKinds", allowed}, {"lastEvent", lastEvent},
+        {"requested", lastEvent.value("event").toString() == QStringLiteral("requested")},
         {"useNowGrant", selected ? ResetPolicy::kindUseNowText(*selected, Usage::resetTimeLabel(selected->nextExpiresAt)) : QString()},
-        {"windowEndsAt", armed ? m_autoResetWindow : canonicalWindow(resetReading(m_resetProvider))}};
+        {"windowEndsAt", armed && !facts.automationWindowEndsAt.isEmpty()
+            ? facts.automationWindowEndsAt : canonicalWindow(resetReading(m_resetProvider))}};
 }
 
 QVariantMap Controller::resetKindContent(const QString &name) const {
@@ -338,9 +365,9 @@ bool Controller::prepareReset(const QString &provider) {
     if (provider != "Codex" && provider != "Claude") return false;
     if (!ResetPolicy::evaluate(resetFacts(provider)).canOpen) return false;
     m_resetProvider = provider;
-    // A closed dialog starts with no choice when several kinds are listed;
-    // reopening an arm restores the kind that arm already owns.
-    m_resetKind = m_autoResetConnection.isEmpty() ? QString() : m_autoResetKind;
+    // A closed dialog starts with no choice when several kinds are listed,
+    // which selects "Any matching reset"; a sole kind is preselected.
+    m_resetKind.clear();
     m_resetConfirmation.clear();
     m_resetMessage.clear();
     const QString fingerprint = resetReading(provider).value("account_fingerprint").toString();
@@ -395,76 +422,112 @@ bool Controller::selectResetKind(const QString &kind) {
     return true;
 }
 
+ServerConnection Controller::resetTransport() const {
+    // One transport definition for arm, cancel, and redeem requests so their
+    // bearer and certificate handling can never drift apart.
+    return m_mode == "local" ? m_server.connection()
+        : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
+}
+
+QNetworkRequest Controller::resetRouteRequest(const QString &provider, const QString &route) const {
+    auto url = Usage::endpoint(backendUrl());
+    QString path = url.path();
+    path.chop(QStringLiteral("usage").size());
+    url.setPath(path + QStringLiteral("providers/") + provider.toLower() + QStringLiteral("/") + route);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Accept", "application/json");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    request.setTransferTimeout(95000);
+    const ServerConnection transport = resetTransport();
+    if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
+    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
+    return request;
+}
+
+void Controller::cancelAutomationRequest() {
+    if (!m_automationReply) return;
+    disconnect(m_automationReply, nullptr, this, nullptr);
+    m_automationReply->abort();
+    m_automationReply->deleteLater();
+    m_automationReply.clear();
+}
+
+void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming) {
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
+    const auto error = reply->error();
+    const auto bytes = reply->readAll();
+    reply->deleteLater();
+    if (m_automationReply == reply) m_automationReply.clear();
+    if (!redirected && error == QNetworkReply::NoError && status == 200) {
+        m_resetMessage.clear();
+        // One ordinary cache read makes the server's new state visible.
+        if (m_startPolling) m_poll.start(0);
+        emit changed();
+        return;
+    }
+    const auto answer = bytes.size() <= 4096 ? QJsonDocument::fromJson(bytes).object() : QJsonObject{};
+    const QString serverError = answer.value("error").toString();
+    if (status == 404 || status == 405) m_resetMessage = "Update the server to use automatic resets.";
+    else if (!serverError.isEmpty()) m_resetMessage = serverError;
+    else m_resetMessage = arming ? "The automatic reset could not be set. Check the connection."
+        : "The automatic reset could not be canceled. Check the connection.";
+    emit changed();
+}
+
 bool Controller::scheduleReset() {
-    // This button explicitly authorizes ONE future submission. DO NOT invoke
-    // it during testing, even with a mock transport or synthetic usage.
+    // This button asks the server to store ONE future authorization. It never
+    // spends and never retries. DO NOT invoke it during testing.
     const auto facts = resetFacts(m_resetProvider);
     if (!ResetPolicy::evaluate(facts).canSchedule) return false;
-    m_autoResetConnection = m_resetConfirmation;
-    m_autoResetWindow = canonicalWindow(resetReading(m_resetProvider));
-    m_autoResetKind = facts.selectedKind.value_or(QString());
+    if (m_automationReply) return false;
+    const auto weekly = resetReading(m_resetProvider);
+    QJsonObject payload{{"confirmed", true},
+        {"account_fingerprint", weekly.value("account_fingerprint").toString()},
+        {"window_ends_at", canonicalWindow(weekly)}};
+    if (m_resetProvider == "Claude") {
+        QJsonArray kinds;
+        for (const auto &id : ResetPolicy::automaticKinds(facts)) kinds.append(id);
+        payload.insert("kinds", kinds);
+    }
+    const auto body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    auto request = resetRouteRequest(m_resetProvider, QStringLiteral("reset/automatic"));
+    request.setHeader(QNetworkRequest::ContentLengthHeader, qint64(body.size()));
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    const ServerConnection transport = resetTransport();
+    QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
+        : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
     m_resetConfirmation.clear();
-    m_resetMessage.clear();
-    // Read the server's usage cache promptly without changing its provider
-    // polling cadence. Submission happens only after an accepted snapshot.
-    if (m_startPolling) m_poll.start(0);
+    m_resetMessage = "Setting the automatic reset…";
     emit changed();
+    auto reply = network->put(request, body);
+    m_automationReply = reply;
+    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
+    auto deadline = new QTimer(reply); deadline->setSingleShot(true);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
+    connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply] { finishAutomationRequest(reply, true); });
     return true;
 }
 
-void Controller::clearScheduledReset() {
-    m_autoResetConnection.clear();
-    m_autoResetWindow.clear();
-    m_autoResetKind.clear();
-    if (m_startPolling && m_poll.isActive()) m_poll.start(m_interval * 1000);
-}
-
 void Controller::cancelScheduledReset() {
-    if (m_autoResetConnection.isEmpty()) return;
-    clearScheduledReset();
-    m_resetMessage = ResetPolicy::cancellationText(ResetPolicy::Reason::None);
+    // Server-held state is canceled explicitly; a failed cancel never spends.
+    const auto facts = resetFacts(m_resetProvider);
+    if (!ResetPolicy::evaluate(facts).canCancelArm) return;
+    if (m_automationReply) return;
+    auto request = resetRouteRequest(m_resetProvider, QStringLiteral("reset/automatic"));
+    const ServerConnection transport = resetTransport();
+    QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
+        : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
+    m_resetMessage = "Canceling the automatic reset…";
     emit changed();
-}
-
-void Controller::retireScheduledReset(ResetPolicy::Reason reason) {
-    // Disarm without I/O and say why. Nothing was requested.
-    clearScheduledReset();
-    m_resetMessage = ResetPolicy::cancellationText(reason);
-    if (m_notifications) m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
-    emit changed();
-}
-
-void Controller::expireScheduledReset() {
-    // Time-based disarm only, so the periodic clock can retire an arm whose
-    // weekly window ended while the backend was unreachable. Submission still
-    // requires an accepted snapshot: this never reads usage or performs I/O.
-    if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
-    const auto expiry = ResetPolicy::armExpiry(windowState(m_autoResetWindow));
-    if (expiry != ResetPolicy::Reason::None) retireScheduledReset(expiry);
-}
-
-void Controller::observeScheduledReset() {
-    // DO NOT TEST: this path can spend a reset after explicit one-shot consent.
-    // Unarmed polling remains read-only. Errors never imply exhaustion.
-    if (m_autoResetConnection.isEmpty() || m_resetBusy) return;
-    // The policy decides: an ended window retires the arm even on a late
-    // snapshot, a provider error pauses, a changed identity or window, a
-    // reading below the floor, no credits, or a pending request cancels.
-    const auto decision = ResetPolicy::observeArm(resetFacts(m_resetProvider));
-    if (decision.outcome == ResetPolicy::ArmOutcome::Cancel) { retireScheduledReset(decision.reason); return; }
-    if (decision.outcome != ResetPolicy::ArmOutcome::Submit) return;
-    const QString authorization = m_autoResetConnection;
-    const QString kind = m_autoResetKind;
-    // Disarm before any I/O, including receipt creation. A failure
-    // or ambiguous result must never schedule another attempt.
-    clearScheduledReset();
-    m_resetConfirmation = authorization;
-    // The redeem request carries the kind this arm was bound to. DO NOT TEST
-    // or invoke this path: Claude also requires that kind to be usable now.
-    m_resetKind = kind;
-    submitReset(true);
-    if (!m_resetBusy && m_notifications && !m_resetMessage.isEmpty())
-        m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
+    auto reply = network->deleteResource(request);
+    m_automationReply = reply;
+    ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
+    auto deadline = new QTimer(reply); deadline->setSingleShot(true);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] { finishAutomationRequest(reply, false); });
 }
 
 void Controller::observeResetUsage() {
@@ -497,25 +560,21 @@ void Controller::observeResetUsage() {
 void Controller::cancelResetRequest() {
     m_resetConfirmation.clear();
     if (!m_resetReply) return;
-    const bool automatic = m_resetReply->property("automaticReset").toBool();
     disconnect(m_resetReply, nullptr, this, nullptr);
     m_resetReply->abort(); m_resetReply->deleteLater(); m_resetReply.clear();
     m_resetBusy = false;
     m_resetMessage = ResetPolicy::awaitingUsageText(providerKind(m_resetProvider), true);
-    if (automatic && m_notifications)
-        m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
     // Leave the durable receipt intact, including when the app quits mid-request.
 }
 
 void Controller::consumeReset() {
     // DO NOT TEST OR INVOKE for validation: this spends a valuable real reset.
-    // The explicit Use now button supersedes any pending automatic choice.
+    // A confirmed manual use also cancels the server's automatic authorization.
     if (!resetAction().value("canConfirm").toBool()) return;
-    clearScheduledReset();
-    submitReset(false);
+    submitReset();
 }
 
-void Controller::submitReset(bool automatic) {
+void Controller::submitReset() {
     // Only explicit immediate or one-shot scheduled consent reaches here.
     // Never retry automatically, follow redirects, or offer another request
     // until read-only usage has released the durable account latch.
@@ -555,19 +614,8 @@ void Controller::submitReset(bool automatic) {
         m_resetMessage = "The reset request could not be saved safely. No reset was requested.";
         m_resetConfirmation.clear(); emit changed(); return;
     }
-    auto url = Usage::endpoint(backendUrl());
-    QString path = url.path();
-    path.chop(QStringLiteral("usage").size());
-    url.setPath(path + QStringLiteral("providers/") + m_resetProvider.toLower() + QStringLiteral("/reset"));
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Accept", "application/json");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-    request.setTransferTimeout(95000);
-    const ServerConnection transport = m_mode == "local" ? m_server.connection()
-        : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), backendCertificate()};
-    if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
-    ServerTransport::secureRequest(request, transport.certificate, m_mode == QStringLiteral("remote"));
+    auto request = resetRouteRequest(m_resetProvider, QStringLiteral("reset"));
+    const ServerConnection transport = resetTransport();
     QJsonObject payload{{"request_id", receipt.value("request_id")},
         {"confirmed", true}, {"account_fingerprint", fingerprint}};
     if (!kind.isEmpty()) payload.insert("kind", kind);
@@ -584,13 +632,12 @@ void Controller::submitReset(bool automatic) {
         : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
     auto upload = new ResetUpload(body, this);
     auto reply = network->post(request, upload); m_resetReply = reply;
-    reply->setProperty("automaticReset", automatic);
     upload->setParent(reply);
     ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt, requestWindow, automatic]() mutable {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt, requestWindow]() mutable {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto bytes = reply->readAll();
@@ -614,8 +661,6 @@ void Controller::submitReset(bool automatic) {
         else if (status == 409) m_resetMessage = QString("The server could not safely proceed. Refresh usage or check the previous reset in %1.").arg(displayName(m_resetProvider));
         else if (status == 401 || status == 403) m_resetMessage = QString("The reset request was rejected. Check your connection and %1 sign-in.").arg(displayName(m_resetProvider));
         else m_resetMessage = ResetPolicy::awaitingUsageText(providerKind(m_resetProvider), true);
-        if (automatic && m_notifications)
-            m_notificationCenter.post("providerCard_" + m_resetProvider, displayName(m_resetProvider) + " · Automatic reset", m_resetMessage);
         emit changed();
         // DO NOT test these callbacks as part of the redemption flow. They
         // only GET usage; they must never repeat or confirm a reset request.

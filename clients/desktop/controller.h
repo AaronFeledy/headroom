@@ -154,6 +154,7 @@ private:
     void syncConnection();
     void verifyRemote(bool upgrade);
     QVariantMap resetReading(const QString &provider) const;
+    QVariantMap resetAutomation(const QString &provider) const;
     bool resetReadingFresh(const QString &provider) const;
     ResetPolicy::Facts resetFacts(const QString &provider) const;
     bool resetAwaitingUsage(const QString &provider) const;
@@ -161,12 +162,12 @@ private:
     QString resetReceiptPath(const QString &provider) const;
     QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
-    void observeScheduledReset();
-    void expireScheduledReset();
-    void clearScheduledReset();
-    void retireScheduledReset(ResetPolicy::Reason reason);
-    void submitReset(bool automatic);
+    void submitReset();
     void cancelResetRequest();
+    ServerConnection resetTransport() const;
+    QNetworkRequest resetRouteRequest(const QString &provider, const QString &route) const;
+    void cancelAutomationRequest();
+    void finishAutomationRequest(QNetworkReply *reply, bool arming);
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
     QStringList m_order;
@@ -209,11 +210,9 @@ private:
     bool m_proofAttempted = false;
     QPointer<QNetworkReply> m_reply;
     QPointer<QNetworkReply> m_resetReply;
+    QPointer<QNetworkReply> m_automationReply;
     QString m_resetProvider = "Codex", m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
     bool m_resetBusy = false;
-    // One-shot authorization is session-only and bound to this account,
-    // transport, and weekly window. Never restore it on an app restart.
-    QString m_autoResetConnection, m_autoResetWindow, m_autoResetKind;
     // Session-only kind choice for the open options and the redeem request.
     QString m_resetKind;
     QTimer m_poll, m_clock;

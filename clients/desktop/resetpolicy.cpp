@@ -10,8 +10,6 @@ constexpr double offerFloor = 90;
 // OpenAI's own help only requires a covered allowance below 80% remaining;
 // this is a conservative Headroom threshold, not a provider limit.
 constexpr double codexManualFloor = 90;
-// Automatic use still waits for a reading at the limit.
-constexpr double usageLimit = 100;
 
 bool known(std::optional<double> value) { return value && std::isfinite(*value) && *value >= 0; }
 
@@ -42,15 +40,28 @@ QString grantName(const ResetPolicy::Kind &kind) {
         return QString(QChar(0x201C)) + kind.nextLabel + QChar(0x201D);
     return QStringLiteral("one ") + kind.label;
 }
+
+QStringList applicableLabels(const ResetPolicy::Facts &facts, const ResetPolicy::Kind &kind) {
+    QStringList labels;
+    for (const auto &bucket : facts.buckets) {
+        const bool applies = kind.refills.contains(bucket.id)
+            || (bucket.id == QStringLiteral("weekly") && kind.givesBackWeekly);
+        if (!applies) continue;
+        const QString label = bucket.label.isEmpty() ? bucket.id : bucket.label;
+        if (!labels.contains(label)) labels.append(label);
+    }
+    return labels;
+}
 }
 
 namespace ResetPolicy {
 
 Capabilities evaluate(const Facts &facts) {
     const bool ownedBusy = facts.owner && facts.busy;
-    const bool ownedArmed = facts.owner && facts.armed;
     const bool ownedConfirmed = facts.owner && facts.confirmed;
-    const bool foreign = !facts.owner && (facts.busy || facts.confirmed || facts.armed);
+    // A server-held automatic reset belongs to its provider, not to the dialog
+    // slot, so it neither hides nor blocks the other provider's options.
+    const bool foreign = !facts.owner && (facts.busy || facts.confirmed);
     const bool credits = facts.availableCount && *facts.availableCount > 0;
     const bool atOfferFloor = known(facts.utilization) && *facts.utilization >= offerFloor;
     const bool atCodexFloor = known(facts.utilization) && *facts.utilization >= codexManualFloor;
@@ -62,16 +73,16 @@ Capabilities evaluate(const Facts &facts) {
     const bool offered = credits && facts.accountBound && (atOfferFloor || claudeUsable || anyKindUsable);
     Capabilities result;
     // Owned context stays visible even when the current reading is unavailable.
-    result.visible = ownedBusy || ownedArmed || ownedConfirmed || facts.awaitingUsage || offered;
+    result.visible = ownedBusy || facts.automationArmed || ownedConfirmed || facts.awaitingUsage || offered;
     if (!result.visible) return result;
     // An arm pauses while the provider or backend reports no reading; a
     // reading that is merely older than the freshness window keeps monitoring.
     result.phase = ownedBusy ? Phase::Submitting
-        : ownedArmed ? (facts.readingAvailable ? Phase::Armed : Phase::Paused)
+        : facts.automationArmed ? (facts.readingAvailable ? Phase::Armed : Phase::Paused)
         : facts.awaitingUsage ? Phase::Reconciling : Phase::Choices;
     result.openReason = foreign ? Reason::ForeignOwner : facts.busy ? Reason::Busy : Reason::None;
     result.canOpen = result.openReason == Reason::None;
-    result.canCancelArm = ownedArmed;
+    result.canCancelArm = facts.automationArmed;
     // Blockers shared by both choices, most specific first. Visibility is
     // never permission: a stale or latched reading opens for information only.
     const Reason shared = foreign ? Reason::ForeignOwner : facts.busy ? Reason::Busy
@@ -81,6 +92,7 @@ Capabilities evaluate(const Facts &facts) {
     if (shared != Reason::None) result.useNowReason = shared;
     else if (kindAware) {
         // A kind's own answer is authoritative once the reading lists kinds.
+        // "Any matching reset" cannot spend now because Use now must name one.
         if (!selected) result.useNowReason = Reason::KindRequired;
         else if (selected->availableCount <= 0) result.useNowReason = Reason::NoCredits;
         else if (!selected->usableNow) result.useNowReason = Reason::ProviderRefused;
@@ -90,14 +102,26 @@ Capabilities evaluate(const Facts &facts) {
     else result.useNowReason = claudeUsable ? Reason::None
         : facts.usableNow ? Reason::ProviderRefused : Reason::ProviderUnknown;
     // Arming is independent of immediate permission: Claude may arm without
-    // usable_now, which the firing reading must still report. A kind arm also
-    // needs a present trigger meter, and the user must choose among several.
-    if (ownedArmed) result.armReason = Reason::AlreadyArmed;
+    // usable_now, which the server's firing reading must still report. The
+    // server revalidates every rule; this only decides what to offer.
+    if (facts.automationArmed) result.armReason = Reason::AlreadyArmed;
+    else if (!facts.automationSupported) result.armReason = Reason::ServerUnsupported;
     else if (shared != Reason::None) result.armReason = shared;
     else if (!offered) result.armReason = Reason::BelowFloor;
-    else if (kindAware && !selected) result.armReason = Reason::KindRequired;
-    else if (kindAware && selected->availableCount <= 0) result.armReason = Reason::NoCredits;
-    else if (kindAware && triggerBuckets(facts, selected->id).isEmpty()) result.armReason = Reason::NoTrigger;
+    else if (kindAware) {
+        const QStringList chosen = automaticKinds(facts);
+        if (chosen.isEmpty()) result.armReason = Reason::NoCredits;
+        else {
+            const bool applies = std::any_of(chosen.cbegin(), chosen.cend(), [&](const QString &id) {
+                const Kind *kind = findKind(facts, id);
+                return kind && kindApplies(facts, *kind);
+            });
+            if (!applies) result.armReason = Reason::NoTrigger;
+            else if (facts.window == Window::Future) result.armReason = Reason::None;
+            else if (facts.window == Window::Ended) result.armReason = Reason::WindowEnded;
+            else result.armReason = Reason::WindowUnknown;
+        }
+    }
     else if (facts.window == Window::Future) result.armReason = Reason::None;
     else if (facts.window == Window::Ended) result.armReason = Reason::WindowEnded;
     else result.armReason = Reason::WindowUnknown;
@@ -111,53 +135,6 @@ Capabilities evaluate(const Facts &facts) {
         if (result.canArm) result.armReason = Reason::ConfirmationStale;
     }
     return result;
-}
-
-ArmDecision observeArm(const Facts &facts) {
-    if (!(facts.owner && facts.armed) || facts.busy) return {};
-    if (const Reason expiry = armExpiry(facts.armWindow); expiry != Reason::None) return {ArmOutcome::Cancel, expiry};
-    // A temporary provider error pauses monitoring; a successful reading with a
-    // different identity or window invalidates the authorization.
-    if (!facts.readingAvailable) return {ArmOutcome::Wait, Reason::None};
-    if (!facts.armIdentityCurrent || !facts.armWindowCurrent) return {ArmOutcome::Cancel, Reason::IdentityChanged};
-    // Once the server reports kinds, the arm belongs to exactly one of them.
-    // A legacy arm cannot choose one safely, and a vanished or exhausted kind
-    // retires through the same path as other lost authorizations. A kind-bound
-    // arm also retires when the server stops reporting kinds at all: without
-    // the breakdown the chosen kind can no longer be verified before spending.
-    if (facts.provider == Provider::Claude && !facts.kindsKnown && facts.armKind)
-        return {ArmOutcome::Cancel, Reason::KindUnavailable};
-    if (facts.provider == Provider::Claude && facts.kindsKnown) {
-        const Kind *kind = findKind(facts, facts.armKind);
-        if (!kind || kind->availableCount <= 0) return {ArmOutcome::Cancel, Reason::KindUnavailable};
-        if (triggerBuckets(facts, kind->id).isEmpty()) return {ArmOutcome::Cancel, Reason::NoTrigger};
-        const auto trigger = triggerUtilization(facts, kind->id);
-        if (!trigger) return {ArmOutcome::Wait, Reason::None};
-        if (facts.awaitingUsage) return {ArmOutcome::Cancel, Reason::AwaitingUsage};
-        if (!kind->usableNow) return {ArmOutcome::Wait, Reason::None};
-        // A stale reading at the limit keeps the arm; it cannot prove a spend.
-        if (!facts.fresh) return {};
-        if (*trigger < usageLimit) return {};
-        // Firing needs every blocker Use now has, judged for the armed kind
-        // and not for whatever the dialog currently has selected.
-        Facts bound = facts;
-        bound.selectedKind = facts.armKind;
-        if (evaluate(bound).canUseNow) return {ArmOutcome::Submit, Reason::None};
-        return {};
-    }
-    if (!known(facts.utilization)) return {ArmOutcome::Wait, Reason::None};
-    if (facts.provider == Provider::Codex && *facts.utilization < codexManualFloor) return {ArmOutcome::Cancel, Reason::BelowFloor};
-    if (!facts.availableCount || *facts.availableCount <= 0) return {ArmOutcome::Cancel, Reason::NoCredits};
-    if (facts.awaitingUsage) return {ArmOutcome::Cancel, Reason::AwaitingUsage};
-    // Claude keeps waiting below the limit or without usable_now; it never
-    // cancels for usage alone.
-    if (*facts.utilization >= usageLimit && evaluate(facts).canUseNow) return {ArmOutcome::Submit, Reason::None};
-    return {};
-}
-
-Reason armExpiry(Window armWindow) {
-    return armWindow == Window::Future ? Reason::None
-        : armWindow == Window::Ended ? Reason::WindowEnded : Reason::WindowUnknown;
 }
 
 bool releasesCodexReceipt(std::optional<double> utilization) {
@@ -175,34 +152,21 @@ const Kind *findKind(const Facts &facts, const QString &id) {
     return nullptr;
 }
 
-QStringList triggerBuckets(const Facts &facts, const QString &kindId) {
-    const Kind *kind = findKind(facts, kindId);
-    if (!kind) return {};
-    QStringList present;
-    for (const auto &refill : kind->refills) {
-        const bool inReading = std::any_of(facts.buckets.cbegin(), facts.buckets.cend(),
-            [&](const Bucket &bucket) { return bucket.id == refill; });
-        if (inReading) present.append(refill);
-    }
-    for (const auto &other : facts.kinds) {
-        if (other.id == kindId || other.availableCount <= 0 || other.refills.size() >= kind->refills.size())
-            continue;
-        for (const auto &refill : other.refills) present.removeAll(refill);
-    }
-    return present;
+bool kindApplies(const Facts &facts, const Kind &kind) {
+    return std::any_of(facts.buckets.cbegin(), facts.buckets.cend(), [&](const Bucket &bucket) {
+        return kind.refills.contains(bucket.id)
+            || (bucket.id == QStringLiteral("weekly") && kind.givesBackWeekly);
+    });
 }
 
-std::optional<double> triggerUtilization(const Facts &facts, const QString &kindId) {
-    bool found = false;
-    double highest = 0;
-    for (const auto &id : triggerBuckets(facts, kindId)) {
-        for (const auto &bucket : facts.buckets) {
-            if (bucket.id != id || !known(bucket.utilization)) continue;
-            highest = found ? qMax(highest, *bucket.utilization) : *bucket.utilization;
-            found = true;
-        }
-    }
-    return found ? std::optional<double>(highest) : std::nullopt;
+QStringList automaticKinds(const Facts &facts) {
+    const bool kindAware = facts.provider == Provider::Claude && facts.kindsKnown && !facts.kinds.isEmpty();
+    if (!kindAware) return {};
+    if (const Kind *selected = findKind(facts, facts.selectedKind))
+        return selected->availableCount > 0 ? QStringList{selected->id} : QStringList{};
+    QStringList chosen;
+    for (const auto &kind : facts.kinds) if (kind.availableCount > 0) chosen.append(kind.id);
+    return chosen;
 }
 
 QString kindCountText(const Kind &kind) {
@@ -223,15 +187,10 @@ QString kindRefillText(const Facts &facts, const Kind &kind) {
     return labels.isEmpty() ? QString() : QStringLiteral("Refills ") + joinHuman(labels, QStringLiteral(" and "));
 }
 
-QString kindTriggerText(const Facts &facts, const Kind &kind) {
-    QStringList labels;
-    for (const auto &id : triggerBuckets(facts, kind.id)) {
-        QString label = bucketLabel(facts, id);
-        if (label.isEmpty()) label = id;
-        if (!labels.contains(label)) labels.append(label);
-    }
+QString kindApplicabilityText(const Facts &facts, const Kind &kind) {
+    const QStringList labels = applicableLabels(facts, kind);
     return labels.isEmpty() ? QString()
-        : QStringLiteral("Uses it when %1 reaches 100%").arg(joinHuman(labels, QStringLiteral(" or ")));
+        : QStringLiteral("Used when %1 reaches 100%").arg(joinHuman(labels, QStringLiteral(" or ")));
 }
 
 QString kindReturnText(const Facts &facts, const Kind &kind) {
@@ -269,6 +228,15 @@ QString kindUseNowText(const Kind &kind, const QString &expiryLabel) {
     return text + QStringLiteral(".");
 }
 
+QString automaticEffectText(const Facts &facts) {
+    const bool kindAware = facts.provider == Provider::Claude && facts.kindsKnown && !facts.kinds.isEmpty();
+    if (!kindAware) return {};
+    if (const Kind *selected = findKind(facts, facts.selectedKind))
+        return kindApplicabilityText(facts, *selected);
+    return facts.kinds.size() > 1
+        ? QStringLiteral("The matching reset is used at whichever limit is reached.") : QString();
+}
+
 QString phaseName(Phase phase) {
     switch (phase) {
     case Phase::Hidden: return QStringLiteral("hidden");
@@ -301,28 +269,11 @@ QString reasonText(Reason reason, Provider provider) {
     case Reason::WindowEnded: return QStringLiteral("The weekly window has ended.");
     case Reason::AlreadyArmed: return QStringLiteral("Automatic use is already set.");
     case Reason::ConfirmationStale: return QStringLiteral("The account or connection changed. Close and reopen.");
-    case Reason::IdentityChanged: return QStringLiteral("The account, connection, or weekly window changed.");
-    case Reason::KindRequired: return QStringLiteral("Choose which banked reset to use.");
-    case Reason::KindUnavailable: return QStringLiteral("That banked reset is no longer available.");
+    case Reason::KindRequired: return QStringLiteral("Choose which banked reset to use now.");
     case Reason::NoTrigger: return QStringLiteral("This reset does not refill a usage meter on this account.");
+    case Reason::ServerUnsupported: return QStringLiteral("Update the server to use automatic resets.");
     }
     return {};
-}
-
-QString cancellationText(Reason reason) {
-    switch (reason) {
-    case Reason::IdentityChanged: return QStringLiteral("Automatic reset canceled because the account, connection, or weekly window changed.");
-    case Reason::BelowFloor: return QStringLiteral("Automatic reset canceled because weekly usage is below 90%.");
-    case Reason::NoCredits: return QStringLiteral("Automatic reset canceled because no banked resets are available.");
-    case Reason::AwaitingUsage: return QStringLiteral("Automatic reset canceled because a reset has already been requested.");
-    case Reason::WindowEnded: case Reason::WindowUnknown:
-        return QStringLiteral("Automatic reset canceled because the weekly window ended.");
-    case Reason::KindUnavailable:
-        return QStringLiteral("Automatic reset canceled because that banked reset is no longer available.");
-    case Reason::NoTrigger:
-        return QStringLiteral("Automatic reset canceled because that banked reset no longer refills a usage meter.");
-    default: return QStringLiteral("Automatic reset canceled. No reset was requested.");
-    }
 }
 
 QString awaitingUsageText(Provider provider, bool uncertain) {

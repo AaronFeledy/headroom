@@ -37,7 +37,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     m_poll.setTimerType(Qt::PreciseTimer);
     connect(&m_poll, &QTimer::timeout, this, [this] { refreshUsage(false); });
     if (m_startPolling) m_poll.start(m_interval * 1000);
-    connect(&m_clock, &QTimer::timeout, this, [this] { expireScheduledReset(); updateMeterStates(); emit changed(); });
+    connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
     if (m_startPolling) m_clock.start(30000);
     m_recovery.setSingleShot(true);
     m_recovery.setTimerType(Qt::PreciseTimer);
@@ -91,6 +91,8 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     connect(&m_server, &ManagedServer::connectionChanged, this, [this] {
         if (m_mode != QStringLiteral("local")) return;
         cancelResetRequest();
+        cancelAutomationRequest();
+        m_notificationCenter.resetAutomaticResetBaseline();
         // A new server identity is a new peer: late replies and retained
         // readings from the previous process must not survive it.
         invalidateConnection();
@@ -195,7 +197,8 @@ void Controller::verifyRemote(bool upgrade) {
         const QString error = m_settingsService.save(updated);
         if (!error.isEmpty()) { fail(QStringLiteral("The verified server certificate could not be saved."), QStringLiteral("settings")); return; }
         m_url = m_settingsService.value().url;
-        cancelResetRequest(); cancelScheduledReset(); invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
+        cancelResetRequest(); cancelAutomationRequest(); m_notificationCenter.resetAutomaticResetBaseline();
+        invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
         log(QStringLiteral("Connection"), upgrade ? QStringLiteral("Connection upgraded to HTTPS.")
             : rotation ? QStringLiteral("The server certificate changed and was verified with your access token.")
                        : QStringLiteral("The server's identity was verified with your access token."));
@@ -255,11 +258,10 @@ QString Controller::diagnosticText() const {
 void Controller::resetRetry() {
     m_retryAttempt = 0; m_errorKind.clear();
     int seconds = m_interval;
-    if (!m_autoResetConnection.isEmpty()) seconds = 15;
     // A provider the server reports as transiently failed usually recovers on
     // the server's own retry schedule; read its cache a little sooner for a
     // bounded time instead of waiting a full interval to notice.
-    else if (transientRecoveryActive()) seconds = qMin(m_interval, 15);
+    if (transientRecoveryActive()) seconds = qMin(m_interval, 15);
     if (m_startPolling) m_poll.start(seconds * 1000);
 }
 void Controller::fail(const QString &message, const QString &kind) {
@@ -267,13 +269,8 @@ void Controller::fail(const QString &message, const QString &kind) {
     m_status = ConnectionStatus::Offline; m_message = message; m_errorKind = kind;
     m_retryAttempt = qMin(m_retryAttempt + 1, 8);
     endRefreshWindow();
-    // An armed one-shot reset starts from the 15-second cadence used by
-    // resetRetry(), so a transient failure cannot stretch polling past its
-    // weekly window. It still backs off to at most five minutes: a long outage
-    // must not poll an unreachable endpoint four times a minute all week.
     int seconds;
-    if (!m_autoResetConnection.isEmpty()) seconds = qMin(15 * (1 << (m_retryAttempt - 1)), 300);
-    else if (kind == QStringLiteral("network")) seconds = networkRetrySecs[qMin(m_retryAttempt - 1, 7)];
+    if (kind == QStringLiteral("network")) seconds = networkRetrySecs[qMin(m_retryAttempt - 1, 7)];
     else seconds = qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval));
     if (m_startPolling) m_poll.start(seconds * 1000);
     // No backend failure passes old success through the raw model. Only a
@@ -453,15 +450,24 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
             m_notificationCenter.observeBankedResetCount(name, credits["available_count"].toLongLong(),
                 credits["account_fingerprint"].toString(), m_notifications);
     }
+    for (const auto &value : m_providers) {
+        const auto provider = value.toMap();
+        const QString name = provider["provider_name"].toString();
+        if (name != "Codex" && name != "Claude") continue;
+        const auto automation = provider["reset_automation"];
+        if (!automation.isValid() || automation.isNull()) continue;
+        m_notificationCenter.observeAutomaticReset(name,
+            automation.toMap()["last_event"].toMap(), m_notifications);
+    }
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
-    observeScheduledReset();
 }
 Controller::~Controller() {
     // The network manager outlives every other member, so an in-flight reply must be
     // disconnected and aborted before the members its handler touches are destroyed.
     cancel();
     cancelResetRequest();
+    cancelAutomationRequest();
 }
 QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl, bool shareBrowserSignIns) {
     if (m_resetBusy) return "Wait for the reset request to finish before changing connections.";
@@ -489,7 +495,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; invalidateConnection(); }
     m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); cancelScheduledReset(); }
+    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); m_notificationCenter.resetAutomaticResetBaseline(); cancelAutomationRequest(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();

@@ -240,6 +240,82 @@ private slots:
         notifications.observeBankedResetCount("Codex", 5, "same-fingerprint", true);
         QCOMPARE(native.size(), 3);
     }
+    void automaticResetEventsUseEventBaselines() {
+        Notifications notifications;
+        QSignalSpy native(&notifications, &Notifications::desktopNotification);
+        const auto event = [](const QString &at, const QString &type, const QString &outcome = {},
+                              const QString &reason = {}, const QString &kind = {}) {
+            return QVariantMap{{"at", at}, {"event", type}, {"outcome", outcome},
+                {"reason", reason}, {"kind", kind}};
+        };
+        // The first event on a connection establishes the baseline.
+        notifications.observeAutomaticReset("Claude", event("t1", "requested", {}, {}, "weekly"), true);
+        QCOMPARE(native.size(), 0);
+        notifications.observeAutomaticReset("Claude", event("t1", "requested", {}, {}, "weekly"), true);
+        // A used reset names the kind.
+        notifications.observeAutomaticReset("Claude", event("t2", "completed", "reset", {}, "weekly"), true);
+        QCOMPARE(native.size(), 1);
+        QCOMPARE(notifications.unreadCount(), 1);
+        notifications.present();
+        auto posted = notifications.presented().first().toMap();
+        QCOMPARE(posted["target"].toString(), QString("providerCard_Claude"));
+        QVERIFY(posted["message"].toString().contains("was used"));
+        QVERIFY(posted["message"].toString().contains("weekly"));
+        notifications.endPresentation();
+        // Other completed outcomes say it was requested and what the provider answered.
+        notifications.observeAutomaticReset("Claude", event("t3", "completed", "already_redeemed"), true);
+        QCOMPARE(native.size(), 2);
+        QVERIFY(notifications.presented().isEmpty());
+        notifications.present();
+        QVERIFY(notifications.presented().first().toMap()["message"].toString().contains("already redeemed"));
+        notifications.endPresentation();
+        notifications.observeAutomaticReset("Claude", event("t4", "failed", {}, "outcome_unknown"), true);
+        QCOMPARE(native.size(), 3);
+        notifications.present();
+        QVERIFY(notifications.presented().first().toMap()["message"].toString().contains("result is unknown"));
+        notifications.endPresentation();
+        notifications.observeAutomaticReset("Claude", event("t5", "failed", {}, "refused"), true);
+        QCOMPARE(native.size(), 4);
+        notifications.present();
+        const auto refused = notifications.presented().first().toMap()["message"].toString();
+        QVERIFY(refused.contains("could not be requested"));
+        QVERIFY(refused.contains("No reset was used"));
+        notifications.endPresentation();
+        // Canceled reasons explain themselves, except a user or manual cancel.
+        notifications.observeAutomaticReset("Claude", event("t6", "canceled", {}, "window_ended"), true);
+        QCOMPARE(native.size(), 5);
+        notifications.present();
+        QVERIFY(notifications.presented().first().toMap()["message"].toString().contains("weekly window ended"));
+        notifications.endPresentation();
+        notifications.observeAutomaticReset("Claude", event("t7", "canceled", {}, "user"), true);
+        notifications.observeAutomaticReset("Claude", event("t8", "canceled", {}, "manual_reset"), true);
+        QCOMPARE(native.size(), 5);
+        notifications.observeAutomaticReset("Claude", event("t9", "requested"), true);
+        QCOMPARE(native.size(), 5);
+    }
+    void automaticResetBaselinesRespectSettingsAndConnections() {
+        Notifications notifications;
+        QSignalSpy native(&notifications, &Notifications::desktopNotification);
+        const auto event = [](const QString &at) {
+            return QVariantMap{{"at", at}, {"event", "failed"}, {"reason", "outcome_unknown"}};
+        };
+        notifications.observeAutomaticReset("Codex", event("t1"), true);
+        notifications.observeAutomaticReset("Codex", event("t2"), false);
+        QCOMPARE(native.size(), 0);
+        notifications.observeAutomaticReset("Codex", event("t3"), true);
+        QCOMPARE(native.size(), 1);
+        // A connection change reads the current event as the new baseline.
+        notifications.resetAutomaticResetBaseline();
+        notifications.observeAutomaticReset("Codex", event("t3"), true);
+        QCOMPARE(native.size(), 1);
+        notifications.observeAutomaticReset("Codex", event("t4"), true);
+        QCOMPARE(native.size(), 2);
+        // Providers keep independent baselines.
+        notifications.observeAutomaticReset("Claude", event("t4"), true);
+        QCOMPARE(native.size(), 2);
+        notifications.observeAutomaticReset("Claude", event("t5"), true);
+        QCOMPARE(native.size(), 3);
+    }
     void coalescesTargetsAndConsumesOnce() {
         Notifications notifications;
         QSignalSpy native(&notifications, &Notifications::desktopNotification);

@@ -19,6 +19,10 @@ public:
     void observeUpdate(const QString &state, const QString &version, const QString &message, bool enabled);
     void observeBankedResetCount(const QString &provider, qint64 count, const QString &accountFingerprint, bool enabled);
     void resetBankedResetBaseline(const QString &provider = {});
+    // Server-owned automatic resets report their last event; the first event
+    // on a connection is a baseline, and a connection change resets it.
+    void observeAutomaticReset(const QString &provider, const QVariantMap &event, bool enabled);
+    void resetAutomaticResetBaseline(const QString &provider = {});
     void observeUsage(const QVariantList &providers, bool enabled,
                       const QDateTime &now = QDateTime::currentDateTimeUtc());
     void resetUsageBaseline(const QString &provider = {});
@@ -44,6 +48,7 @@ private:
         QString accountFingerprint;
     };
     QHash<QString, BankedResetBaseline> m_bankedResetBaselines;
+    QHash<QString, QString> m_automaticResetBaselines;
     QVariantList m_pending, m_presented;
     QSet<QString> m_highlights;
     QHash<QString, QString> m_updateEpisodes;

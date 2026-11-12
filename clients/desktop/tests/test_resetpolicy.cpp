@@ -3,6 +3,8 @@
 #include "statemachine_assertions.h"
 #include <cmath>
 #include <limits>
+#include <type_traits>
+#include <utility>
 
 // Pure policy tests over synthetic facts. They never construct a Controller,
 // read usage, touch receipts, or perform a reset: a Submit outcome here is a
@@ -13,12 +15,10 @@ Q_DECLARE_METATYPE(ResetPolicy::Provider)
 Q_DECLARE_METATYPE(ResetPolicy::Window)
 Q_DECLARE_METATYPE(ResetPolicy::Phase)
 Q_DECLARE_METATYPE(ResetPolicy::Reason)
-Q_DECLARE_METATYPE(ResetPolicy::ArmOutcome)
 
 namespace QTest {
 template <> inline char *toString(const Reason &reason) { return qstrdup(qPrintable(QString::number(int(reason)))); }
 template <> inline char *toString(const Phase &phase) { return qstrdup(qPrintable(phaseName(phase))); }
-template <> inline char *toString(const ArmOutcome &outcome) { return qstrdup(qPrintable(QString::number(int(outcome)))); }
 }
 
 namespace {
@@ -29,6 +29,7 @@ Facts baseline(Provider provider, double utilization = 100) {
     Facts facts;
     facts.provider = provider; facts.readingAvailable = true; facts.fresh = true;
     facts.availableCount = 3; facts.accountBound = true; facts.window = Window::Future; facts.owner = true;
+    facts.automationSupported = true;
     if (std::isfinite(utilization)) facts.utilization = utilization;
     return facts;
 }
@@ -40,10 +41,13 @@ Facts confirmed(Facts facts, bool current = true) {
     facts.confirmed = true; facts.confirmationCurrent = current;
     return facts;
 }
-Facts armed(Facts facts) {
-    facts.armed = true; facts.armIdentityCurrent = true; facts.armWindowCurrent = true; facts.armWindow = Window::Future;
-    return facts;
-}
+// The desktop must not grow a local arm again: these facts stay compile-time
+// absent, so a reintroduced automatic-spend path cannot hide behind them.
+template <typename T, typename = void> struct HasLocalArm : std::false_type {};
+template <typename T> struct HasLocalArm<T, std::void_t<
+    decltype(std::declval<T>().armed), decltype(std::declval<T>().armKind),
+    decltype(std::declval<T>().armWindow)>> : std::true_type {};
+static_assert(!HasLocalArm<Facts>::value, "the desktop-owned automatic arm must not return");
 Kind kind(const QString &id, const QString &label, qint64 count, bool usable, const QStringList &refills,
           bool givesBack = false) {
     Kind result;
@@ -141,7 +145,6 @@ private slots:
             QTest::newRow(name + "receipt offline") << provider << "awaitingOffline" << true << Phase::Reconciling << true << Reason::AwaitingUsage;
             QTest::newRow(name + "receipt unknown account") << provider << "awaitingUnbound" << true << Phase::Reconciling << true << Reason::AwaitingUsage;
             QTest::newRow(name + "busy owner") << provider << "busy" << true << Phase::Submitting << false << Reason::Busy;
-            QTest::newRow(name + "foreign arm") << provider << "foreignArm" << true << Phase::Choices << false << Reason::ForeignOwner;
             QTest::newRow(name + "foreign confirmation") << provider << "foreignConfirmation" << true << Phase::Choices << false << Reason::ForeignOwner;
             QTest::newRow(name + "foreign submission") << provider << "foreignBusy" << true << Phase::Choices << false << Reason::ForeignOwner;
         }
@@ -164,7 +167,6 @@ private slots:
             facts.awaitingUsage = change == "awaitingOffline";
         }
         else if (change == "busy") facts.busy = true;
-        else if (change == "foreignArm") { facts.owner = false; facts.armed = true; }
         else if (change == "foreignConfirmation") { facts.owner = false; facts.confirmed = true; }
         else if (change == "foreignBusy") { facts.owner = false; facts.busy = true; }
         const auto result = evaluate(facts);
@@ -223,33 +225,43 @@ private slots:
         // The window gates arming only; immediate use stays permitted.
         QVERIFY(result.canUseNow && result.canConfirm);
     }
-    void ownedArmStaysManageableWithoutFreshness() {
+    void serverHeldArmStaysManageableWithoutFreshness() {
         for (const auto provider : {Provider::Codex, Provider::Claude}) {
-            auto result = evaluate(armed(baseline(provider, 96)));
+            Facts facts = withUsable(baseline(provider, 96), 1);
+            facts.automationArmed = true;
+            auto result = evaluate(facts);
             QCOMPARE(result.phase, Phase::Armed);
             QVERIFY(result.visible && result.canOpen && result.canCancelArm);
             QCOMPARE(result.armReason, Reason::AlreadyArmed); QVERIFY(!result.canArm);
-            // An older reading keeps monitoring; no reading at all pauses it.
-            Facts aged = armed(baseline(provider, 96)); aged.fresh = false;
-            result = evaluate(aged);
+            // An older reading keeps it armed; no reading at all pauses it.
+            facts.fresh = false;
+            result = evaluate(facts);
             QCOMPARE(result.phase, Phase::Armed); QVERIFY(result.canCancelArm);
             QCOMPARE(result.useNowReason, Reason::Stale);
-            Facts paused = armed(baseline(provider, 96));
-            paused.readingAvailable = false; paused.fresh = false; paused.availableCount.reset();
-            paused.utilization.reset(); paused.accountBound = false;
-            result = evaluate(paused);
+            facts.readingAvailable = false; facts.fresh = false; facts.availableCount.reset();
+            facts.utilization.reset(); facts.accountBound = false;
+            result = evaluate(facts);
             QCOMPARE(result.phase, Phase::Paused);
             QVERIFY(result.visible && result.canOpen && result.canCancelArm);
             QVERIFY(!result.canUseNow); QCOMPARE(result.useNowReason, Reason::Unavailable);
-            // Use now may supersede an arm while the reading permits it.
-            result = evaluate(confirmed(armed(withUsable(baseline(provider, 96), 1))));
+            // Use now may supersede a server-held arm while the reading permits it.
+            Facts confirmedArm = confirmed(facts);
+            confirmedArm.readingAvailable = true; confirmedArm.fresh = true;
+            confirmedArm.availableCount = 3; confirmedArm.utilization = 96;
+            confirmedArm.accountBound = true;
+            result = evaluate(confirmedArm);
             QVERIFY(result.canConfirm); QVERIFY(!result.canSchedule);
-            // Ownership is exclusive: the other provider sees its own offer but cannot open.
+            // A server arm belongs to its own provider, not the dialog slot.
             Facts other = withUsable(baseline(provider == Provider::Codex ? Provider::Claude : Provider::Codex, 96), 1);
-            other.owner = false; other.armed = true;
+            other.owner = false; other.automationArmed = true;
             result = evaluate(other);
-            QCOMPARE(result.phase, Phase::Choices); QVERIFY(!result.canOpen && !result.canCancelArm);
+            QCOMPARE(result.phase, Phase::Armed); QVERIFY(result.canOpen && result.canCancelArm);
+            // A foreign dialog confirmation still blocks opening, never cancelling.
+            Facts foreign = withUsable(baseline(provider, 96), 1);
+            foreign.owner = false; foreign.confirmed = true; foreign.automationArmed = true;
+            result = evaluate(foreign);
             QCOMPARE(result.openReason, Reason::ForeignOwner);
+            QVERIFY(!result.canOpen && result.canCancelArm);
         }
     }
     void kindLabelsComposeFromServerText() {
@@ -260,8 +272,8 @@ private slots:
         QCOMPARE(kindTitle(facts.kinds[1]), QString("Fable reset"));
         QCOMPARE(kindRefillText(facts, facts.kinds[0]), QString("Refills Weekly and Fable"));
         QCOMPARE(kindRefillText(facts, facts.kinds[1]), QString("Refills Fable"));
-        QCOMPARE(kindTriggerText(facts, facts.kinds[0]), QString("Uses it when Weekly reaches 100%"));
-        QCOMPARE(kindTriggerText(facts, facts.kinds[1]), QString("Uses it when Fable reaches 100%"));
+        QCOMPARE(kindApplicabilityText(facts, facts.kinds[0]), QString("Used when Weekly or Fable reaches 100%"));
+        QCOMPARE(kindApplicabilityText(facts, facts.kinds[1]), QString("Used when Weekly or Fable reaches 100%"));
         QCOMPARE(kindReturnText(facts, facts.kinds[1]), QString("Returns what Fable used to your weekly limit"));
         QVERIFY(kindReturnText(facts, facts.kinds[0]).isEmpty());
     }
@@ -292,24 +304,33 @@ private slots:
         QCOMPARE(kindUseNowText(weekly, expires),
             QString("Uses one weekly reset, which expires Thu, Dec 10 at 4:00 PM."));
     }
-    void kindTriggerBucketsRespectNarrowerOwnership() {
-        Facts facts = kinded(baseline(Provider::Claude, 100));
-        QCOMPARE(triggerBuckets(facts, "weekly"), (QStringList{"weekly"}));
-        QCOMPARE(triggerBuckets(facts, "fable"), (QStringList{"weekly_fable"}));
-        QCOMPARE(triggerUtilization(facts, "weekly"), std::optional<double>(60.0));
-        // With no Fable resets left, the weekly kind owns both buckets again.
-        facts.kinds[1].availableCount = 0;
-        QCOMPARE(triggerBuckets(facts, "weekly"), (QStringList{"weekly", "weekly_fable"}));
-        QCOMPARE(triggerUtilization(facts, "weekly"), std::optional<double>(60.0));
-        // A bucket that is not in the reading can never trigger.
+    void kindApplicabilityFollowsRefillsAndWeeklyGiveBack() {
+        const Facts facts = kinded(baseline(Provider::Claude, 100));
+        QVERIFY(kindApplies(facts, facts.kinds[0]));
+        QVERIFY(kindApplies(facts, facts.kinds[1]));
+        QCOMPARE(kindApplicabilityText(facts, facts.kinds[0]),
+            QString("Used when Weekly or Fable reaches 100%"));
+        QCOMPARE(kindApplicabilityText(facts, facts.kinds[1]),
+            QString("Used when Weekly or Fable reaches 100%"));
+        // A weekly give-back applies to the weekly meter even without a refill.
+        Facts giveBack = kinded(baseline(Provider::Claude, 100));
+        giveBack.kinds[1].refills = {"weekly_missing"};
+        QVERIFY(kindApplies(giveBack, giveBack.kinds[1]));
+        QVERIFY(kindApplicabilityText(giveBack, giveBack.kinds[1]).contains("Weekly"));
+        Facts fableOnly = kinded(baseline(Provider::Claude, 100));
+        fableOnly.kinds[1].givesBackWeekly = false;
+        QCOMPARE(kindApplicabilityText(fableOnly, fableOnly.kinds[1]), QString("Used when Fable reaches 100%"));
+        // A bucket that is not in the reading can never apply.
         Facts missing = kinded(baseline(Provider::Claude, 100));
         missing.kinds[1].refills = {"weekly_missing"};
-        QVERIFY(triggerBuckets(missing, "fable").isEmpty());
-        QVERIFY(!triggerUtilization(missing, "fable"));
+        missing.kinds[1].givesBackWeekly = false;
+        QVERIFY(!kindApplies(missing, missing.kinds[1]));
+        QVERIFY(kindApplicabilityText(missing, missing.kinds[1]).isEmpty());
         // The session meter never triggers a kind that does not refill it.
         Facts session = kinded(baseline(Provider::Claude, 100));
         session.buckets.append(Bucket{"session_extra", "Session", 100.0});
-        QVERIFY(!triggerBuckets(session, "weekly").contains("session_extra"));
+        QVERIFY(!kindApplies(session, session.kinds[0]) || kindApplicabilityText(session, session.kinds[0]).contains("Weekly"));
+        QVERIFY(!kindApplicabilityText(session, session.kinds[0]).contains("Session"));
     }
     void kindAwareUseNowNeedsTheChosenKind() {
         Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
@@ -337,171 +358,56 @@ private slots:
         QVERIFY(evaluate(legacy).canUseNow);
         QCOMPARE(evaluate(legacy).useNowReason, Reason::None);
     }
-    void kindAwareArmingNeedsAChosenTrigger() {
+    void kindAwareArmingChoosesAnyOrOneKind() {
         Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
         auto result = evaluate(facts);
-        QVERIFY(!result.canArm);
-        QCOMPARE(result.armReason, Reason::KindRequired);
+        // With several kinds and no specific choice, "Any matching reset" is
+        // the default automatic choice; Use now still needs one named kind.
+        QCOMPARE(facts.selectedKind, std::optional<QString>());
+        QVERIFY(result.canArm);
+        QCOMPARE(result.armReason, Reason::None);
+        QCOMPARE(result.useNowReason, Reason::KindRequired);
+        QCOMPARE(automaticKinds(facts), (QStringList{"weekly", "fable"}));
+        QCOMPARE(automaticEffectText(facts),
+            QString("The matching reset is used at whichever limit is reached."));
+        // A specific kind limits the automatic choice to itself.
         facts.selectedKind = "fable";
-        QVERIFY(evaluate(facts).canArm);
+        result = evaluate(facts);
+        QVERIFY(result.canArm);
+        QCOMPARE(automaticKinds(facts), QStringList{"fable"});
+        QCOMPARE(automaticEffectText(facts), QString("Used when Weekly or Fable reaches 100%"));
         // A kind whose refills are absent from the reading cannot be armed.
+        facts.kinds[1].givesBackWeekly = false;
         facts.buckets.removeIf([](const Bucket &bucket) { return bucket.id == "weekly_fable"; });
         result = evaluate(facts);
         QVERIFY(!result.canArm);
         QCOMPARE(result.armReason, Reason::NoTrigger);
+        // With no credits in the chosen set there is nothing to authorize.
+        Facts exhausted = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        exhausted.selectedKind = "fable";
+        exhausted.kinds[1].availableCount = 0;
+        QCOMPARE(evaluate(exhausted).armReason, Reason::NoCredits);
+        // A zero-count kind is skipped by "Any matching reset".
+        Facts partial = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        partial.kinds[1].availableCount = 0;
+        QCOMPARE(automaticKinds(partial), QStringList{"weekly"});
+        QVERIFY(evaluate(partial).canArm);
         // The future weekly window still gates arming.
         Facts ended = kinded(withUsable(baseline(Provider::Claude, 100), 1));
         ended.selectedKind = "weekly"; ended.window = Window::Ended;
         QCOMPARE(evaluate(ended).armReason, Reason::WindowEnded);
     }
-    void kindAwareArmFiresOnlyOnItsOwnedTriggers() {
-        Facts facts = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        facts.armKind = "weekly"; facts.selectedKind = "weekly";
-        facts.buckets = {Bucket{"session", "5-Hour", 100.0}, Bucket{"weekly", "Weekly", 40.0},
-            Bucket{"weekly_fable", "Fable", 40.0}};
-        // The session meter is at 100%, but this kind does not refill it.
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Keep);
-        facts.buckets[1].utilization = 100.0;
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Submit);
-        // An armed Fable kind waits for its own meter, not the weekly one.
-        facts.armKind = "fable"; facts.selectedKind = "fable";
-        facts.buckets = {Bucket{"session", "5-Hour", 40.0}, Bucket{"weekly", "Weekly", 100.0},
-            Bucket{"weekly_fable", "Fable", 40.0}};
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Keep);
-        facts.buckets[2].utilization = 100.0;
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Submit);
-        // Anthropic's current answer gates firing, not arming.
-        facts.kinds[1].usableNow = false;
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Wait);
-        // Losing the kind or the trigger retires the arm.
-        facts.kinds[1].availableCount = 0;
-        QCOMPARE(observeArm(facts).outcome, ArmOutcome::Cancel);
-        QCOMPARE(observeArm(facts).reason, Reason::KindUnavailable);
-        Facts vanished = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        vanished.armKind = "fable"; vanished.selectedKind = "fable";
-        vanished.kindsKnown = false;
-        QCOMPARE(observeArm(vanished).outcome, ArmOutcome::Cancel);
-        QCOMPARE(observeArm(vanished).reason, Reason::KindUnavailable);
-        Facts noTrigger = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        noTrigger.armKind = "fable"; noTrigger.selectedKind = "fable";
-        noTrigger.kinds[1].refills = {"weekly_missing"};
-        QCOMPARE(observeArm(noTrigger).outcome, ArmOutcome::Cancel);
-        QCOMPARE(observeArm(noTrigger).reason, Reason::NoTrigger);
-        // With no Fable resets, the weekly kind owns both of its buckets.
-        Facts wider = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        wider.armKind = "weekly"; wider.selectedKind = "weekly";
-        wider.kinds[1].availableCount = 0;
-        wider.buckets = {Bucket{"session", "5-Hour", 40.0}, Bucket{"weekly", "Weekly", 40.0},
-            Bucket{"weekly_fable", "Fable", 100.0}};
-        QCOMPARE(observeArm(wider).outcome, ArmOutcome::Submit);
-        // A stale reading at the limit cannot prove a spend and keeps the arm.
-        Facts stale = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        stale.armKind = "fable"; stale.selectedKind = "fable"; stale.fresh = false;
-        stale.buckets[2].utilization = 100.0;
-        QCOMPARE(observeArm(stale).outcome, ArmOutcome::Keep);
-        // The armed kind governs firing, not whatever the dialog has selected,
-        // and firing still needs every blocker Use now has.
-        Facts other = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        other.armKind = "fable"; other.selectedKind = "weekly";
-        other.buckets[2].utilization = 100.0;
-        QCOMPARE(observeArm(other).outcome, ArmOutcome::Submit);
-        other.kinds[0].usableNow = false;
-        QCOMPARE(observeArm(other).outcome, ArmOutcome::Submit);
-        other.accountBound = false;
-        QCOMPARE(observeArm(other).outcome, ArmOutcome::Keep);
-        other.accountBound = true; other.availableCount = 0;
-        QCOMPARE(observeArm(other).outcome, ArmOutcome::Keep);
-        // A pending request retires it through the existing path.
-        Facts pending = armed(kinded(withUsable(baseline(Provider::Claude, 100), 1)));
-        pending.armKind = "fable"; pending.selectedKind = "fable"; pending.awaitingUsage = true;
-        pending.buckets[2].utilization = 100.0;
-        QCOMPARE(observeArm(pending).outcome, ArmOutcome::Cancel);
-        QCOMPARE(observeArm(pending).reason, Reason::AwaitingUsage);
-    }
-    void armObservationDecisions_data() {
-        QTest::addColumn<Provider>("provider");
-        QTest::addColumn<double>("utilization");
-        QTest::addColumn<int>("usable");
-        QTest::addColumn<QStringList>("changes");
-        QTest::addColumn<ArmOutcome>("outcome");
-        QTest::addColumn<Reason>("reason");
-        QTest::newRow("codex 89.99 cancels") << Provider::Codex << 89.99 << -1 << QStringList{} << ArmOutcome::Cancel << Reason::BelowFloor;
-        QTest::newRow("codex 90 keeps") << Provider::Codex << 90.0 << -1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex 94.99 keeps") << Provider::Codex << 94.99 << -1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex 95 keeps") << Provider::Codex << 95.0 << -1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex 99.99 keeps") << Provider::Codex << 99.99 << -1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex 100 submits") << Provider::Codex << 100.0 << -1 << QStringList{} << ArmOutcome::Submit << Reason::None;
-        QTest::newRow("codex 100 stale keeps") << Provider::Codex << 100.0 << -1 << QStringList{"stale"} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex 100 no credits") << Provider::Codex << 100.0 << -1 << QStringList{"zeroCredits"} << ArmOutcome::Cancel << Reason::NoCredits;
-        QTest::newRow("codex 100 unknown credits") << Provider::Codex << 100.0 << -1 << QStringList{"unknownCredits"} << ArmOutcome::Cancel << Reason::NoCredits;
-        QTest::newRow("codex 100 receipt") << Provider::Codex << 100.0 << -1 << QStringList{"awaiting"} << ArmOutcome::Cancel << Reason::AwaitingUsage;
-        QTest::newRow("codex identity changed") << Provider::Codex << 100.0 << -1 << QStringList{"identity"} << ArmOutcome::Cancel << Reason::IdentityChanged;
-        QTest::newRow("codex window changed") << Provider::Codex << 100.0 << -1 << QStringList{"window"} << ArmOutcome::Cancel << Reason::IdentityChanged;
-        QTest::newRow("codex unknown usage waits") << Provider::Codex << unknownUsage << -1 << QStringList{} << ArmOutcome::Wait << Reason::None;
-        QTest::newRow("codex provider error waits") << Provider::Codex << 100.0 << -1 << QStringList{"unavailable"} << ArmOutcome::Wait << Reason::None;
-        QTest::newRow("codex deadline ended offline") << Provider::Codex << 100.0 << -1 << QStringList{"unavailable", "ended"} << ArmOutcome::Cancel << Reason::WindowEnded;
-        QTest::newRow("codex deadline unknown") << Provider::Codex << 100.0 << -1 << QStringList{"deadlineUnknown"} << ArmOutcome::Cancel << Reason::WindowUnknown;
-        QTest::newRow("codex busy never repeats") << Provider::Codex << 100.0 << -1 << QStringList{"busy"} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("codex unarmed") << Provider::Codex << 100.0 << -1 << QStringList{"unarmed"} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("claude 40 refused keeps") << Provider::Claude << 40.0 << 0 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("claude 100 refused keeps") << Provider::Claude << 100.0 << 0 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("claude 100 unknown keeps") << Provider::Claude << 100.0 << -1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("claude 99.99 usable keeps") << Provider::Claude << 99.99 << 1 << QStringList{} << ArmOutcome::Keep << Reason::None;
-        QTest::newRow("claude 100 usable submits") << Provider::Claude << 100.0 << 1 << QStringList{} << ArmOutcome::Submit << Reason::None;
-        QTest::newRow("claude 100 usable receipt") << Provider::Claude << 100.0 << 1 << QStringList{"awaiting"} << ArmOutcome::Cancel << Reason::AwaitingUsage;
-        QTest::newRow("claude 100 no credits") << Provider::Claude << 100.0 << 1 << QStringList{"zeroCredits"} << ArmOutcome::Cancel << Reason::NoCredits;
-        QTest::newRow("claude deadline ended offline") << Provider::Claude << 100.0 << 1 << QStringList{"unavailable", "ended"} << ArmOutcome::Cancel << Reason::WindowEnded;
-    }
-    void armObservationDecisions() {
-        QFETCH(Provider, provider); QFETCH(double, utilization); QFETCH(int, usable);
-        QFETCH(QStringList, changes); QFETCH(ArmOutcome, outcome); QFETCH(Reason, reason);
-        Facts facts = armed(withUsable(baseline(provider, utilization), usable));
-        for (const QString &change : changes) {
-            if (change == "stale") facts.fresh = false;
-            else if (change == "zeroCredits") facts.availableCount = 0;
-            else if (change == "unknownCredits") facts.availableCount.reset();
-            else if (change == "awaiting") facts.awaitingUsage = true;
-            else if (change == "identity") facts.armIdentityCurrent = false;
-            else if (change == "window") facts.armWindowCurrent = false;
-            else if (change == "unavailable") { facts.readingAvailable = false; facts.fresh = false; }
-            else if (change == "ended") facts.armWindow = Window::Ended;
-            else if (change == "deadlineUnknown") facts.armWindow = Window::Unknown;
-            else if (change == "busy") facts.busy = true;
-            else if (change == "unarmed") facts.armed = false;
-            else QFAIL(qPrintable("unknown change " + change));
-        }
-        const auto decision = observeArm(facts);
-        QCOMPARE(decision.outcome, outcome);
-        QCOMPARE(decision.reason, reason);
-        if (outcome == ArmOutcome::Cancel) QVERIFY(!cancellationText(reason).isEmpty());
-    }
-    void missingArmBindingDistinguishesSuccessFromFailure_data() {
-        QTest::addColumn<Provider>("provider");
-        QTest::addColumn<bool>("succeeded");
-        QTest::addColumn<bool>("missingAccount");
-        for (const auto provider : {Provider::Codex, Provider::Claude}) {
-            const QByteArray name = provider == Provider::Claude ? "claude " : "codex ";
-            QTest::newRow(name + "success missing account and window") << provider << true << true;
-            QTest::newRow(name + "failure missing account and window") << provider << false << true;
-            QTest::newRow(name + "success missing window") << provider << true << false;
-            QTest::newRow(name + "failure missing window") << provider << false << false;
-        }
-    }
-    void missingArmBindingDistinguishesSuccessFromFailure() {
-        QFETCH(Provider, provider); QFETCH(bool, succeeded); QFETCH(bool, missingAccount);
-        Facts facts = armed(baseline(provider, unknownUsage));
-        facts.readingAvailable = succeeded;
-        facts.availableCount.reset(); facts.usableNow.reset();
-        facts.accountBound = !missingAccount; facts.armIdentityCurrent = !missingAccount;
-        facts.window = Window::Unknown; facts.armWindowCurrent = false;
-        const auto decision = observeArm(facts);
-        QCOMPARE(decision.outcome, succeeded ? ArmOutcome::Cancel : ArmOutcome::Wait);
-        QCOMPARE(decision.reason, succeeded ? Reason::IdentityChanged : Reason::None);
-    }
-    void armExpiryFollowsRecordedDeadline() {
-        QCOMPARE(armExpiry(Window::Future), Reason::None);
-        QCOMPARE(armExpiry(Window::Ended), Reason::WindowEnded);
-        QCOMPARE(armExpiry(Window::Unknown), Reason::WindowUnknown);
+    void armingRequiresAServerThatSupportsIt() {
+        Facts facts = confirmed(withUsable(baseline(Provider::Claude, 100), 1));
+        facts.automationSupported = false;
+        const auto result = evaluate(facts);
+        QVERIFY(result.visible);
+        QVERIFY(!result.canArm && !result.canSchedule);
+        QCOMPARE(result.armReason, Reason::ServerUnsupported);
+        QCOMPARE(reasonText(result.armReason, facts.provider),
+            QString("Update the server to use automatic resets."));
+        // Use now is untouched by the server's automation support.
+        QVERIFY(result.canUseNow && result.canConfirm);
     }
     void codexReceiptReleasesOnlyBelowFloor_data() {
         QTest::addColumn<double>("utilization");
@@ -525,7 +431,7 @@ private slots:
         for (const int phase : {0, 1, 2, 3, 4, 5}) QVERIFY(!phaseName(Phase(phase)).isEmpty());
         for (const auto provider : {Provider::Codex, Provider::Claude}) {
             QVERIFY(reasonText(Reason::None, provider).isEmpty());
-            for (int reason = int(Reason::Unavailable); reason <= int(Reason::NoTrigger); ++reason)
+            for (int reason = int(Reason::Unavailable); reason <= int(Reason::ServerUnsupported); ++reason)
                 QVERIFY2(!reasonText(Reason(reason), provider).isEmpty(), qPrintable(QString::number(reason)));
             QVERIFY(!awaitingUsageText(provider, false).isEmpty());
             QVERIFY(!awaitingUsageText(provider, true).isEmpty());
@@ -533,9 +439,22 @@ private slots:
         // The blocker names the provider that holds the slot, not the one asking.
         QVERIFY(reasonText(Reason::ForeignOwner, Provider::Codex).contains("Claude"));
         QVERIFY(reasonText(Reason::ForeignOwner, Provider::Claude).contains("ChatGPT"));
-        QVERIFY(!cancellationText(Reason::None).isEmpty());
-        QVERIFY(!cancellationText(Reason::KindUnavailable).isEmpty());
-        QVERIFY(!cancellationText(Reason::NoTrigger).isEmpty());
+    }
+    void serverArmNeverOffersADesktopSpend() {
+        // The server evaluates and spends its own arm. The policy's only
+        // automatic capabilities are to offer one or cancel one.
+        Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        facts.selectedKind = "weekly";
+        facts.automationArmed = true; facts.automationKinds = {"weekly"};
+        auto result = evaluate(facts);
+        QCOMPARE(result.phase, Phase::Armed);
+        QVERIFY(result.canCancelArm);
+        QVERIFY(!result.canArm && !result.canSchedule);
+        QCOMPARE(result.armReason, Reason::AlreadyArmed);
+        // Use now remains an explicit, separately confirmed user action.
+        QVERIFY(!result.canConfirm);
+        result = evaluate(confirmed(facts));
+        QVERIFY(result.canConfirm);
     }
 };
 
