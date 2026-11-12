@@ -6,10 +6,8 @@ import (
 	"strings"
 )
 
-const (
-	// pinnedCLIVersion is the oldest identity known to receive banked resets.
-	pinnedCLIVersion = "2.1.306"
-)
+// pinnedCLIVersion is the oldest identity known to receive banked resets.
+const pinnedCLIVersion = "2.1.306"
 
 // userAgent prefers the installed CLI version so Anthropic never withholds
 // banked-reset data from an older identity. Detection never executes the CLI

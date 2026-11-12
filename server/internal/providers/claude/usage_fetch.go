@@ -18,7 +18,7 @@ import (
 func (c *Client) fetchUsage(ctx context.Context, creds *credentials) (usage.UsageData, *bankStatus, *statusError, error) {
 	endpoint, parameterized := c.usageEndpoint(creds.accessToken)
 	data, status, statusErr, err := c.requestUsage(ctx, endpoint, creds)
-	if err != nil || statusErr == nil || !parameterized || !parameterRejected(statusErr) {
+	if err != nil || !parameterized || !parameterRejected(statusErr) {
 		return data, status, statusErr, err
 	}
 	c.rememberParameterRejection(creds.accessToken)
