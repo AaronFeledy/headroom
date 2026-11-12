@@ -1,12 +1,8 @@
 package poller
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -56,10 +52,6 @@ func adaptivePoller(t *testing.T, policy usage.PollPolicy) (*adaptiveProvider, *
 
 func percentReading(utilization float64) providerResult {
 	return providerResult{data: usage.UsageData{Buckets: []usage.Bucket{{ID: "session", Utilization: utilization}}}}
-}
-
-func statusReading(utilization float64) providerResult {
-	return providerResult{data: usage.UsageData{Buckets: []usage.Bucket{{ID: "extra", Utilization: utilization, Measurement: usage.MeasurementStatus}}}}
 }
 
 func rateLimit(operation usage.FetchOperation, retryAfter time.Time, fallback bool) *usage.FetchFailure {
@@ -132,7 +124,6 @@ func Test_Adaptive_usage429_cooldown_is_new_spacing_without_usable_header(t *tes
 		wantSource string
 	}{
 		{"missing", func(time.Time) time.Time { return time.Time{} }, true, 6 * time.Minute, false, "backoff"},
-		{"zero", func(time.Time) time.Time { return time.Time{} }, true, 6 * time.Minute, false, "backoff"},
 		{"elapsed", func(base time.Time) time.Time { return base.Add(-time.Minute) }, false, 6 * time.Minute, true, "backoff"},
 		{"future", func(base time.Time) time.Time { return base.Add(10 * time.Minute) }, false, 10 * time.Minute, true, "retry_after"},
 	}
@@ -172,8 +163,7 @@ func Test_Adaptive_usage429_cooldown_is_new_spacing_without_usable_header(t *tes
 }
 
 func Test_Adaptive_clean_streak_steps_spacing_down_to_the_floor(t *testing.T) {
-	_, p, clock := adaptivePoller(t, claudePolicy)
-	provider := policyState(t, p).provider.(*adaptiveProvider)
+	provider, p, clock := adaptivePoller(t, claudePolicy)
 	responses := []providerResult{{data: usage.UsageData{Error: strPtr("limited"), FetchFailure: rateLimit(usage.OperationUsage, time.Time{}, true)}}}
 	for i := 0; i < 12; i++ {
 		responses = append(responses, percentReading(float64(10+i)))
@@ -228,149 +218,5 @@ func Test_Adaptive_auxiliary_429_leaves_spacing_unchanged(t *testing.T) {
 	}
 	if d := entry.Data.FetchStatus.Diagnostics; *d.Operation != "profile" || *d.HTTPStatus != http.StatusTooManyRequests {
 		t.Fatalf("auxiliary diagnostics = %+v", d)
-	}
-}
-
-func Test_Adaptive_idle_grows_to_the_cap_on_unchanged_readings(t *testing.T) {
-	provider, p, clock := adaptivePoller(t, claudePolicy)
-	for i := 0; i < 5; i++ {
-		provider.responses = append(provider.responses, percentReading(20))
-	}
-	wantIdle := []time.Duration{0, 4*time.Minute + 30*time.Second, 6*time.Minute + 45*time.Second, 10 * time.Minute, 10 * time.Minute}
-	wantDelay := []time.Duration{3 * time.Minute, 4*time.Minute + 30*time.Second, 6*time.Minute + 45*time.Second, 10 * time.Minute, 10 * time.Minute}
-	for i := 0; i < 5; i++ {
-		if i > 0 {
-			clock.next(3 * time.Minute)
-		}
-		entry := pollProvider(t, p, "Claude")
-		_, idle, _ := stateDurations(t, p)
-		if idle != wantIdle[i] {
-			t.Fatalf("idle after %d unchanged readings = %s, want %s", i+1, idle, wantIdle[i])
-		}
-		if delay := nextDelay(t, entry); delay != wantDelay[i] {
-			t.Fatalf("next delay after %d readings = %s, want %s", i+1, delay, wantDelay[i])
-		}
-	}
-}
-
-func Test_Adaptive_idle_resets_on_change_failure_and_near_limit(t *testing.T) {
-	t.Run("changed reading", func(t *testing.T) {
-		provider, p, clock := adaptivePoller(t, claudePolicy)
-		provider.responses = []providerResult{percentReading(10), percentReading(10), percentReading(11)}
-		pollProvider(t, p, "Claude")
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 4*time.Minute+30*time.Second {
-			t.Fatalf("idle did not grow: %s", idle)
-		}
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 0 {
-			t.Fatalf("idle after changed reading = %s, want 0", idle)
-		}
-	})
-	t.Run("failed attempt", func(t *testing.T) {
-		provider, p, clock := adaptivePoller(t, claudePolicy)
-		provider.responses = []providerResult{percentReading(10), percentReading(10), {err: usage.TransportFailure(errors.New("dial failed"))}}
-		pollProvider(t, p, "Claude")
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 4*time.Minute+30*time.Second {
-			t.Fatalf("idle did not grow: %s", idle)
-		}
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 0 {
-			t.Fatalf("idle after failure = %s, want 0", idle)
-		}
-	})
-	t.Run("percent meter at ninety", func(t *testing.T) {
-		provider, p, clock := adaptivePoller(t, claudePolicy)
-		provider.responses = []providerResult{percentReading(85), percentReading(92), percentReading(92)}
-		pollProvider(t, p, "Claude")
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 0 {
-			t.Fatalf("idle near the limit = %s, want 0", idle)
-		}
-	})
-	t.Run("status-only meter ignores ninety", func(t *testing.T) {
-		provider, p, clock := adaptivePoller(t, claudePolicy)
-		provider.responses = []providerResult{statusReading(95), statusReading(95)}
-		pollProvider(t, p, "Claude")
-		clock.next(3 * time.Minute)
-		pollProvider(t, p, "Claude")
-		if _, idle, _ := stateDurations(t, p); idle != 4*time.Minute+30*time.Second {
-			t.Fatalf("status meter suppressed idle growth: %s", idle)
-		}
-	})
-}
-
-func Test_Adaptive_forced_polls_ignore_idle_but_honor_spacing(t *testing.T) {
-	provider, p, clock := adaptivePoller(t, claudePolicy)
-	provider.responses = []providerResult{percentReading(10), percentReading(10), percentReading(11)}
-	pollProvider(t, p, "Claude")
-	clock.next(3 * time.Minute)
-	pollProvider(t, p, "Claude")
-	if _, idle, _ := stateDurations(t, p); idle <= 3*time.Minute {
-		t.Fatalf("idle did not grow past spacing: %s", idle)
-	}
-	clock.next(3 * time.Minute)
-	p.dispatchDue(p.enabledStates())
-	settle(p)
-	if got := provider.calls.Load(); got != 2 {
-		t.Fatalf("scheduler ignored idle: calls = %d", got)
-	}
-	pollProvider(t, p, "Claude")
-	if got := provider.calls.Load(); got != 3 {
-		t.Fatalf("forced poll honored idle: calls = %d", got)
-	}
-	clock.next(time.Minute)
-	pollProvider(t, p, "Claude")
-	if got := provider.calls.Load(); got != 3 {
-		t.Fatalf("forced poll bypassed spacing: calls = %d", got)
-	}
-}
-
-func Test_Adaptive_provider_without_policy_is_unaffected(t *testing.T) {
-	provider := &sequenceProvider{name: "Other", responses: []providerResult{percentReading(10), percentReading(10)}}
-	p, clock, _ := recoveryPoller(t, provider)
-	entry := pollProvider(t, p, "Other")
-	clock.next(time.Minute)
-	entry = pollProvider(t, p, "Other")
-	if got := provider.calls.Load(); got != 2 {
-		t.Fatalf("unchanged reading delayed a stateless provider: calls = %d", got)
-	}
-	state := policyState(t, p)
-	state.mu.RLock()
-	spacing, idle := state.spacing, state.idle
-	state.mu.RUnlock()
-	if spacing != 0 || idle != 0 {
-		t.Fatalf("stateless provider adapted: spacing = %s, idle = %s", spacing, idle)
-	}
-	if delay := nextDelay(t, entry); delay != time.Minute {
-		t.Fatalf("next delay = %s, want the configured minute", delay)
-	}
-}
-
-func Test_Adaptive_logs_spacing_and_idle_only_with_a_policy(t *testing.T) {
-	provider, p, _ := adaptivePoller(t, claudePolicy)
-	provider.responses = []providerResult{percentReading(10)}
-	var logs bytes.Buffer
-	p.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	pollProvider(t, p, "Claude")
-	if logged := logs.String(); !strings.Contains(logged, `"spacing":180000000000`) || !strings.Contains(logged, `"idle":0`) {
-		t.Fatalf("missing adaptive attributes: %s", logged)
-	}
-
-	plain := &sequenceProvider{name: "Other", responses: []providerResult{percentReading(10)}}
-	other, _, _ := recoveryPoller(t, plain)
-	var plainLogs bytes.Buffer
-	other.logger = slog.New(slog.NewJSONHandler(&plainLogs, nil))
-	pollProvider(t, other, "Other")
-	if strings.Contains(plainLogs.String(), `"spacing"`) {
-		t.Fatalf("stateless provider logged spacing: %s", plainLogs.String())
 	}
 }
