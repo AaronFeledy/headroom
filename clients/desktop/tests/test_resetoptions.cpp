@@ -25,6 +25,9 @@ struct Scene {
     QVariantList kinds;
     QString selectedKind;
     QString useNowGrant;
+    QString automaticEffect;
+    QVariantList automaticKinds;
+    QVariantMap lastEvent;
 };
 Q_DECLARE_METATYPE(Scene)
 
@@ -64,7 +67,10 @@ QVariantMap synthetic(const Scene &scene) {
         {"canCancel", scene.canCancel}, {"useNowReason", scene.useNowReason},
         {"automaticReason", scene.automaticReason}, {"windowEndsAt", QString()},
         {"kinds", scene.kinds}, {"kindsKnown", !scene.kinds.isEmpty()},
-        {"selectedKind", scene.selectedKind}, {"useNowGrant", scene.useNowGrant}};
+        {"selectedKind", scene.selectedKind}, {"useNowGrant", scene.useNowGrant},
+        {"automaticEffect", scene.automaticEffect}, {"automaticKinds", scene.automaticKinds},
+        {"lastEvent", scene.lastEvent},
+        {"requested", scene.lastEvent.value("event").toString() == "requested"}};
 }
 }
 
@@ -112,14 +118,31 @@ private slots:
         const QVariantMap fableKind = syntheticKind("fable", "Fable reset", 2, true,
             "Refills Fable", "Uses it when Fable reaches 100%");
         QTest::newRow("claude-kind-one") << Scene{"claude-kind-one", "Claude", "choices", true, true, false, false,
-            "", "", "", "", qint64(3), QVariantList{weeklyKind}, "weekly"};
-        QTest::newRow("claude-kind-many-unselected") << Scene{"claude-kind-many-unselected", "Claude", "choices", false, false, false, false,
-            "Choose which banked reset to use.", "Choose which banked reset to use.", "", "", qint64(3),
-            QVariantList{weeklyKind, fableKind}, ""};
+            "", "", "", "", qint64(3), QVariantList{weeklyKind}, "weekly", "",
+            "Used when Weekly or Fable reaches 100%"};
+        // Several kinds default to "Any matching reset": automatic use is
+        // permitted, while Use now waits for one specific kind.
+        QTest::newRow("claude-kind-any") << Scene{"claude-kind-any", "Claude", "choices", false, true, false, false,
+            "Choose which banked reset to use now.", "", "", "", qint64(3),
+            QVariantList{weeklyKind, fableKind}, "", "",
+            "The matching reset is used at whichever limit is reached.",
+            QVariantList{"weekly reset", "Fable reset"}};
         QTest::newRow("claude-kind-many-selected") << Scene{"claude-kind-many-selected", "Claude", "choices", true, true, false, false,
-            "", "", "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
+            "", "", "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "fable", "",
+            "Used when Fable reaches 100%", QVariantList{"Fable reset"}};
         QTest::newRow("claude-kind-armed") << Scene{"claude-kind-armed", "Claude", "armed", true, false, true, false,
-            "", "Automatic use is already set.", "", "Sunday at 10:00 PM", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
+            "", "Automatic use is already set.", "", "Sunday at 10:00 PM", qint64(3),
+            QVariantList{weeklyKind, fableKind}, "fable", "", "Used when Fable reaches 100%",
+            QVariantList{"Fable reset"}};
+        QTest::newRow("claude-requested") << Scene{"claude-requested", "Claude", "choices", false, false, false, false,
+            "Choose which banked reset to use now.", "No banked reset is available.", "", "", qint64(3),
+            QVariantList{weeklyKind, fableKind}, "", "",
+            "The matching reset is used at whichever limit is reached.",
+            QVariantList{"weekly reset", "Fable reset"},
+            QVariantMap{{"at", "2026-11-11T12:00:00Z"}, {"event", "requested"},
+                {"outcome", QVariant()}, {"reason", QVariant()}, {"kind", "weekly"}}};
+        QTest::newRow("claude-unsupported") << Scene{"claude-unsupported", "Claude", "choices", true, false, false, false,
+            "", "Update the server to use automatic resets.", "", ""};
         // A grant line renders only when the policy map names one. The wording
         // itself is composed and tested in the reset policy.
         const QString left = QChar(0x201C), right = QChar(0x201D);
@@ -130,16 +153,18 @@ private slots:
             QStringLiteral("Next: %1, expires %2").arg(labeled, expires));
         QTest::newRow("claude-grant-labeled") << Scene{"claude-grant-labeled", "Claude", "choices", true, true, false, false,
             "", "", "", "", qint64(1), QVariantList{grantKind}, "weekly",
-            QStringLiteral("Uses %1, which expires %2.").arg(labeled, expires)};
+            QStringLiteral("Uses %1, which expires %2.").arg(labeled, expires),
+            "Used when Weekly or Fable reaches 100%"};
         const QVariantMap emptyLabelKind = syntheticKind("weekly", "weekly reset", 1, true,
             "Refills Weekly and Fable", "Uses it when Weekly reaches 100%", "Next: one weekly reset");
         QTest::newRow("claude-grant-empty-label") << Scene{"claude-grant-empty-label", "Claude", "choices", true, true, false, false,
-            "", "", "", "", qint64(1), QVariantList{emptyLabelKind}, "weekly", "Uses one weekly reset."};
+            "", "", "", "", qint64(1), QVariantList{emptyLabelKind}, "weekly", "Uses one weekly reset.",
+            "Used when Weekly or Fable reaches 100%"};
         const QVariantMap noExpiryKind = syntheticKind("weekly", "weekly reset", 1, true,
             "Refills Weekly and Fable", "Uses it when Weekly reaches 100%", "Next: " + labeled);
         QTest::newRow("claude-grant-no-expiry") << Scene{"claude-grant-no-expiry", "Claude", "choices", true, true, false, false,
             "", "", "", "", qint64(1), QVariantList{noExpiryKind}, "weekly",
-            QStringLiteral("Uses %1.").arg(labeled)};
+            QStringLiteral("Uses %1.").arg(labeled), "Used when Weekly or Fable reaches 100%"};
     }
     void rendersEveryStateWithoutActions() {
         QFETCH(Scene, scene);
@@ -166,7 +191,7 @@ private slots:
         auto overlay = options->property("parent").value<QQuickItem *>(); QVERIFY(overlay);
         const QList<QSize> sizes = scene.kinds.isEmpty()
             ? QList<QSize>{QSize(460, 420), QSize(1000, 700)}
-            : QList<QSize>{QSize(460, 620), QSize(1000, 700)};
+            : QList<QSize>{QSize(460, 700), QSize(1000, 700)};
         for (const QSize size : sizes) {
             window->resize(size);
             // window->size() changes at once; the content item and overlay only follow
@@ -204,6 +229,7 @@ private slots:
             auto message = findItem(window->contentItem(), "resetOptionsMessage"); QVERIFY(message);
             auto chooser = findItem(window->contentItem(), "resetKindChooser"); QVERIFY(chooser);
             auto kindTrigger = findItem(window->contentItem(), "resetOptionsKindTrigger"); QVERIFY(kindTrigger);
+            auto requested = findItem(window->contentItem(), "resetOptionsRequested"); QVERIFY(requested);
             auto grant = findItem(window->contentItem(), "useNowGrant"); QVERIFY(grant);
             QCOMPARE(confirm->isEnabled(), scene.canConfirm);
             QCOMPARE(confirm->property("text").toString(), scene.busy ? QString("Using reset…") : QString("Use now"));
@@ -222,11 +248,16 @@ private slots:
                     chosen = value.toMap()["countText"].toString();
                     chosenLabel = value.toMap()["label"].toString();
                 }
+                QString anyCounts;
+                QStringList counts;
+                for (const auto &value : scene.kinds) counts.append(value.toMap()["countText"].toString());
+                anyCounts = counts.join(" · ");
                 QCOMPARE(balance->property("text").toString(),
-                    chosen.isEmpty() ? QString("Choose which banked reset to use") : "Banked: " + chosen);
+                    chosen.isEmpty() && scene.kinds.size() > 1 ? "Banked: " + anyCounts
+                    : chosen.isEmpty() ? QString("Choose which banked reset to use") : "Banked: " + chosen);
                 // One reset is spent, so the summary names one reset of the chosen
                 // kind and never quotes the whole balance as the amount used.
-                if (!chosen.isEmpty()) {
+                if (!chosen.isEmpty() && !armed) {
                     const QString text = summary->property("text").toString();
                     QVERIFY2(text.contains("ne " + chosenLabel), qPrintable(text));
                     QVERIFY2(!text.contains(chosen) || chosen.startsWith("1 "), qPrintable(text));
@@ -234,10 +265,19 @@ private slots:
             } else if (balance->isVisible()) {
                 QVERIFY(balance->property("text").toString().contains(QString::number(*scene.availableCount)));
             }
-            // The kind chooser only appears before a spend and is never preselected
-            // when several kinds are listed; rendering never activates a row.
+            // The kind chooser only appears before a spend or an arm. With
+            // several kinds "Any matching reset" is first and selected by
+            // default; rendering never activates a row.
             QCOMPARE(chooser->isVisible(), kindAware && !armed && !scene.busy);
-            QCOMPARE(kindTrigger->isVisible(), kindAware && !scene.selectedKind.isEmpty());
+            auto anyRow = findItem(window->contentItem(), "resetKindAny"); QVERIFY(anyRow);
+            QCOMPARE(anyRow->isVisible(), !armed && !scene.busy && scene.kinds.size() > 1);
+            if (anyRow->isVisible()) {
+                QCOMPARE(anyRow->property("text").toString(), QString("Any matching reset"));
+                QCOMPARE(anyRow->property("accent").toBool(), scene.selectedKind.isEmpty());
+            }
+            QCOMPARE(kindTrigger->isVisible(), kindAware && !armed && !scene.automaticEffect.isEmpty());
+            if (kindTrigger->isVisible())
+                QCOMPARE(kindTrigger->property("text").toString(), scene.automaticEffect);
             if (kindAware) {
                 if (!scene.selectedKind.isEmpty())
                     QVERIFY(kindTrigger->property("text").toString().contains("100%"));
@@ -262,6 +302,20 @@ private slots:
                 QVERIFY(!chooser->isVisible());
                 QVERIFY(!kindTrigger->isVisible());
             }
+            // The server holds an armed choice; no copy may claim quitting cancels it.
+            const QString summaryText = summary->property("text").toString();
+            QVERIFY2(!summaryText.contains("quitting", Qt::CaseInsensitive), qPrintable(summaryText));
+            if (armed) {
+                QVERIFY2(summaryText.contains("server", Qt::CaseInsensitive), qPrintable(summaryText));
+                if (scene.provider != "Claude")
+                    QVERIFY2(summaryText.contains("100% weekly usage"), qPrintable(summaryText));
+                if (scene.phase == "paused")
+                    QVERIFY2(summaryText.contains("evaluates it when readings return", Qt::CaseInsensitive), qPrintable(summaryText));
+            }
+            QCOMPARE(requested->isVisible(), scene.lastEvent.value("event").toString() == "requested");
+            if (requested->isVisible())
+                QCOMPARE(requested->property("text").toString(),
+                    QString("An automatic reset was requested. Waiting for the result."));
             // Wherever Use now can be chosen, armed included, the spend is marked
             // irreversible once: beside the choice, not again in the summary.
             QCOMPARE(warning->isVisible(), scene.canConfirm);

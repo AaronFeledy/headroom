@@ -1251,6 +1251,51 @@ private slots:
         QTRY_COMPARE(label()->property("text").toString(), QString("3 banked resets"));
         QVERIFY(!label()->property("detailText").toString().contains("Refills"));
     }
+    void claudeAutomaticResetCardRendersServerStateWithoutActions() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QJsonArray kinds{
+            TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"}),
+            TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)};
+        auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaudeKinds(100, 100, kinds)).array();
+        auto claude = providers[0].toObject();
+        claude["reset_automation"] = QJsonObject{{"armed", true},
+            {"armed_at", QDateTime::currentDateTimeUtc().addSecs(-60).toString(Qt::ISODate)},
+            {"window_ends_at", QDateTime::currentDateTimeUtc().addDays(3).toString(Qt::ISODate)},
+            {"kinds", QJsonArray{"weekly"}},
+            {"account_fingerprint", QString(64, QLatin1Char('b'))},
+            {"last_event", QJsonObject{{"at", QDateTime::currentDateTimeUtc().addSecs(-60).toString(Qt::ISODate)},
+                {"event", "canceled"}, {"outcome", QJsonValue::Null}, {"reason", "user"}, {"kind", QJsonValue::Null}}}};
+        providers[0] = claude;
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(providers).toJson());
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        auto button = [&] { return findItem(window->contentItem(), "useBankedReset_Claude"); };
+        QVERIFY(button()); QTRY_VERIFY(button()->isVisible());
+        QCOMPARE(controller.resetState("Claude").value("phase").toString(), QString("armed"));
+        QCOMPARE(button()->property("text").toString(), QString("Auto at limit…"));
+        const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        const QString captureDir = requested.isEmpty() ? dir.path() : requested;
+        QVERIFY(QDir().mkpath(captureDir));
+        for (int width : {460, 1000}) {
+            window->resize(width, 1000); QTest::qWait(100);
+            QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
+                QString("headroom-claude-automatic-arm-%1.png").arg(width))));
+        }
+    }
     void codexBankedResetButtonAppearsAt90WithoutInvokingActions() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         const QString reset = QDateTime::currentDateTimeUtc().addDays(4).toString(Qt::ISODate);

@@ -33,6 +33,11 @@ Popup {
     readonly property string message: action.message || ""
     // What Use now would spend, when the chosen kind names a grant.
     readonly property string useNowGrant: action.useNowGrant || ""
+    // The server's last automatic-reset event, already validated by the parser.
+    readonly property var lastEvent: action.lastEvent || ({})
+    readonly property bool automaticRequested: action.requested === true
+    // What the automatic choice authorizes, in words from the policy.
+    readonly property string automaticEffect: action.automaticEffect || ""
     // The additive breakdown. Null or an empty list keeps the legacy dialog.
     readonly property var kinds: action.kinds || []
     readonly property bool kindAware: claude && kinds.length > 0
@@ -41,6 +46,12 @@ Popup {
         for (const kind of kinds) if (kind.id === selectedKindId) return kind
         return null
     }
+    readonly property string anyCounts: {
+        const counts = []
+        for (const kind of kinds) counts.push(kind.countText)
+        return counts.join(" · ")
+    }
+    readonly property string serverHoldsText: "It stays set until it is used, canceled, or the weekly window ends, even if Headroom is closed or the server restarts."
     readonly property string title: {
         switch (phase) {
         case "submitting": return "Using a banked " + providerName + " reset"
@@ -54,21 +65,21 @@ Popup {
         switch (phase) {
         case "submitting": return "Waiting for the server's answer. Keep Headroom running."
         case "armed":
-            if (kindAware && selectedKindInfo)
-                return "One " + selectedKindInfo.label + " will be used when a usage update reports the limit below and Anthropic allows it. The choice ends with this weekly window; quitting Headroom cancels it."
-            return claude
-                ? "One Claude reset will be used when a usage update reports a session or weekly limit and Anthropic allows a reset. The choice ends with this weekly window; quitting Headroom cancels it."
-                : "One reset will be used when a usage update reports 100% weekly usage. The choice ends with this weekly window; quitting Headroom cancels it."
-        case "paused": return "Usage is unavailable, so monitoring is paused. The choice still ends with this weekly window; quitting Headroom cancels it."
+            if (!claude) return "The server holds one reset for 100% weekly usage. " + serverHoldsText
+            if (automaticEffect.length > 0) return "The server holds this automatic reset. " + automaticEffect + " " + serverHoldsText
+            return "The server holds this automatic reset. " + serverHoldsText
+        case "paused":
+            if (!claude) return "Usage is unavailable. The server keeps this reset for 100% weekly usage and evaluates it when readings return. " + serverHoldsText
+            return "Usage is unavailable. The server keeps this automatic reset and evaluates it when readings return. " + serverHoldsText
         case "reconciling": return "A previous request is still being reconciled with updated usage. Nothing can be used until then."
         // The irreversible-spend warning sits under Use now wherever it can be chosen.
         default:
             if (kindAware) return selectedKindInfo
-                ? "Use one " + selectedKindInfo.label + " now when Anthropic allows it, or automatically at its limit."
-                : "Choose which banked reset to use now, or which one the automatic choice may use."
+                ? "Use one " + selectedKindInfo.label + " now when Anthropic allows it, or let the server use it automatically at its limit."
+                : "Use one of the banked resets now when Anthropic allows it, or let the server use the matching reset at whichever limit is reached."
             return claude
-                ? "Use one Claude reset now when Anthropic allows it, or automatically once usage reports a session or weekly limit."
-                : "Use one reset now, or automatically once a usage update reports 100% weekly usage."
+                ? "Use one Claude reset now when Anthropic allows it, or let the server use one automatically once usage reports a session or weekly limit."
+                : "Use one reset now, or let the server use one automatically once a usage update reports 100% weekly usage."
         }
     }
     anchors.centerIn: parent
@@ -96,15 +107,16 @@ Popup {
             visible: options.kindAware || options.availableCount > 0
             text: options.kindAware
                 ? (options.selectedKindInfo ? "Banked: " + options.selectedKindInfo.countText
+                    : options.kinds.length > 1 ? "Banked: " + options.anyCounts
                     : "Choose which banked reset to use")
                 : "Banked resets: " + options.availableCount
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }
-        // One row per listed kind: capitalized label, count, refills, and
-        // whether Anthropic permits it now. Selecting a row records a choice;
-        // it never spends or authorizes anything by itself.
+        // One row per listed kind, after "Any matching reset" when several are
+        // listed. Selecting a row records a choice; it never spends or
+        // authorizes anything by itself.
         ColumnLayout {
             objectName: "resetKindChooser"
             visible: options.kindAware && !options.armed && !options.busy
@@ -114,6 +126,19 @@ Popup {
                 text: "Choose a banked reset"
                 textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium
                 Layout.fillWidth: true
+            }
+            ActionButton {
+                objectName: "resetKindAny"
+                // A sole kind is already selected below; no extra row.
+                visible: options.kinds.length > 1
+                text: "Any matching reset"
+                accent: options.kinds.length > 1 && options.selectedKindId === ""
+                implicitHeight: 32
+                Layout.fillWidth: true
+                Accessible.role: Accessible.RadioButton
+                Accessible.checked: options.kinds.length > 1 && options.selectedKindId === ""
+                Accessible.description: "Uses whichever matching reset reaches its limit first"
+                onClicked: options.kindSelected("")
             }
             Repeater {
                 model: options.kinds
@@ -152,9 +177,8 @@ Popup {
         }
         Text {
             objectName: "resetOptionsKindTrigger"
-            visible: options.kindAware && options.selectedKindInfo !== null
-                && options.selectedKindInfo.triggerText.length > 0
-            text: options.selectedKindInfo ? options.selectedKindInfo.triggerText : ""
+            visible: options.kindAware && !options.armed && options.automaticEffect.length > 0
+            text: options.automaticEffect
             textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 12
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
@@ -164,6 +188,14 @@ Popup {
             visible: options.armed && options.deadlineLabel.length > 0
             text: "Weekly reset: " + options.deadlineLabel
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12
+            Layout.fillWidth: true; wrapMode: Text.WordWrap
+            Accessible.name: text
+        }
+        Text {
+            objectName: "resetOptionsRequested"
+            visible: options.automaticRequested
+            text: "An automatic reset was requested. Waiting for the result."
+            textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 13
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }
