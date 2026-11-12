@@ -102,6 +102,13 @@ The SSH client disables agent forwarding, PTY allocation, local commands, and
 connection multiplex reuse. It does not trust an unrelated localhost HTTP
 listener as proof of an SSH connection.
 
+The receiver also forwards the confirmed manual reset routes and the
+automatic-reset state routes
+`PUT`/`DELETE /api/v1/providers/{claude|codex}/reset/automatic`, so the desktop
+can arm or cancel an authorization over the selected SSH transport.
+Cancellation carries an empty body; arming uses the same bounded JSON contract
+as HTTP.
+
 For a dedicated key, an administrator can restrict the server-side authorized
 key to the receiver command, using the executable's actual absolute path:
 

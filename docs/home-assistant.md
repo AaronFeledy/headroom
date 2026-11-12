@@ -202,6 +202,14 @@ zero is a known count. The GET usage endpoints and Home Assistant sensors only
 read this metadata and never redeem a reset. Headroom's desktop has a separate,
 explicitly confirmed reset action.
 
+The default Claude and ChatGPT (`Codex`) rows may also carry additive
+`reset_automation`: `null`, or an object with `armed`, `armed_at`,
+`window_ends_at`, `kinds`, `account_fingerprint`, and `last_event`. It reports a
+server-owned automatic reset that was explicitly armed in the desktop. Sensors
+can read it; the API never arms or redeems it from a sensor request, other
+provider rows and extra Claude accounts report `null`, and an ended window is
+never reported as armed.
+
 `buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.
 
 
