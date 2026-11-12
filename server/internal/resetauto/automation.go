@@ -35,6 +35,8 @@ type ExecutorRequest struct {
 	RequestID          string
 	AccountFingerprint string
 	Kind               string
+	// Confirm must hold for the reading the reset core is about to spend on.
+	Confirm func(poller.Entry) bool
 }
 
 // ExecutorResult mirrors the reset core's terminal classification without
@@ -141,8 +143,25 @@ func (a *Automation) fire(provider string, record Record, kind string) {
 		a.finish(provider, newEvent(a.now(), "failed", "", ReasonStateUnavailable, kind))
 		return
 	}
-	result := a.executor(ctx, ExecutorRequest{Provider: provider, RequestID: requestID, AccountFingerprint: record.AccountFingerprint, Kind: kind})
+	result := a.executor(ctx, ExecutorRequest{
+		Provider:           provider,
+		RequestID:          requestID,
+		AccountFingerprint: record.AccountFingerprint,
+		Kind:               kind,
+		Confirm:            spendConfirmation(provider, record, kind, a.now),
+	})
 	a.finish(provider, classify(result, kind, a.now()))
+}
+
+// spendConfirmation re-applies the firing rule to the reading the reset core
+// spends on. The core polls again before spending and its own eligibility is
+// looser than a full meter, so a reading that would not itself decide this
+// spend must refuse it.
+func spendConfirmation(provider string, record Record, kind string, now func() time.Time) func(poller.Entry) bool {
+	return func(entry poller.Entry) bool {
+		decision := Decide(provider, record, entry, now().UTC())
+		return decision.Action == ActionFire && decision.Kind == kind
+	}
 }
 
 func (a *Automation) finish(provider string, event *usage.ResetAutomationEvent) {

@@ -42,6 +42,9 @@ type ResetRequest struct {
 	RequestID          string
 	AccountFingerprint string
 	Kind               string
+	// Confirm, when set, must accept the reading this attempt spends on. The
+	// automatic path uses it to hold the spend to its own firing rule.
+	Confirm func(poller.Entry) bool
 }
 
 // ResetResult carries the handler-facing outcome. Status is zero on success.
@@ -88,6 +91,10 @@ func (c *ResetCore) Execute(ctx context.Context, provider string, request ResetR
 		if provider == "claude" && request.Kind == "" && claudeResetKindAmbiguous(entry) {
 			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
 			return ResetResult{Status: http.StatusConflict, Message: multiKindResetMessage}
+		}
+		if request.Confirm != nil && !request.Confirm(entry) {
+			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
+			return ResetResult{Status: http.StatusConflict, Message: "fresh eligible " + label + " usage is required"}
 		}
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
@@ -167,6 +174,7 @@ func (c *ResetCore) AutomationExecutor() resetauto.Executor {
 			RequestID:          request.RequestID,
 			AccountFingerprint: request.AccountFingerprint,
 			Kind:               request.Kind,
+			Confirm:            request.Confirm,
 		})
 		return resetauto.ExecutorResult{
 			Outcome:     result.Outcome,
