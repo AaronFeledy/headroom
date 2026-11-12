@@ -94,7 +94,10 @@ Capabilities evaluate(const Facts &facts) {
     else if (shared != Reason::None) result.armReason = shared;
     else if (selectionMissing) result.armReason = Reason::KindMissing;
     else if (!offered) result.armReason = Reason::BelowFloor;
-    else if (kindAware) {
+    else if (facts.provider == Provider::Claude) {
+        // The server needs at least one kind to arm Claude, so a reading with
+        // no kinds (absent, null, or empty) offers nothing to authorize. Codex
+        // sends no kinds and keeps its count-only request.
         const QStringList chosen = automaticKinds(facts);
         if (chosen.isEmpty()) result.armReason = Reason::NoCredits;
         else {

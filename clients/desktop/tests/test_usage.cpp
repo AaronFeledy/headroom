@@ -865,7 +865,10 @@ private slots:
     void serverAutomationDrivesTheResetActionWithoutLocalState() {
         const QString fingerprint(64, QLatin1Char('b'));
         const auto snapshot = [&](const QJsonValue &automation, bool failed = false) {
-            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(100, 100, 3, true)).array();
+            // Arming Claude requires at least one listed kind, so the supported
+            // reading carries one; arm and cancel still come only from the server.
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaudeKinds(100, 100,
+                {TestUsage::claudeResetKind("weekly", "weekly", 3, true, {"weekly"})})).array();
             auto claude = providers[0].toObject();
             if (automation.isUndefined()) claude.remove("reset_automation");
             else claude["reset_automation"] = automation;

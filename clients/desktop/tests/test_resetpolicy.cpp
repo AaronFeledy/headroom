@@ -122,8 +122,10 @@ private slots:
         QCOMPARE(result.visible, visible);
         QCOMPARE(result.canOpen, visible);
         QCOMPARE(result.canUseNow, canUseNow);
-        // Arming follows the offer, not Anthropic's current answer.
-        QCOMPARE(result.canArm, visible);
+        // Use now follows Anthropic's answer; a legacy reading with no listed
+        // kinds still has nothing to authorize automatically.
+        QVERIFY(!result.canArm);
+        if (visible) QCOMPARE(result.armReason, Reason::NoCredits);
         QCOMPARE(result.useNowReason, useNowReason);
         QVERIFY(!result.canConfirm);
     }
@@ -181,7 +183,8 @@ private slots:
         QVERIFY(!reasonText(result.useNowReason, provider).isEmpty());
     }
     void confirmationIdentityBindsActualUse() {
-        const Facts permitted = withUsable(baseline(Provider::Claude), 1);
+        Facts permitted = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        permitted.selectedKind = "weekly";
         auto result = evaluate(permitted);
         QVERIFY(result.canUseNow && result.canArm);
         QVERIFY(!result.canConfirm && !result.canSchedule);
@@ -196,8 +199,11 @@ private slots:
         QCOMPARE(result.armReason, Reason::ConfirmationStale);
         // A confirmation never upgrades a reading that forbids use.
         result = evaluate(confirmed(withUsable(baseline(Provider::Claude), 0)));
-        QVERIFY(!result.canConfirm); QVERIFY(result.canSchedule);
+        QVERIFY(!result.canConfirm);
         QCOMPARE(result.useNowReason, Reason::ProviderRefused);
+        // A legacy reading with no kinds binds Use now but has nothing to arm.
+        QVERIFY(!result.canArm && !result.canSchedule);
+        QCOMPARE(result.armReason, Reason::NoCredits);
         // An owned confirmation keeps the options visible after usage drops.
         result = evaluate(confirmed(baseline(Provider::Codex, 85)));
         QVERIFY(result.visible); QCOMPARE(result.phase, Phase::Choices);
@@ -217,6 +223,10 @@ private slots:
     void armingNeedsKnownFutureWindow() {
         QFETCH(Provider, provider); QFETCH(Window, window); QFETCH(Reason, armReason);
         Facts facts = confirmed(withUsable(baseline(provider), 1));
+        if (provider == Provider::Claude) {
+            facts = confirmed(withUsable(kinded(baseline(Provider::Claude, 100)), 1));
+            facts.selectedKind = "weekly";
+        }
         facts.window = window;
         const auto result = evaluate(facts);
         QCOMPARE(result.armReason, armReason);
@@ -453,8 +463,10 @@ private slots:
         Facts legacy = withUsable(baseline(Provider::Claude, 100), 1);
         legacy.selectedKindMissing = true;
         result = evaluate(legacy);
-        QVERIFY(result.canUseNow && result.canArm);
+        QVERIFY(result.canUseNow);
         QCOMPARE(result.useNowReason, Reason::None);
+        // No listed kinds means nothing to arm, so nothing can be widened.
+        QVERIFY(!result.canArm); QCOMPARE(result.armReason, Reason::NoCredits);
         QVERIFY(automaticEffectText(legacy).isEmpty());
     }
     void armingRequiresAServerThatSupportsIt() {
@@ -486,6 +498,26 @@ private slots:
         QFETCH(double, utilization); QFETCH(bool, released);
         QCOMPARE(releasesCodexReceipt(std::isnan(utilization) ? std::nullopt : std::optional<double>(utilization)), released);
         QVERIFY(!releasesCodexReceipt(std::nullopt));
+    }
+    void claudeWithoutKindsOffersNoAutomaticChoice() {
+        for (const bool kindsKnown : {false, true}) {
+            Facts facts = withUsable(baseline(Provider::Claude, 100), 1);
+            facts.kindsKnown = kindsKnown; // absent/null, then an explicit empty array
+            facts.kinds.clear();
+            const auto result = evaluate(facts);
+            QVERIFY(result.visible && result.canOpen);
+            QVERIFY(!result.canArm && !result.canSchedule);
+            QCOMPARE(result.armReason, Reason::NoCredits);
+            QVERIFY(reasonText(result.armReason, Provider::Claude).contains("No banked reset"));
+            QVERIFY(automaticKinds(facts).isEmpty());
+        }
+        // ChatGPT sends no kinds and keeps its count-only authorization.
+        const auto codex = evaluate(confirmed(baseline(Provider::Codex, 100)));
+        QVERIFY(codex.canArm && codex.canSchedule);
+        QCOMPARE(codex.armReason, Reason::None);
+        // One usable kind is still enough for Claude.
+        Facts kindedFacts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        QVERIFY(evaluate(kindedFacts).canArm);
     }
     void copyNamesEveryStateAndReason() {
         for (const int phase : {0, 1, 2, 3, 4, 5}) QVERIFY(!phaseName(Phase(phase)).isEmpty());
