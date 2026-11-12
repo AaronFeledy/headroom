@@ -1,6 +1,7 @@
 package poller
 
 import (
+	"slices"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -119,11 +120,7 @@ func copyResetKinds(kinds []usage.ResetCreditKind) []usage.ResetCreditKind {
 	for index, kind := range kinds {
 		copied[index] = kind
 		copied[index].ExpiresAt = copyString(kind.ExpiresAt)
-		if kind.Refills != nil {
-			refills := make([]string, len(kind.Refills))
-			copy(refills, kind.Refills)
-			copied[index].Refills = refills
-		}
+		copied[index].Refills = slices.Clone(kind.Refills)
 		if kind.Next != nil {
 			next := *kind.Next
 			next.ExpiresAt = copyString(kind.Next.ExpiresAt)
