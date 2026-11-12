@@ -8,6 +8,21 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
+// pollAndRelease releases the fetch lock before an observer can start another
+// poll for the same provider. The deferred release still covers a panic.
+func (s *providerState) pollAndRelease(ctx context.Context, now func() time.Time) (entry Entry) {
+	released := false
+	defer func() {
+		if !released {
+			s.release()
+		}
+	}()
+	entry = s.pollLocked(ctx, now)
+	released = true
+	s.release()
+	return entry
+}
+
 func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) Entry {
 	current := now()
 	s.mu.RLock()

@@ -21,6 +21,8 @@ type Options struct {
 	Logger    *slog.Logger
 	Clock     Clock
 	NewTicker func(time.Duration) Ticker
+	// AfterPoll observers a completed poll after its fetch lock is released.
+	AfterPoll func(string, Entry)
 }
 
 type Poller struct {
@@ -29,6 +31,7 @@ type Poller struct {
 	newTicker    func(time.Duration) Ticker
 	mu           sync.RWMutex
 	providers    map[string]*providerState
+	afterPoll    func(string, Entry)
 	serviceCtx   context.Context
 	refreshUntil time.Time
 	round        map[*providerState]bool
@@ -71,7 +74,7 @@ func New(opts Options) *Poller {
 	if newTicker == nil {
 		newTicker = newRealTicker
 	}
-	return &Poller{logger: opts.Logger, clock: clock, newTicker: newTicker, providers: map[string]*providerState{}}
+	return &Poller{logger: opts.Logger, clock: clock, newTicker: newTicker, afterPoll: opts.AfterPoll, providers: map[string]*providerState{}}
 }
 
 func (p *Poller) Register(provider usage.Provider, enabled bool) error {
@@ -117,8 +120,9 @@ func (p *Poller) PollAll(ctx context.Context) []Entry {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer state.release()
-			entries[i] = state.pollLocked(ctx, p.clock.Now)
+			entry := state.pollAndRelease(ctx, p.clock.Now)
+			entries[i] = entry
+			p.notifyAfterPoll(state.name, entry)
 		}()
 	}
 	for _, i := range busy {
@@ -135,6 +139,25 @@ func (p *Poller) PollProvider(ctx context.Context, name string) (Entry, bool, er
 		return Entry{}, false, nil
 	}
 	return state.poll(ctx, p.clock.Now), true, nil
+}
+
+// SetAfterPoll installs the post-poll observer. Install it before Run so a
+// completed poll never races its replacement. The observer runs in its own
+// goroutine with the fetch lock already released.
+func (p *Poller) SetAfterPoll(observer func(string, Entry)) {
+	p.mu.Lock()
+	p.afterPoll = observer
+	p.mu.Unlock()
+}
+
+func (p *Poller) notifyAfterPoll(name string, entry Entry) {
+	p.mu.RLock()
+	observer := p.afterPoll
+	p.mu.RUnlock()
+	if observer == nil {
+		return
+	}
+	go observer(name, copyEntry(entry))
 }
 
 func (p *Poller) Snapshot() []Entry {
@@ -191,8 +214,9 @@ func (p *Poller) enabledStates() []*providerState {
 
 func (s *providerState) poll(ctx context.Context, now func() time.Time) Entry {
 	s.fetchMu.Lock()
-	defer s.release()
-	return s.pollLocked(ctx, now)
+	entry := s.pollAndRelease(ctx, now)
+	s.owner.notifyAfterPoll(s.name, entry)
+	return entry
 }
 
 func fetchProvider(ctx context.Context, name string, provider usage.Provider) (data usage.UsageData, err error) {
