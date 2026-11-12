@@ -114,66 +114,11 @@ Popup {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }
-        // One row per listed kind, after "Any matching reset" when several are
-        // listed. Selecting a row records a choice; it never spends or
-        // authorizes anything by itself.
-        ColumnLayout {
-            objectName: "resetKindChooser"
+        ResetKindChooser {
             visible: options.kindAware && !options.armed && !options.busy
-            Layout.fillWidth: true; spacing: 6
-            Text {
-                objectName: "resetKindHeading"
-                text: "Choose a banked reset"
-                textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium
-                Layout.fillWidth: true
-            }
-            ActionButton {
-                objectName: "resetKindAny"
-                // A sole kind is already selected below; no extra row.
-                visible: options.kinds.length > 1
-                text: "Any matching reset"
-                accent: options.kinds.length > 1 && options.selectedKindId === ""
-                implicitHeight: 32
-                Layout.fillWidth: true
-                Accessible.role: Accessible.RadioButton
-                Accessible.checked: options.kinds.length > 1 && options.selectedKindId === ""
-                Accessible.description: "Uses whichever matching reset reaches its limit first"
-                onClicked: options.kindSelected("")
-            }
-            Repeater {
-                model: options.kinds
-                delegate: ColumnLayout {
-                    required property var modelData
-                    Layout.fillWidth: true; spacing: 2
-                    ActionButton {
-                        objectName: "resetKind_" + modelData.id
-                        text: modelData.title
-                        accent: options.selectedKindId === modelData.id
-                        implicitHeight: 32
-                        Layout.fillWidth: true
-                        Accessible.role: Accessible.RadioButton
-                        Accessible.checked: options.selectedKindId === modelData.id
-                        Accessible.description: modelData.countText
-                            + (modelData.refillText.length ? ". " + modelData.refillText : "")
-                        onClicked: options.kindSelected(modelData.id)
-                    }
-                    Text {
-                        objectName: "resetKindDetails_" + modelData.id
-                        text: modelData.countText
-                            + (modelData.refillText.length ? " · " + modelData.refillText : "")
-                            + " · " + (modelData.usableNow ? "Can be used now" : "Anthropic cannot apply it right now")
-                        textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        objectName: "resetKindNext_" + modelData.id
-                        visible: text.length > 0
-                        text: modelData.nextText || ""
-                        textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
-                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                }
-            }
+            kinds: options.kinds
+            selectedKindId: options.selectedKindId
+            onKindSelected: function(kind) { options.kindSelected(kind) }
         }
         Text {
             objectName: "resetOptionsKindTrigger"
