@@ -18,11 +18,18 @@ type AccountProvider interface {
 	Account() *Account
 }
 
-// MinIntervalProvider is implemented by providers that require a minimum gap
-// between upstream usage attempts. The poller never fetches such a provider
-// sooner than this after an attempt that received an HTTP response.
-type MinIntervalProvider interface {
-	MinPollInterval() time.Duration
+// PollPolicy bounds a provider's adaptive spacing between upstream attempts.
+type PollPolicy struct {
+	MinSpacing  time.Duration // never fetch sooner than this after an attempt that received an HTTP response
+	MaxSpacing  time.Duration // ceiling for spacing learned from rate limits
+	IdleSpacing time.Duration // ceiling for the delay while successive readings are unchanged
+}
+
+// PollPolicyProvider is implemented by providers whose poll cadence adapts to
+// upstream rate limits and idle readings. The poller never fetches sooner than
+// MinSpacing after an attempt that received an HTTP response.
+type PollPolicyProvider interface {
+	PollPolicy() PollPolicy
 }
 
 type UsageBucket struct {

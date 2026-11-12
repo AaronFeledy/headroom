@@ -168,16 +168,16 @@ func Test_BankedMetadata_parameter_rejection_does_not_retry_profile_errors(t *te
 	}
 }
 
-func Test_BankedMetadata_claude_429_declares_five_minute_floor_only_without_usable_header(t *testing.T) {
+func Test_BankedMetadata_claude_429_reports_usage_rate_limit_and_upstream_header(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		header  string
-		wantMin time.Duration
+		name   string
+		header string
+		future bool
 	}{
-		{"missing", "", 5 * time.Minute},
-		{"zero", "0", 5 * time.Minute},
-		{"elapsed", "Thu, 01 Jan 1970 00:00:00 GMT", 5 * time.Minute},
-		{"future", "600", 0},
+		{"missing", "", false},
+		{"zero", "0", false},
+		{"elapsed", "Thu, 01 Jan 1970 00:00:00 GMT", false},
+		{"future", "600", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeClaudeCredentials(t, credentialFixture{Access: "fixture", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t)})
@@ -191,12 +191,12 @@ func Test_BankedMetadata_claude_429_declares_five_minute_floor_only_without_usab
 			c := New(Options{CredentialsPath: path, HTTPClient: server.Client(), UsageURL: server.URL + "/usage"})
 			// When
 			data, err := c.Fetch(context.Background())
-			// Then
-			if err != nil || data.Error == nil || data.FetchFailure == nil || data.FetchFailure.MinCooldown != tc.wantMin {
-				t.Fatalf("failure=%+v, want MinCooldown %s", data.FetchFailure, tc.wantMin)
+			// Then the poller owns the cooldown; the client only reports the reply.
+			if err != nil || data.Error == nil || data.FetchFailure == nil || data.FetchFailure.Kind != usage.FailureRateLimited || data.FetchFailure.Operation != usage.OperationUsage || data.FetchFailure.HTTPStatus != http.StatusTooManyRequests {
+				t.Fatalf("failure = %+v", data.FetchFailure)
 			}
-			if tc.wantMin == 0 && !data.FetchFailure.RetryAfter.After(time.Now()) {
-				t.Fatal("future Retry-After was not preserved")
+			if got := data.FetchFailure.RetryAfter.After(time.Now()); got != tc.future {
+				t.Fatalf("future Retry-After = %t, want %t", got, tc.future)
 			}
 		})
 	}

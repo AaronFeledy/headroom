@@ -32,11 +32,12 @@ const (
 	expirySkew        = 60 * time.Second
 	reauthCommandText = "claude auth login"
 
-	// Claude accepts roughly one usage request per two minutes per token.
-	// These bounds keep ordinary polling inside that budget.
-	minPollInterval      = 3 * time.Minute
-	rateLimitMinCooldown = 5 * time.Minute
-	paramRejectionTTL    = 30 * time.Minute
+	// Claude accepts roughly one usage request per two minutes per token, and
+	// other clients spend the same budget, so live requests bound the cadence.
+	minPollSpacing    = 3 * time.Minute
+	maxPollSpacing    = 15 * time.Minute
+	idlePollSpacing   = 10 * time.Minute
+	paramRejectionTTL = 30 * time.Minute
 )
 
 type Options struct {
@@ -144,8 +145,15 @@ func (c *Client) Name() string { return c.name }
 
 func (c *Client) ProviderType() string { return providerName }
 
-// MinPollInterval keeps Claude usage requests at least three minutes apart.
-func (c *Client) MinPollInterval() time.Duration { return minPollInterval }
+// PollPolicy keeps Claude requests inside its per-token budget while adapting
+// to observed rate limits and idle, unchanged readings.
+func (c *Client) PollPolicy() usage.PollPolicy {
+	return usage.PollPolicy{
+		MinSpacing:  minPollSpacing,
+		MaxSpacing:  maxPollSpacing,
+		IdleSpacing: idlePollSpacing,
+	}
+}
 
 func (c *Client) Account() *usage.Account { return c.account.Clone() }
 

@@ -10,18 +10,20 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-type intervalProvider struct {
-	name  string
-	min   time.Duration
-	calls atomic.Int32
-	fail  bool
+var claudePolicy = usage.PollPolicy{MinSpacing: 3 * time.Minute, MaxSpacing: 15 * time.Minute, IdleSpacing: 10 * time.Minute}
+
+type policyProvider struct {
+	name   string
+	policy usage.PollPolicy
+	calls  atomic.Int32
+	fail   bool
 }
 
-func (p *intervalProvider) Name() string { return p.name }
+func (p *policyProvider) Name() string { return p.name }
 
-func (p *intervalProvider) MinPollInterval() time.Duration { return p.min }
+func (p *policyProvider) PollPolicy() usage.PollPolicy { return p.policy }
 
-func (p *intervalProvider) Fetch(ctx context.Context) (usage.UsageData, error) {
+func (p *policyProvider) Fetch(ctx context.Context) (usage.UsageData, error) {
 	if err := ctx.Err(); err != nil {
 		return usage.UsageData{ProviderName: p.name}, err
 	}
@@ -52,8 +54,8 @@ func spacingPoller(t *testing.T, providers ...usage.Provider) (*Poller, *advance
 
 func Test_Poller_minimum_spacing_covers_tick_refresh_poll_and_credentials(t *testing.T) {
 	// Given a provider with a three-minute floor and a normal one-minute peer.
-	claude := &intervalProvider{name: "Claude", min: 3 * time.Minute}
-	other := &intervalProvider{name: "Other"}
+	claude := &policyProvider{name: "Claude", policy: claudePolicy}
+	other := &policyProvider{name: "Other"}
 	p, clock := spacingPoller(t, claude, other)
 	ctx := context.Background()
 	base := clock.Now()
@@ -110,7 +112,7 @@ func Test_Poller_minimum_spacing_covers_tick_refresh_poll_and_credentials(t *tes
 
 func Test_Poller_transport_failure_keeps_transient_retry_inside_spacing_window(t *testing.T) {
 	// Given
-	claude := &intervalProvider{name: "Claude", min: 3 * time.Minute, fail: true}
+	claude := &policyProvider{name: "Claude", policy: claudePolicy, fail: true}
 	p, clock := spacingPoller(t, claude)
 	ctx := context.Background()
 	p.PollProvider(ctx, "Claude")

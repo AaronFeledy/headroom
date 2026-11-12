@@ -21,7 +21,7 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 	if spaced {
 		// Spacing is not a rate-limit cooldown: only the next due time moves.
 		s.mu.Lock()
-		if until := s.responseAt.Add(s.minInterval); s.nextDue.Before(until) {
+		if until := s.responseAt.Add(s.spacing); s.nextDue.Before(until) {
 			s.nextDue = until
 		}
 		s.mu.Unlock()
@@ -57,10 +57,18 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 		failure = &usage.FetchFailure{Kind: *kind}
 	}
 	entry.Data.FetchFailure = copyFetchFailure(failure)
-	if receivedHTTPResponse(entry, err, failure) {
+	responded := receivedHTTPResponse(entry, err, failure)
+	if responded {
 		s.responseAt = completed
 	}
-	s.schedule(ctx, entry, failure)
+	success := entry.Data.Error == nil
+	s.learnSpacing(success, failure)
+	if success {
+		s.recordReading(entry.Data)
+	} else {
+		s.idle = 0
+	}
+	s.schedule(ctx, entry, failure, responded)
 	entry.Data.FetchStatus.Diagnostics = s.diagnostics(entry, failure)
 	s.logAttempt(ctx, entry, failure)
 	s.entry = copyEntry(entry)

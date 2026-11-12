@@ -41,7 +41,6 @@ func (c *Client) requestUsage(ctx context.Context, endpoint string, creds *crede
 	body, err := io.ReadAll(resp.Body)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		failure := usage.HTTPFailure(resp)
-		applyRateLimitCooldown(failure, resp.StatusCode)
 		return usage.UsageData{}, nil, &statusError{statusCode: resp.StatusCode, body: string(body), failure: failure}, nil
 	}
 	if err != nil {
@@ -52,17 +51,6 @@ func (c *Client) requestUsage(ctx context.Context, endpoint string, creds *crede
 		return usage.UsageData{}, nil, nil, err
 	}
 	return parsed, parseBankStatus(body), nil, nil
-}
-
-// applyRateLimitCooldown declares Claude's five-minute floor only when the
-// upstream Retry-After is absent, unparsable, zero, or already elapsed.
-func applyRateLimitCooldown(failure *usage.FetchFailure, statusCode int) {
-	if statusCode != http.StatusTooManyRequests || failure == nil || failure.Kind != usage.FailureRateLimited {
-		return
-	}
-	if !failure.RetryAfter.After(time.Now()) {
-		failure.MinCooldown = rateLimitMinCooldown
-	}
 }
 
 func (c *Client) usageEndpoint(token string) (string, bool) {
