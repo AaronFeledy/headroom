@@ -414,7 +414,14 @@ void Controller::cancelResetConfirmation() {
 
 bool Controller::selectResetKind(const QString &kind) {
     // Recording a choice is not permission and never spends: the current
-    // reading and the policy still decide whether it may be used.
+    // reading and the policy still decide whether it may be used. An empty
+    // id is the "Any matching reset" row, so it always clears a specific
+    // choice and returns to the any-matching state.
+    if (kind.isEmpty()) {
+        m_resetKind.clear();
+        emit changed();
+        return true;
+    }
     const auto facts = resetFacts("Claude");
     if (!ResetPolicy::findKind(facts, kind)) return false;
     m_resetKind = kind;

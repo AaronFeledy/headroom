@@ -957,6 +957,15 @@ private slots:
         QCOMPARE(action["selectedKindTrigger"].toString(), QString("Used when Weekly or Fable reaches 100%"));
         QCOMPARE(action["automaticEffect"].toString(), QString("Used when Weekly or Fable reaches 100%"));
         QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+        // "Any matching reset" can be chosen again and restores the any state.
+        QVERIFY(controller.selectResetKind(""));
+        action = controller.resetAction();
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QCOMPARE(action["automaticEffect"].toString(),
+            QString("The matching reset is used at whichever limit is reached."));
+        QVERIFY(action["automaticReason"].toString().isEmpty());
+        QVERIFY(action["canSchedule"].toBool());
+        QVERIFY(controller.selectResetKind("fable"));
         QVERIFY(!controller.selectResetKind("missing"));
         QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("fable"));
         controller.cancelResetConfirmation();
