@@ -119,8 +119,16 @@ func Test_BankedMetadata_parameter_rejection_falls_back_once_per_token_window(t 
 	c := New(Options{CredentialsPath: path, HTTPClient: server.Client(), UsageURL: server.URL + "/usage"})
 	// When the parameterized request is rejected, one plain retry succeeds.
 	first, err := c.Fetch(context.Background())
-	if err != nil || first.Error != nil || first.RateLimitResetCredits != nil || len(first.Buckets) == 0 {
+	if err != nil || first.Error != nil || first.RateLimitResetCredits != nil {
 		t.Fatalf("fallback did not preserve usage: %v %+v", err, first.Error)
+	}
+	if len(first.Buckets) != 3 {
+		t.Fatalf("fallback buckets = %+v, want session, weekly, and extra", first.Buckets)
+	}
+	for _, id := range []string{"session", "weekly", "extra"} {
+		if !containsBucket(first.Buckets, id) {
+			t.Errorf("fallback lost %s bucket", id)
+		}
 	}
 	if parameterCalls.Load() != 1 || plainCalls.Load() != 1 {
 		t.Fatalf("requests = parameter %d, plain %d; want 1 and 1", parameterCalls.Load(), plainCalls.Load())
@@ -156,7 +164,7 @@ func Test_BankedMetadata_parameter_rejection_does_not_retry_profile_errors(t *te
 			t.Errorf("unexpected fallback query: %s", r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"type":"permission_error","message":"missing scope: user:profile"}}`))
+		writeResponse(t, w, `{"error":{"type":"permission_error","message":"missing scope: user:profile"}}`)
 	}))
 	defer server.Close()
 	c := New(Options{CredentialsPath: path, HTTPClient: server.Client(), UsageURL: server.URL + "/usage"})
