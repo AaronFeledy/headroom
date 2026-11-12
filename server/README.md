@@ -135,20 +135,27 @@ object, with `available_count`, nullable `account_fingerprint`, boolean
 resets. `usable_now` additionally requires eligibility, no active cooldown, and a
 usable next grant. Claude always reports `kinds` as an array (empty when nothing
 is available); Codex reports `kinds: null`. Each entry contains `id`, `label`,
-`available_count`, `usable_now`, `refills`, `gives_back_weekly`, and nullable
-`expires_at`, ordered `session`, `weekly`, `fable`, `full`, and lists only kinds
-with resets available. Grant kinds mirror Anthropic's client: a grant whose
-`gives_back_weekly` is true is `fable`; otherwise its reported `type`; otherwise an
-empty type is derived from `clears` (`five_hour` only is `session`, no
-`five_hour` is `weekly`, anything else is `full`). `refills` is the union of
-mapped `clears` in the order `session`, `weekly`, `weekly_opus`, `weekly_sonnet`,
+`available_count`, `usable_now`, `refills`, `gives_back_weekly`, nullable
+`expires_at`, and nullable `next`, ordered `session`, `weekly`, `fable`, `full`,
+and lists only kinds with resets available. Grant kinds mirror Anthropic's
+client: a grant whose `gives_back_weekly` is true is `fable`; otherwise a
+recognized reported `type` (`session`, `weekly`, `full`); otherwise, including an
+unrecognized type or no type, it is derived from the known limit keys in
+`clears` (`five_hour` only is `session`, other known keys without `five_hour` are
+`weekly`, otherwise `full`, so an empty list is `full`). `next` is `null` when
+the kind would refuse, otherwise the upstream grant a kind redemption would spend
+now, with its `label` (control characters replaced by spaces, trimmed, at most
+160 characters) and RFC 3339 UTC `expires_at`. `refills` is the union of mapped
+`clears` in the order `session`, `weekly`, `weekly_opus`, `weekly_sonnet`,
 `weekly_fable`; other keys are ignored. Valid status with no available grants
 reports zero available resets and `usable_now: false`, retaining the verified
 account fingerprint so the desktop can reconcile a pending receipt. Absent or
-malformed status and provider usage errors report null metadata. A malformed,
-duplicate, or unsupported grant, or an inconsistent next-grant reference, makes
-the entire status unknown; a partial count or inferred refusal cannot release a
-pending reset. Profile lookup failure leaves the count visible but the fingerprint
+malformed status and provider usage errors report null metadata. A malformed or
+duplicate grant, a non-string `type`, or an inconsistent next-grant reference
+makes the entire status unknown; a partial count or inferred refusal cannot
+release a pending reset. An unrecognized grant type still counts toward
+`available_count` at both levels but is never selected and never makes a kind
+usable. Profile lookup failure leaves the count visible but the fingerprint
 null, which prevents consumption and account-bound receipt release. Account and
 organization UUIDs never appear in API JSON.
 
@@ -174,7 +181,8 @@ Ineligible new requests return `409` with
 provider checks fresh credentials, the token-bound profile identity, and a fresh
 status GET, then selects a counted, usable grant of the requested kind whose time
 window is open (upstream `next_grant_id` when it is a candidate, otherwise the
-first candidate). Claude outcomes are `reset`, `already_redeemed`,
+first candidate); an unrecognized grant is never selected. Without `kind`, an
+unrecognized `next_grant_id` grant is refused. Claude outcomes are `reset`, `already_redeemed`,
 `nothing_to_reset`, or `unavailable`; Codex retains its existing outcomes
 including `no_credit`.
 Successful outcomes return `200`; uncertain or unavailable submissions return

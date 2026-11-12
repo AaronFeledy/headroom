@@ -187,10 +187,13 @@ ChatGPT (`Codex`) and Claude responses may also include
 without an active cooldown, and `kinds` lists the reset kinds that currently have
 resets available (an empty array when none). Each kind is `{"id", "label",
 "available_count", "usable_now", "refills", "gives_back_weekly",
-"expires_at"}` in the fixed order `session`, `weekly`, `fable`, `full`;
+"expires_at", "next"}` in the fixed order `session`, `weekly`, `fable`, `full`;
 `refills` lists the usage windows a grant clears (`session`, `weekly`,
 `weekly_opus`, `weekly_sonnet`, `weekly_fable`), and `expires_at` is RFC 3339 UTC
-or `null`. For Codex, `usable_now` and `kinds` remain `null`. This metadata
+or `null`. `next` is `null` when that kind would refuse, otherwise the upstream
+grant whose `label` and RFC 3339 UTC `expires_at` Headroom would spend for that
+kind right now; the label is trimmed, strips control characters, and is at most
+160 characters. For Codex, `usable_now` and `kinds` remain `null`. This metadata
 reports how many usage resets are currently banked and, when available, an
 account fingerprint used to keep a manual action bound to the account whose
 usage was checked. The fingerprint is otherwise `null`. The complete metadata

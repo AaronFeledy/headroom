@@ -159,8 +159,9 @@ not invented financial key modes.
 Claude and Codex may expose read-only `rate_limit_reset_credits`; `usable_now`
 is a nullable boolean (Codex leaves it null). Claude also classifies banked
 resets into `kinds` (`session`, `weekly`, `fable`, `full`) with per-kind counts,
-usable state, refills, and expiry; Codex `kinds` stays null. Claude usage polling
-uses one `GET /api/oauth/usage?cedar_ember=1` per attempt, starts three minutes
+usable state, refills, expiry, and the upstream label of the grant each kind
+would spend next; an unrecognized upstream grant type is counted but never
+selected or usable, and Codex `kinds` stays null. Claude usage polling uses one `GET /api/oauth/usage?cedar_ember=1` per attempt, starts three minutes
 apart, and adapts that spacing between three and fifteen minutes from usage 429s
 and repeated readings; a 429 without a usable `Retry-After` waits the learned
 spacing. Claude requests identify as the installed CLI version when
