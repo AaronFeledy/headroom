@@ -124,8 +124,10 @@ func (p *Poller) launch(s *providerState) {
 	go func() {
 		defer p.workers.Done()
 		defer cancel()
-		defer s.release()
-		s.pollLocked(ctx, p.clock.Now)
+		entry, fetched := s.pollAndRelease(ctx, p.clock.Now)
+		if fetched {
+			p.notifyAfterPoll(s.name, entry)
+		}
 	}()
 }
 

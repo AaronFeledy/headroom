@@ -120,9 +120,11 @@ func (p *Poller) PollAll(ctx context.Context) []Entry {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			entry := state.pollAndRelease(ctx, p.clock.Now)
+			entry, fetched := state.pollAndRelease(ctx, p.clock.Now)
 			entries[i] = entry
-			p.notifyAfterPoll(state.name, entry)
+			if fetched {
+				p.notifyAfterPoll(state.name, entry)
+			}
 		}()
 	}
 	for _, i := range busy {
@@ -214,8 +216,10 @@ func (p *Poller) enabledStates() []*providerState {
 
 func (s *providerState) poll(ctx context.Context, now func() time.Time) Entry {
 	s.fetchMu.Lock()
-	entry := s.pollAndRelease(ctx, now)
-	s.owner.notifyAfterPoll(s.name, entry)
+	entry, fetched := s.pollAndRelease(ctx, now)
+	if fetched {
+		s.owner.notifyAfterPoll(s.name, entry)
+	}
 	return entry
 }
 
