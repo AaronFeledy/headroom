@@ -465,6 +465,9 @@ void Controller::cancelAutomationRequest() {
     m_automationReply->abort();
     m_automationReply->deleteLater();
     m_automationReply.clear();
+    // The progress text described the request just aborted; a connection or
+    // identity change must not leave it in the reopened dialog.
+    m_resetMessage.clear();
 }
 
 void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming) {
