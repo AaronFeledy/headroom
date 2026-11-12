@@ -31,6 +31,8 @@ Popup {
     readonly property string useNowReason: action.useNowReason || ""
     readonly property string automaticReason: action.automaticReason || ""
     readonly property string message: action.message || ""
+    // What Use now would spend, when the chosen kind names a grant.
+    readonly property string useNowGrant: action.useNowGrant || ""
     // The additive breakdown. Null or an empty list keeps the legacy dialog.
     readonly property var kinds: action.kinds || []
     readonly property bool kindAware: claude && kinds.length > 0
@@ -138,6 +140,13 @@ Popup {
                         textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
                         Layout.fillWidth: true; wrapMode: Text.WordWrap
                     }
+                    Text {
+                        objectName: "resetKindNext_" + modelData.id
+                        visible: text.length > 0
+                        text: modelData.nextText || ""
+                        textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
                 }
             }
         }
@@ -188,6 +197,13 @@ Popup {
                 accent: options.canConfirm; Layout.fillWidth: true
                 Accessible.description: options.canConfirm ? useNowWarning.text : options.useNowReason
                 onClicked: options.useNowRequested()
+            }
+            Text {
+                objectName: "useNowGrant"
+                visible: options.useNowGrant.length > 0
+                text: options.useNowGrant
+                textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
             }
             Text {
                 id: useNowWarning; objectName: "useNowWarning"

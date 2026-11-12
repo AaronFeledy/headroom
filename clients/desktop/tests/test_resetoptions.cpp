@@ -24,6 +24,7 @@ struct Scene {
     std::optional<qint64> availableCount = 3;
     QVariantList kinds;
     QString selectedKind;
+    QString useNowGrant;
 };
 Q_DECLARE_METATYPE(Scene)
 
@@ -45,11 +46,12 @@ QQuickItem *findItem(QQuickItem *root, const QString &name) {
 }
 
 QVariantMap syntheticKind(const QString &id, const QString &label, int count, bool usable,
-                          const QString &refillText, const QString &triggerText) {
+                          const QString &refillText, const QString &triggerText,
+                          const QString &nextText = {}) {
     return {{"id", id}, {"label", label}, {"availableCount", count}, {"usableNow", usable},
         {"countText", QString("%1 %2%3").arg(count).arg(label).arg(count == 1 ? QString() : QStringLiteral("s"))},
         {"title", label.left(1).toUpper() + label.mid(1)},
-        {"refillText", refillText}, {"triggerText", triggerText}};
+        {"refillText", refillText}, {"triggerText", triggerText}, {"nextText", nextText}};
 }
 
 QVariantMap synthetic(const Scene &scene) {
@@ -62,7 +64,7 @@ QVariantMap synthetic(const Scene &scene) {
         {"canCancel", scene.canCancel}, {"useNowReason", scene.useNowReason},
         {"automaticReason", scene.automaticReason}, {"windowEndsAt", QString()},
         {"kinds", scene.kinds}, {"kindsKnown", !scene.kinds.isEmpty()},
-        {"selectedKind", scene.selectedKind}};
+        {"selectedKind", scene.selectedKind}, {"useNowGrant", scene.useNowGrant}};
 }
 }
 
@@ -118,6 +120,26 @@ private slots:
             "", "", "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
         QTest::newRow("claude-kind-armed") << Scene{"claude-kind-armed", "Claude", "armed", true, false, true, false,
             "", "Automatic use is already set.", "", "Sunday at 10:00 PM", qint64(3), QVariantList{weeklyKind, fableKind}, "fable"};
+        // A grant line renders only when the policy map names one. The wording
+        // itself is composed and tested in the reset policy.
+        const QString left = QChar(0x201C), right = QChar(0x201D);
+        const QString labeled = QStringLiteral("%1One full limit reset (November 2026)%2").arg(left, right);
+        const QString expires = QStringLiteral("Thu, Dec 10 at 4:00 PM");
+        const QVariantMap grantKind = syntheticKind("weekly", "weekly reset", 1, true,
+            "Refills Weekly and Fable", "Uses it when Weekly reaches 100%",
+            QStringLiteral("Next: %1, expires %2").arg(labeled, expires));
+        QTest::newRow("claude-grant-labeled") << Scene{"claude-grant-labeled", "Claude", "choices", true, true, false, false,
+            "", "", "", "", qint64(1), QVariantList{grantKind}, "weekly",
+            QStringLiteral("Uses %1, which expires %2.").arg(labeled, expires)};
+        const QVariantMap emptyLabelKind = syntheticKind("weekly", "weekly reset", 1, true,
+            "Refills Weekly and Fable", "Uses it when Weekly reaches 100%", "Next: one weekly reset");
+        QTest::newRow("claude-grant-empty-label") << Scene{"claude-grant-empty-label", "Claude", "choices", true, true, false, false,
+            "", "", "", "", qint64(1), QVariantList{emptyLabelKind}, "weekly", "Uses one weekly reset."};
+        const QVariantMap noExpiryKind = syntheticKind("weekly", "weekly reset", 1, true,
+            "Refills Weekly and Fable", "Uses it when Weekly reaches 100%", "Next: " + labeled);
+        QTest::newRow("claude-grant-no-expiry") << Scene{"claude-grant-no-expiry", "Claude", "choices", true, true, false, false,
+            "", "", "", "", qint64(1), QVariantList{noExpiryKind}, "weekly",
+            QStringLiteral("Uses %1.").arg(labeled)};
     }
     void rendersEveryStateWithoutActions() {
         QFETCH(Scene, scene);
@@ -182,6 +204,7 @@ private slots:
             auto message = findItem(window->contentItem(), "resetOptionsMessage"); QVERIFY(message);
             auto chooser = findItem(window->contentItem(), "resetKindChooser"); QVERIFY(chooser);
             auto kindTrigger = findItem(window->contentItem(), "resetOptionsKindTrigger"); QVERIFY(kindTrigger);
+            auto grant = findItem(window->contentItem(), "useNowGrant"); QVERIFY(grant);
             QCOMPARE(confirm->isEnabled(), scene.canConfirm);
             QCOMPARE(confirm->property("text").toString(), scene.busy ? QString("Using reset…") : QString("Use now"));
             QCOMPARE(schedule->isVisible(), !armed);
@@ -230,6 +253,10 @@ private slots:
                     QVERIFY(details->property("text").toString().contains(kind["refillText"].toString()));
                     QVERIFY(details->property("text").toString().contains(
                         kind["usableNow"].toBool() ? "Can be used now" : "cannot"));
+                    auto next = findItem(window->contentItem(), "resetKindNext_" + kind["id"].toString()); QVERIFY(next);
+                    const QString nextText = kind["nextText"].toString();
+                    QCOMPARE(next->isVisible(), !armed && !scene.busy && !nextText.isEmpty());
+                    if (next->isVisible()) QCOMPARE(next->property("text").toString(), nextText);
                 }
             } else {
                 QVERIFY(!chooser->isVisible());
@@ -239,6 +266,14 @@ private slots:
             // irreversible once: beside the choice, not again in the summary.
             QCOMPARE(warning->isVisible(), scene.canConfirm);
             QVERIFY(!warning->property("text").toString().isEmpty());
+            // The chosen grant sits above the irreversible-spend warning.
+            QCOMPARE(grant->isVisible(), !scene.useNowGrant.isEmpty());
+            if (grant->isVisible()) {
+                QCOMPARE(grant->property("text").toString(), scene.useNowGrant);
+                if (warning->isVisible())
+                    QTRY_VERIFY2(grant->y() < warning->y(), qPrintable(QString("grant y %1, warning y %2")
+                        .arg(grant->y()).arg(warning->y())));
+            }
             QVERIFY(!summary->property("text").toString().contains(warning->property("text").toString()));
             // A disabled choice always explains itself; an enabled one needs no excuse.
             QCOMPARE(useNowReason->isVisible(), !scene.canConfirm && !scene.busy);

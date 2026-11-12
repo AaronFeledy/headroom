@@ -507,12 +507,15 @@ When Claude reports the additive `kinds` breakdown, the label names each kind
 instead of the total ("1 weekly reset · 2 Fable resets"), with one kind per line
 when the meter is too narrow to hold that beside the options button. Hovering it describes
 what each kind refills using the visible meter labels, any return of Fable usage
-to the weekly limit, and its expiry. A kind-aware Claude dialog asks which kind
-to use: a sole kind is preselected, while several kinds start unselected and both
-choices stay disabled until one is chosen. A chosen kind that leaves the reading
-is cleared, never swapped for another kind. The automatic choice and the redeem
-request are bound to that kind; the request carries it only for a reading that
-lists kinds. ChatGPT keeps the total-count label and its existing request.
+to the weekly limit, and its expiry. When the server names the grant a kind would
+spend now, each kind row shows that grant and its expiry, and the chosen kind
+repeats them beside the irreversible-spend warning. A kind-aware Claude dialog
+asks which kind to use: a sole kind is preselected, while several kinds start
+unselected and both choices stay disabled until one is chosen. A chosen kind that
+leaves the reading is cleared, never swapped for another kind. The automatic
+choice and the redeem request are bound to that kind; the request carries it only
+for a reading that lists kinds. ChatGPT keeps the total-count label and its
+existing request.
 For either provider, **Reset options…** appears at 90% usage when an account-bound
 banked reset is available. An active automatic choice or pending request keeps
 its management controls available. The options separate **Use now** from
