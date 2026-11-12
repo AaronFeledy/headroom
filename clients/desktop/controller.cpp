@@ -78,6 +78,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     connect(&m_server, &ManagedServer::unavailable, this, [this](const QString &message, const QString &kind) {
         if (m_mode != "local") return;
         cancelResetRequest();
+        cancelAutomationRequest();
         cancel(); m_poll.stop(); m_waitingForUsageRetry = false;
         endRefreshWindow();
         m_status = ConnectionStatus::Offline; m_message = message; m_errorKind = kind;
