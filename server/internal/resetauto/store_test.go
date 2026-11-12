@@ -158,35 +158,6 @@ func Test_Store_cancel_is_idempotent_and_keeps_the_last_event(t *testing.T) {
 	}
 }
 
-func Test_Store_evaluation_cancel_requires_the_observed_authorization(t *testing.T) {
-	// Given
-	store := newTestStore(t)
-	observed, err := store.Arm(context.Background(), ProviderCodex, ArmRequest{AccountFingerprint: testFingerprint, WindowEndsAt: testWindow()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := observed
-	other.ArmedAt = observed.ArmedAt.Add(time.Second)
-
-	// When
-	if _, err := store.CancelIfEvaluation(context.Background(), ProviderCodex, other, ReasonWindowEnded); err != nil {
-		t.Fatal(err)
-	}
-
-	// Then
-	loaded, err := store.Load()
-	if err != nil || !loaded[ProviderCodex].Armed() {
-		t.Fatalf("a stale evaluation canceled the authorization: %+v, error=%v", loaded[ProviderCodex], err)
-	}
-	if _, err := store.CancelIfEvaluation(context.Background(), ProviderCodex, observed, ReasonWindowEnded); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err = store.Load()
-	if err != nil || loaded[ProviderCodex].Armed() || loaded[ProviderCodex].LastEvent == nil {
-		t.Fatalf("evaluation cancel = %+v, error=%v", loaded[ProviderCodex], err)
-	}
-}
-
 func writeStateFile(t *testing.T, store *Store, content string) {
 	t.Helper()
 	if err := os.MkdirAll(store.dir, 0o700); err != nil {

@@ -250,6 +250,12 @@ func (r Record) matches(request ArmRequest) bool {
 		slices.Equal(r.Kinds, request.Kinds)
 }
 
+// sameAuthorization compares everything the person authorized. The stored
+// time has one-second resolution, so a cancel and a different re-arm within
+// that second must not be mistaken for the authorization an observer evaluated.
 func (r Record) sameAuthorization(other Record) bool {
-	return r.ArmedAt.Equal(other.ArmedAt) && r.AccountFingerprint == other.AccountFingerprint
+	return r.ArmedAt.Equal(other.ArmedAt) &&
+		r.AccountFingerprint == other.AccountFingerprint &&
+		sameInstant(r.WindowEndsAt, other.WindowEndsAt) &&
+		slices.Equal(r.Kinds, other.Kinds)
 }
