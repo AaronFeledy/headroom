@@ -31,6 +31,11 @@ func claudeData(kinds []usage.ResetCreditKind, available int64, usable *bool, bu
 	return usage.UsageData{Buckets: buckets, RateLimitResetCredits: credits(testFingerprint, available, usable, kinds...)}
 }
 
+func withFetchedAt(entry poller.Entry, at time.Time) poller.Entry {
+	entry.FetchedAt = at
+	return entry
+}
+
 func Test_Decide_codex_rules(t *testing.T) {
 	// Given
 	window := testWindow()
@@ -40,7 +45,7 @@ func Test_Decide_codex_rules(t *testing.T) {
 		if mutate != nil {
 			mutate(&data)
 		}
-		return poller.Entry{Data: data}
+		return poller.Entry{Data: data, FetchedAt: testNow()}
 	}
 	tests := []struct {
 		name  string
@@ -49,6 +54,7 @@ func Test_Decide_codex_rules(t *testing.T) {
 		want  Decision
 	}{
 		{"window ended", window, entry(100, 1, nil), Decision{Action: ActionCancel, Reason: ReasonWindowEnded}},
+		{"ended window cancels before freshness", window, withFetchedAt(entry(100, 1, nil), time.Time{}), Decision{Action: ActionCancel, Reason: ReasonWindowEnded}},
 		{"error reading keeps", testNow(), entry(100, 1, func(d *usage.UsageData) { message := "failed"; d.Error = &message }), Decision{}},
 		{"unknown fingerprint keeps", testNow(), entry(100, 1, func(d *usage.UsageData) { d.RateLimitResetCredits.AccountFingerprint = nil }), Decision{}},
 		{"changed identity cancels", testNow(), entry(100, 1, func(d *usage.UsageData) {
@@ -94,7 +100,7 @@ func Test_Decide_claude_ignores_copied_session_meter(t *testing.T) {
 	data.SessionFromFiveHour = false
 
 	// When
-	decision := Decide(ProviderClaude, armed, poller.Entry{Data: data}, testNow())
+	decision := Decide(ProviderClaude, armed, poller.Entry{Data: data, FetchedAt: testNow()}, testNow())
 
 	// Then
 	if decision.Action != ActionKeep {
@@ -103,7 +109,7 @@ func Test_Decide_claude_ignores_copied_session_meter(t *testing.T) {
 
 	// A real five-hour window at full utilization may fire.
 	data.SessionFromFiveHour = true
-	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data}, testNow())
+	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data, FetchedAt: testNow()}, testNow())
 	if decision.Action != ActionFire || decision.Kind != "session" {
 		t.Fatalf("real session wall = %+v, want fire session", decision)
 	}
@@ -116,7 +122,7 @@ func Test_Decide_claude_rules(t *testing.T) {
 	base := func(buckets []usage.Bucket, kinds []usage.ResetCreditKind, available int64) poller.Entry {
 		data := claudeData(kinds, available, nil, buckets...)
 		data.SessionFromFiveHour = true
-		return poller.Entry{Data: data}
+		return poller.Entry{Data: data, FetchedAt: testNow()}
 	}
 	weeklyKinds := []usage.ResetCreditKind{kind("weekly", 1, false, []string{"weekly"}, false)}
 	tests := []struct {
@@ -140,6 +146,12 @@ func Test_Decide_claude_rules(t *testing.T) {
 			Decision{Action: ActionFire, Kind: "weekly"}},
 		{"unusable kind keeps", base([]usage.Bucket{weeklyBucket(100, window)},
 			[]usage.ResetCreditKind{kind("weekly", 1, false, []string{"weekly"}, false)}, 1), Decision{}},
+		{"zero fetch time keeps", withFetchedAt(base([]usage.Bucket{weeklyBucket(100, window)},
+			[]usage.ResetCreditKind{kind("weekly", 1, true, []string{"weekly"}, false)}, 1), time.Time{}), Decision{}},
+		{"stale reading at a wall keeps", withFetchedAt(base([]usage.Bucket{weeklyBucket(100, window)},
+			[]usage.ResetCreditKind{kind("weekly", 1, true, []string{"weekly"}, false)}, 1), testNow().Add(-3*time.Minute)), Decision{}},
+		{"fresh reading at the same wall fires", withFetchedAt(base([]usage.Bucket{weeklyBucket(100, window)},
+			[]usage.ResetCreditKind{kind("weekly", 1, true, []string{"weekly"}, false)}, 1), testNow()), Decision{Action: ActionFire, Kind: "weekly"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,7 +180,7 @@ func Test_Decide_claude_prefers_fewer_refills_then_server_order_then_weekly_give
 	data.SessionFromFiveHour = true
 
 	// When fewer refills are preferred at the wall.
-	decision := Decide(ProviderClaude, armed, poller.Entry{Data: data}, testNow())
+	decision := Decide(ProviderClaude, armed, poller.Entry{Data: data, FetchedAt: testNow()}, testNow())
 
 	// Then
 	if decision.Action != ActionFire || decision.Kind != "fable" {
@@ -181,7 +193,7 @@ func Test_Decide_claude_prefers_fewer_refills_then_server_order_then_weekly_give
 		kind("fable", 1, true, []string{"weekly_fable"}, false),
 	}
 	data = claudeData(tieKinds, 2, nil, weeklyBucket(10, window), fableWall)
-	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data}, testNow())
+	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data, FetchedAt: testNow()}, testNow())
 	if decision.Action != ActionFire || decision.Kind != "session" {
 		t.Fatalf("tie preference = %+v, want fire session", decision)
 	}
@@ -193,7 +205,7 @@ func Test_Decide_claude_prefers_fewer_refills_then_server_order_then_weekly_give
 		kind("weekly", 1, true, []string{"weekly"}, false),
 	}
 	data = claudeData(givers, 2, nil, weeklyWall)
-	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data}, testNow())
+	decision = Decide(ProviderClaude, armed, poller.Entry{Data: data, FetchedAt: testNow()}, testNow())
 	if decision.Action != ActionFire || decision.Kind != "weekly" {
 		t.Fatalf("weekly giver preference = %+v, want fire weekly", decision)
 	}

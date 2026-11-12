@@ -38,7 +38,7 @@ func Test_Automation_cancels_a_changed_identity_after_a_poll(t *testing.T) {
 	entry := poller.Entry{Data: usage.UsageData{
 		Buckets:               []usage.Bucket{weeklyBucket(100, testWindow())},
 		RateLimitResetCredits: credits(other, 1, nil),
-	}}
+	}, FetchedAt: testNow()}
 
 	// When
 	automation.Observe("Codex", entry)
@@ -85,7 +85,7 @@ func Test_Automation_keeps_a_fire_decision_without_an_executor(t *testing.T) {
 	entry := poller.Entry{Data: usage.UsageData{
 		Buckets:               []usage.Bucket{weeklyBucket(100, testWindow())},
 		RateLimitResetCredits: credits(testFingerprint, 1, nil),
-	}}
+	}, FetchedAt: testNow()}
 
 	// When
 	automation.Observe("Codex", entry)
@@ -118,7 +118,7 @@ func Test_Automation_ignores_the_copied_session_meter_during_evaluation(t *testi
 	entry := poller.Entry{Data: claudeData(kinds, 1, nil,
 		usage.Bucket{ID: usage.BucketSession, Label: "Weekly", Utilization: 100, ResetsAt: &window},
 		weeklyBucket(10, window),
-	)}
+	), FetchedAt: testNow()}
 	entry.Data.SessionFromFiveHour = false
 
 	// When

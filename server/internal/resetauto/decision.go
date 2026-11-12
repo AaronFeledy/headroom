@@ -20,6 +20,13 @@ const (
 	// ClaudeArmFloor is the utilization at which Claude arming considers a
 	// reading urgent. Codex uses usage.CodexManualResetFloor.
 	ClaudeArmFloor = 90
+
+	// maxReadingAge bounds how old a reading may be when it decides to spend.
+	// The poller observes only attempts that really fetched, but an observer can
+	// be delayed behind a busy process or a slow provider call; an old reading
+	// is not evidence that the provider is at its limit right now, so it may
+	// cancel but never spend.
+	maxReadingAge = 2 * time.Minute
 )
 
 // Action is the outcome of evaluating a stored authorization against a reading.
@@ -68,6 +75,9 @@ func Decide(provider string, record Record, entry poller.Entry, now time.Time) D
 	}
 	if !now.Before(record.WindowEndsAt) {
 		return Decision{Action: ActionCancel, Reason: ReasonWindowEnded}
+	}
+	if !freshReading(entry, now) {
+		return Decision{}
 	}
 	data := entry.Data
 	credits := data.RateLimitResetCredits
@@ -140,6 +150,15 @@ func decideClaude(data usage.UsageData, credits *usage.RateLimitResetCredits, re
 // readings may include sub-second precision that JSON serialization drops.
 func sameInstant(a, b time.Time) bool {
 	return a.UTC().Truncate(time.Second).Equal(b.UTC().Truncate(time.Second))
+}
+
+// freshReading reports whether the entry was fetched recently enough to decide
+// a spend. A missing time is never fresh.
+func freshReading(entry poller.Entry, now time.Time) bool {
+	if entry.FetchedAt.IsZero() {
+		return false
+	}
+	return now.Sub(entry.FetchedAt) <= maxReadingAge
 }
 
 func finite(value float64) bool {
