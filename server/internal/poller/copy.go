@@ -51,6 +51,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
 		UsageDetails:          data.UsageDetails.Clone(),
 		ProviderAccountID:     data.ProviderAccountID,
+		SessionFromFiveHour:   data.SessionFromFiveHour,
 	}
 }
 

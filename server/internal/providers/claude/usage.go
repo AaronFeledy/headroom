@@ -68,6 +68,10 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 	sessionFound := false
 	weeklyFound := false
 	sessionActive := false
+	// The weekly-family fallback below copies a weekly window into the session
+	// slot for old clients. Automatic reset evaluation must never treat that
+	// copy as a five-hour limit.
+	sessionFromFiveHour := false
 	weeklyActive := false
 	scoped := make([]usage.Bucket, 0, len(response.Limits))
 	for index, limit := range response.Limits {
@@ -85,6 +89,7 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 			session = bucket
 			sessionFound = true
 			sessionActive = active
+			sessionFromFiveHour = true
 		case "weekly_all":
 			if limit.Percent == nil || weeklyFound && (weeklyActive || !active) {
 				continue
@@ -117,6 +122,7 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 		}
 		session = bucket
 		sessionFound = true
+		sessionFromFiveHour = true
 	}
 	// Backward compat: promote the first weekly-family window into the session
 	// slot when no session/five_hour window exists. Track it to avoid emitting a
@@ -184,7 +190,7 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 		buckets = append(buckets, extra)
 	}
 
-	base := usage.UsageData{ProviderName: providerName, Subtitle: subscription}
+	base := usage.UsageData{ProviderName: providerName, Subtitle: subscription, SessionFromFiveHour: sessionFromFiveHour}
 	return base.WithBuckets(buckets), nil
 }
 

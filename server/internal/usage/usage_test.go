@@ -320,6 +320,7 @@ func assertUsageKeys(t *testing.T, encoded []byte) {
 		"rate_limit_reset_credits",
 		"auth",
 		"usage_details",
+		"reset_automation",
 	}
 	if !reflect.DeepEqual(sortedKeys(got), want) {
 		t.Fatalf("keys = %v, want %v", sortedKeys(got), want)
@@ -382,6 +383,7 @@ func sortedKeys(values map[string]json.RawMessage) []string {
 		"rate_limit_reset_credits": 16,
 		"auth":                     17,
 		"usage_details":            18,
+		"reset_automation":         19,
 	}
 	for key := range values {
 		keys = append(keys, key)
