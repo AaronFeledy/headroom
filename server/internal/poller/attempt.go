@@ -12,17 +12,9 @@ import (
 // poll for the same provider. The deferred release still covers a panic.
 // fetched is false when the provider was not contacted, so callers must not
 // treat the returned cached reading as a fresh observation.
-func (s *providerState) pollAndRelease(ctx context.Context, now func() time.Time) (entry Entry, fetched bool) {
-	released := false
-	defer func() {
-		if !released {
-			s.release()
-		}
-	}()
-	entry, fetched = s.pollLocked(ctx, now)
-	released = true
-	s.release()
-	return entry, fetched
+func (s *providerState) pollAndRelease(ctx context.Context, now func() time.Time) (Entry, bool) {
+	defer s.release()
+	return s.pollLocked(ctx, now)
 }
 
 func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) (Entry, bool) {

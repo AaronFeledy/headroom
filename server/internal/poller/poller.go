@@ -21,7 +21,7 @@ type Options struct {
 	Logger    *slog.Logger
 	Clock     Clock
 	NewTicker func(time.Duration) Ticker
-	// AfterPoll observers a completed poll after its fetch lock is released.
+	// AfterPoll observes a completed fetch after its fetch lock is released.
 	AfterPoll func(string, Entry)
 }
 

@@ -78,12 +78,13 @@ func Test_PostPoll_request_refresh_notifies(t *testing.T) {
 	p.workers.Wait()
 
 	// Then
-	if got := waitObservation(t, observed); got.name != "Claude" {
+	if got := waitObservation(t, observed); got.name != "Claude" || got.entry.FetchedAt.IsZero() {
 		t.Fatalf("observation = %+v", got)
 	}
 	if calls := provider.calls.Load(); calls != 1 {
 		t.Fatalf("fetch calls = %d, want 1", calls)
 	}
+	requireNoObservation(t, observed)
 }
 
 func Test_PostPoll_all_polls_notify_once_per_fetch(t *testing.T) {
@@ -127,9 +128,10 @@ func Test_PostPoll_update_credentials_notifies_after_its_fetch(t *testing.T) {
 	if calls := provider.calls.Load(); calls != 1 {
 		t.Fatalf("fetch calls = %d, want 1", calls)
 	}
-	if got := waitObservation(t, observed); got.name != "Cursor" {
+	if got := waitObservation(t, observed); got.name != "Cursor" || !got.entry.FetchedAt.Equal(entry.FetchedAt) {
 		t.Fatalf("observation = %+v", got)
 	}
+	requireNoObservation(t, observed)
 }
 
 func Test_PostPoll_rate_limit_cooldown_does_not_notify(t *testing.T) {
@@ -193,10 +195,16 @@ func Test_PostPoll_real_fetch_notifies_exactly_once(t *testing.T) {
 	observed := observeAfterPoll(p)
 
 	// When
-	p.PollProvider(context.Background(), "Codex")
+	entry, ok, err := p.PollProvider(context.Background(), "Codex")
 
 	// Then
-	if got := waitObservation(t, observed); got.name != "Codex" || got.entry.FetchedAt.IsZero() {
+	if err != nil || !ok || entry.FetchedAt.IsZero() {
+		t.Fatalf("poll = %+v, ok=%v, error=%v", entry, ok, err)
+	}
+	if calls := provider.calls.Load(); calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1", calls)
+	}
+	if got := waitObservation(t, observed); got.name != "Codex" || !got.entry.FetchedAt.Equal(entry.FetchedAt) {
 		t.Fatalf("observation = %+v", got)
 	}
 	requireNoObservation(t, observed)
