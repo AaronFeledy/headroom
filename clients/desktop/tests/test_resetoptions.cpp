@@ -306,10 +306,11 @@ private slots:
             } else if (balance->isVisible()) {
                 QVERIFY(balance->property("text").toString().contains(QString::number(*scene.availableCount)));
             }
-            // The kind chooser only appears before a spend or an arm. With
-            // several kinds "Any matching reset" is first and selected by
-            // default; rendering never activates a row.
-            QCOMPARE(chooser->isVisible(), kindAware && !armed && !scene.busy);
+            // The kind rows stay while an automatic reset is set, because Use
+            // now still needs one specific kind. "Any matching reset" is first
+            // and selected by default, and only offered before arming.
+            // Rendering never activates a row.
+            QCOMPARE(chooser->isVisible(), kindAware && !scene.busy);
             auto anyRow = findItem(window->contentItem(), "resetKindAny"); QVERIFY(anyRow);
             QCOMPARE(anyRow->isVisible(), !armed && !scene.busy && scene.kinds.size() > 1);
             if (anyRow->isVisible()) {
@@ -326,8 +327,7 @@ private slots:
                 for (const auto &value : scene.kinds) {
                     const auto kind = value.toMap();
                     auto row = findItem(window->contentItem(), "resetKind_" + kind["id"].toString()); QVERIFY(row);
-                    // The chooser is offered only before a spend or an arm.
-                    QCOMPARE(row->isVisible(), !armed && !scene.busy);
+                    QCOMPARE(row->isVisible(), !scene.busy);
                     QCOMPARE(row->property("text").toString(), kind["title"].toString());
                     QCOMPARE(row->property("accent").toBool(), scene.selectedKind == kind["id"].toString());
                     auto details = findItem(window->contentItem(), "resetKindDetails_" + kind["id"].toString()); QVERIFY(details);
@@ -337,7 +337,7 @@ private slots:
                         kind["usableNow"].toBool() ? "Can be used now" : "cannot"));
                     auto next = findItem(window->contentItem(), "resetKindNext_" + kind["id"].toString()); QVERIFY(next);
                     const QString nextText = kind["nextText"].toString();
-                    QCOMPARE(next->isVisible(), !armed && !scene.busy && !nextText.isEmpty());
+                    QCOMPARE(next->isVisible(), !scene.busy && !nextText.isEmpty());
                     if (next->isVisible()) QCOMPARE(next->property("text").toString(), nextText);
                 }
             } else {

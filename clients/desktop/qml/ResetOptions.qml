@@ -69,7 +69,11 @@ Popup {
         case "submitting": return "Waiting for the server's answer. Keep Headroom running."
         case "armed":
             if (!claude) return "The server holds one reset for 100% weekly usage. " + serverHoldsText
-            if (automaticEffect.length > 0) return "The server holds this automatic reset. " + automaticEffect + " " + serverHoldsText
+            if (automaticEffect.length > 0) {
+                // The effect text has no closing period when it names meters.
+                const effect = /[.!?]$/.test(automaticEffect) ? automaticEffect : automaticEffect + "."
+                return "The server holds this automatic reset. " + effect + " " + serverHoldsText
+            }
             return "The server holds this automatic reset. " + serverHoldsText
         case "paused":
             if (!claude) return "Usage is unavailable. The server keeps this reset for 100% weekly usage and evaluates it when readings return. " + serverHoldsText
@@ -118,7 +122,10 @@ Popup {
             Accessible.name: text
         }
         ResetKindChooser {
-            visible: options.kindAware && !options.armed && !options.busy
+            // Use now needs one specific kind even while an automatic reset is
+            // set, so the rows stay; only "Any matching reset" is for arming.
+            visible: options.kindAware && !options.busy
+            allowAny: !options.armed
             kinds: options.kinds
             selectedKindId: options.selectedKindId
             selectionMissing: options.selectionMissing

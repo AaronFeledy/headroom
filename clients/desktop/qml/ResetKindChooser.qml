@@ -11,6 +11,8 @@ ColumnLayout {
     // True when the stored choice is absent from this reading: no row is
     // selected, including "Any matching reset", until the person chooses again.
     required property bool selectionMissing
+    // "Any matching reset" only means something for the automatic choice.
+    property bool allowAny: true
     signal kindSelected(string kind)
 
     objectName: "resetKindChooser"
@@ -24,14 +26,13 @@ ColumnLayout {
     ActionButton {
         objectName: "resetKindAny"
         // A sole kind is already selected below; no extra row.
-        visible: chooser.kinds.length > 1
+        visible: chooser.allowAny && chooser.kinds.length > 1
         text: "Any matching reset"
-        accent: chooser.kinds.length > 1 && !chooser.selectionMissing && chooser.selectedKindId === ""
+        accent: visible && !chooser.selectionMissing && chooser.selectedKindId === ""
         implicitHeight: 32
         Layout.fillWidth: true
         Accessible.role: Accessible.RadioButton
-        Accessible.checked: chooser.kinds.length > 1 && !chooser.selectionMissing
-            && chooser.selectedKindId === ""
+        Accessible.checked: visible && !chooser.selectionMissing && chooser.selectedKindId === ""
         Accessible.description: "Uses whichever matching reset reaches its limit first"
         onClicked: chooser.kindSelected("")
     }
