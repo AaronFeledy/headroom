@@ -331,8 +331,6 @@ private slots:
         // Seeing the provider's automation state before any event is a baseline.
         notifications.observeAutomaticReset("Claude", {}, true);
         QCOMPARE(native.size(), 0);
-        notifications.observeAutomaticReset("Claude", event("t1", "requested", {}, {}, "weekly"), true);
-        QCOMPARE(native.size(), 0);
         // The first real event after that baseline is news, exactly once.
         notifications.observeAutomaticReset("Claude", event("t2", "completed", "reset", {}, "weekly"), true);
         QCOMPARE(native.size(), 1);
@@ -341,6 +339,8 @@ private slots:
         QCOMPARE(notifications.presented().first().toMap()["target"].toString(), QString("providerCard_Claude"));
         notifications.endPresentation();
         notifications.observeAutomaticReset("Claude", event("t2", "completed", "reset", {}, "weekly"), true);
+        QCOMPARE(native.size(), 1);
+        notifications.observeAutomaticReset("Claude", event("t3", "requested", {}, {}, "weekly"), true);
         QCOMPARE(native.size(), 1);
     }
     void automaticResetEventAlreadyPresentIsABaseline() {

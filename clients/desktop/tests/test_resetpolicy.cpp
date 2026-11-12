@@ -517,6 +517,7 @@ private slots:
         QCOMPARE(codex.armReason, Reason::None);
         // One usable kind is still enough for Claude.
         Facts kindedFacts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        kindedFacts.kinds.removeLast();
         QVERIFY(evaluate(kindedFacts).canArm);
     }
     void copyNamesEveryStateAndReason() {
