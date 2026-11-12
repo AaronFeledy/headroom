@@ -115,6 +115,7 @@ inline QByteArray snapshotWithClaudeKinds(double sessionUsed, double weeklyUsed,
     claude["buckets"] = buckets;
     claude["rate_limit_reset_credits"] = QJsonObject{{"available_count", total},
         {"account_fingerprint", fingerprint}, {"usable_now", usableNow}, {"kinds", kinds}};
+    claude["reset_automation"] = QJsonObject{{"armed", false}};
     claude["fetch_status"] = QJsonObject{{"fetched_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {"failure_kind", QJsonValue::Null}, {"credential_epoch", QJsonValue::Null}};
     providers[0] = claude;
@@ -135,6 +136,7 @@ inline QByteArray snapshotWithClaude(double sessionUsed, double weeklyUsed, int 
     claude["buckets"] = buckets;
     claude["rate_limit_reset_credits"] = QJsonObject{{"available_count", resetCount},
         {"account_fingerprint", fingerprint}, {"usable_now", usableNow}};
+    claude["reset_automation"] = QJsonObject{{"armed", false}};
     claude["fetch_status"] = QJsonObject{{"fetched_at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {"failure_kind", QJsonValue::Null}, {"credential_epoch", QJsonValue::Null}};
     providers[0] = claude;

@@ -99,6 +99,77 @@ QJsonValue normalizeResetKinds(const QJsonValue &value) {
     }
     return result;
 }
+
+// The server-owned automatic reset is all-or-nothing: one malformed field
+// makes the whole state unavailable, so the desktop never offers an arm the
+// server cannot honour. Unknown keys are dropped instead of being forwarded.
+QJsonValue normalizeResetAutomationEvent(const QJsonValue &value) {
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto event = value.toObject();
+    const auto at = event["at"];
+    const auto name = event["event"];
+    static const QStringList names{"requested", "completed", "failed", "canceled"};
+    if (!at.isString() || !name.isString() || !names.contains(name.toString()))
+        return QJsonValue(QJsonValue::Null);
+    const auto optionalString = [](const QJsonValue &field) {
+        return field.isString() ? field : QJsonValue(QJsonValue::Null);
+    };
+    for (const auto &field : {"outcome", "reason", "kind"}) {
+        const auto value = event[field];
+        if (!value.isUndefined() && !value.isNull() && !value.isString())
+            return QJsonValue(QJsonValue::Null);
+    }
+    return QJsonObject{{"at", at}, {"event", name},
+        {"outcome", optionalString(event["outcome"])},
+        {"reason", optionalString(event["reason"])},
+        {"kind", optionalString(event["kind"])}};
+}
+
+QJsonValue normalizeResetAutomation(const QJsonValue &value) {
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto input = value.toObject();
+    if (!input["armed"].isBool()) return QJsonValue(QJsonValue::Null);
+    for (const auto &field : {"armed_at", "window_ends_at"}) {
+        const auto fieldValue = input[field];
+        if (!fieldValue.isUndefined() && !fieldValue.isNull() && !fieldValue.isString())
+            return QJsonValue(QJsonValue::Null);
+    }
+    const auto optionalString = [](const QJsonValue &field) {
+        return field.isString() ? field : QJsonValue(QJsonValue::Null);
+    };
+    QJsonValue kinds(QJsonValue::Null);
+    const auto kindsValue = input["kinds"];
+    if (!kindsValue.isUndefined() && !kindsValue.isNull()) {
+        static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9_]{1,32}\\z"));
+        if (!kindsValue.isArray() || kindsValue.toArray().size() > 8)
+            return QJsonValue(QJsonValue::Null);
+        QJsonArray normalized;
+        for (const auto &entry : kindsValue.toArray()) {
+            if (!entry.isString() || !idPattern.match(entry.toString()).hasMatch())
+                return QJsonValue(QJsonValue::Null);
+            normalized.append(entry);
+        }
+        kinds = normalized;
+    }
+    const auto fingerprint = input["account_fingerprint"];
+    if (!fingerprint.isUndefined() && !fingerprint.isNull()) {
+        static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
+        if (!fingerprint.isString() || fingerprint.toString().size() != 64
+            || !fingerprintPattern.match(fingerprint.toString()).hasMatch())
+            return QJsonValue(QJsonValue::Null);
+    }
+    QJsonValue lastEvent(QJsonValue::Null);
+    const auto eventValue = input["last_event"];
+    if (!eventValue.isUndefined() && !eventValue.isNull()) {
+        lastEvent = normalizeResetAutomationEvent(eventValue);
+        if (lastEvent.isNull()) return QJsonValue(QJsonValue::Null);
+    }
+    return QJsonObject{{"armed", input["armed"]},
+        {"armed_at", optionalString(input["armed_at"])},
+        {"window_ends_at", optionalString(input["window_ends_at"])},
+        {"kinds", kinds}, {"account_fingerprint", optionalString(fingerprint)},
+        {"last_event", lastEvent}};
+}
 }
 
 bool Usage::isPercent(const QVariantMap &bucket) {
@@ -216,6 +287,7 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;
+        p["reset_automation"] = normalizeResetAutomation(p["reset_automation"]);
         p["usage_details"] = p["error"].isNull() ? normalizeDetails(p["usage_details"]) : QJsonValue(QJsonValue::Null);
         // Optional per-entry fetch metadata. Older servers omit it; anything
         // malformed or inconsistent with the frozen error contract is dropped

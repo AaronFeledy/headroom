@@ -796,6 +796,137 @@ private slots:
         QVERIFY(duplicate["kinds"].isNull());
         QCOMPARE(duplicate["available_count"].toLongLong(), qint64(3));
     }
+    void resetAutomationIsValidatedAndSanitized() {
+        const auto parse = [](const QJsonValue &value, bool include = true) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 60, 3, true)).array();
+            auto claude = providers[0].toObject();
+            if (include) claude["reset_automation"] = value; else claude.remove("reset_automation");
+            providers[0] = claude;
+            QVariantList parsed;
+            if (!Usage::parse(QJsonDocument(providers).toJson(), parsed)) return QVariant{};
+            return parsed.first().toMap()["reset_automation"];
+        };
+        const QString fingerprint(64, QLatin1Char('a'));
+        const QJsonObject event{{"at", "2026-11-11T12:00:00Z"}, {"event", "requested"},
+            {"outcome", QJsonValue::Null}, {"reason", QJsonValue::Null}, {"kind", "weekly"},
+            {"extra", "dropped"}};
+        const QJsonObject valid{{"armed", true}, {"armed_at", "2026-11-11T12:00:00Z"},
+            {"window_ends_at", "2026-11-13T12:00:00Z"}, {"kinds", QJsonArray{"weekly", "fable"}},
+            {"account_fingerprint", fingerprint}, {"last_event", event}, {"extra", "dropped"}};
+        const auto normalized = parse(valid).toMap();
+        QVERIFY(normalized["armed"].toBool());
+        QCOMPARE(normalized["armed_at"].toString(), QString("2026-11-11T12:00:00Z"));
+        QCOMPARE(normalized["window_ends_at"].toString(), QString("2026-11-13T12:00:00Z"));
+        QCOMPARE(normalized["kinds"].toStringList(), (QStringList{"weekly", "fable"}));
+        QCOMPARE(normalized["account_fingerprint"].toString(), fingerprint);
+        const auto last = normalized["last_event"].toMap();
+        QCOMPARE(last["event"].toString(), QString("requested"));
+        QVERIFY(last["outcome"].isNull() && last["reason"].isNull());
+        QCOMPARE(last["kind"].toString(), QString("weekly"));
+        QVERIFY(!normalized.contains("extra") && !last.contains("extra"));
+        // Absent, null, or non-object state means automation is unavailable.
+        QVERIFY(parse(QJsonValue(), false).isNull());
+        for (const auto &value : {QJsonValue(QJsonValue::Null), QJsonValue(QJsonArray{}),
+                 QJsonValue("armed"), QJsonValue(3), QJsonValue(true)})
+            QVERIFY(parse(value).isNull());
+        for (const auto &value : {
+                 QJsonObject{},
+                 QJsonObject{{"armed", "yes"}},
+                 QJsonObject{{"armed", true}, {"armed_at", 3}},
+                 QJsonObject{{"armed", true}, {"window_ends_at", true}},
+                 QJsonObject{{"armed", true}, {"kinds", "weekly"}},
+                 QJsonObject{{"armed", true}, {"kinds", QJsonObject{}}},
+                 QJsonObject{{"armed", true}, {"kinds", QJsonArray{"Upper"}}},
+                 QJsonObject{{"armed", true}, {"kinds", QJsonArray{QString(33, 'a')}}},
+                 QJsonObject{{"armed", true}, {"kinds", QJsonArray{3}}},
+                 QJsonObject{{"armed", true}, {"account_fingerprint", fingerprint.toUpper()}},
+                 QJsonObject{{"armed", true}, {"account_fingerprint", fingerprint.left(63)}},
+                 QJsonObject{{"armed", true}, {"account_fingerprint", 3}},
+                 QJsonObject{{"armed", true}, {"last_event", "requested"}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"event", "requested"}}}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"at", 3}, {"event", "requested"}}}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"at", "now"}, {"event", "spent"}}}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"at", "now"}, {"event", "completed"}, {"outcome", 3}}}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"at", "now"}, {"event", "failed"}, {"reason", 3}}}},
+                 QJsonObject{{"armed", true}, {"last_event", QJsonObject{{"at", "now"}, {"event", "canceled"}, {"kind", 3}}}},
+             })
+            QVERIFY2(parse(value).isNull(), qPrintable(QJsonDocument(QJsonObject{{"value", value}}).toJson()));
+        QJsonArray nine;
+        for (int i = 0; i < 9; ++i) nine.append(QString("kind_%1").arg(i));
+        QVERIFY(parse(QJsonObject{{"armed", false}, {"kinds", nine}}).isNull());
+        // Optional keys normalize to null, and unknown keys never survive.
+        const auto minimal = parse(QJsonObject{{"armed", false}, {"extra", "dropped"}}).toMap();
+        QVERIFY(!minimal["armed"].toBool());
+        QVERIFY(minimal["armed_at"].isNull() && minimal["window_ends_at"].isNull());
+        QVERIFY(minimal["kinds"].isNull() && minimal["account_fingerprint"].isNull());
+        QVERIFY(minimal["last_event"].isNull());
+        QVERIFY(!minimal.contains("extra"));
+    }
+    void serverAutomationDrivesTheResetActionWithoutLocalState() {
+        const QString fingerprint(64, QLatin1Char('b'));
+        const auto snapshot = [&](const QJsonValue &automation, bool failed = false) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(100, 100, 3, true)).array();
+            auto claude = providers[0].toObject();
+            if (automation.isUndefined()) claude.remove("reset_automation");
+            else claude["reset_automation"] = automation;
+            if (failed) {
+                claude["is_success"] = false; claude["error"] = "Unavailable";
+                claude["buckets"] = QJsonArray{};
+            }
+            providers[0] = claude;
+            return QJsonDocument(providers).toJson();
+        };
+        const QJsonObject armed{{"armed", true}, {"armed_at", "2026-11-11T12:00:00Z"},
+            {"window_ends_at", "2026-11-13T12:00:00Z"}, {"kinds", QJsonArray{"weekly"}},
+            {"account_fingerprint", fingerprint},
+            {"last_event", QJsonObject{{"at", "2026-11-11T12:00:00Z"}, {"event", "requested"},
+                {"outcome", QJsonValue::Null}, {"reason", QJsonValue::Null}, {"kind", "weekly"}}}};
+        QTemporaryDir dir;
+        ControllerFixture unsupported(dir.filePath("settings.json"), snapshot(QJsonValue()));
+        QTRY_COMPARE(unsupported.providers().size(), 4);
+        QVERIFY(unsupported.prepareReset("Claude"));
+        auto action = unsupported.resetAction();
+        QVERIFY(!action["canSchedule"].toBool());
+        QCOMPARE(action["automaticReason"].toString(), QString("Update the server to use automatic resets."));
+        QCOMPARE(action["phase"].toString(), QString("choices"));
+        unsupported.cancelResetConfirmation();
+        ControllerFixture supported(dir.filePath("supported.json"),
+            snapshot(QJsonObject{{"armed", false}}));
+        QTRY_COMPARE(supported.providers().size(), 4);
+        QVERIFY(supported.prepareReset("Claude"));
+        action = supported.resetAction();
+        QVERIFY(action["canSchedule"].toBool());
+        QVERIFY(!action["automatic"].toBool());
+        supported.cancelResetConfirmation();
+        ControllerFixture arm(dir.filePath("armed.json"), snapshot(armed));
+        QTRY_COMPARE(arm.providers().size(), 4);
+        QVERIFY(arm.prepareReset("Claude"));
+        action = arm.resetAction();
+        QVERIFY(action["automatic"].toBool());
+        QCOMPARE(action["phase"].toString(), QString("armed"));
+        QVERIFY(action["canCancel"].toBool());
+        QVERIFY(!action["canSchedule"].toBool());
+        QCOMPARE(action["automaticKinds"].toStringList(), QStringList{"weekly"});
+        QCOMPARE(action["windowEndsAt"].toString(), QString("2026-11-13T12:00:00Z"));
+        QVERIFY(action["requested"].toBool());
+        QCOMPARE(action["lastEvent"].toMap()["kind"].toString(), QString("weekly"));
+        ControllerFixture paused(dir.filePath("paused.json"), snapshot(armed, true));
+        QTRY_COMPARE(paused.providers().size(), 4);
+        QVERIFY(paused.prepareReset("Claude"));
+        action = paused.resetAction();
+        QCOMPARE(action["phase"].toString(), QString("paused"));
+        QVERIFY(action["canCancel"].toBool());
+        QVERIFY(action["automatic"].toBool());
+        ControllerFixture completed(dir.filePath("completed.json"),
+            snapshot(QJsonObject{{"armed", false},
+                {"last_event", QJsonObject{{"at", "2026-11-11T13:00:00Z"}, {"event", "completed"},
+                    {"outcome", "reset"}, {"reason", QJsonValue::Null}, {"kind", "weekly"}}}}));
+        QTRY_COMPARE(completed.providers().size(), 4);
+        QVERIFY(completed.prepareReset("Claude"));
+        action = completed.resetAction();
+        QVERIFY(!action["requested"].toBool());
+        QCOMPARE(action["lastEvent"].toMap()["event"].toString(), QString("completed"));
+    }
     void claudeResetKindsGateSelectionWithoutSpending() {
         QTemporaryDir dir;
         const QJsonArray kinds{
@@ -813,14 +944,18 @@ private slots:
         QCOMPARE(action["provider"].toString(), QString("Claude"));
         QCOMPARE(action["kinds"].toList().size(), 2);
         QCOMPARE(action["selectedKind"].toString(), QString());
-        QVERIFY(action["useNowReason"].toString().contains("Choose"));
-        QVERIFY(action["automaticReason"].toString().contains("Choose"));
+        QCOMPARE(action["useNowReason"].toString(), QString("Choose which banked reset to use now."));
+        // "Any matching reset" is the default automatic choice for several kinds.
+        QVERIFY(action["automaticReason"].toString().isEmpty());
+        QCOMPARE(action["automaticEffect"].toString(),
+            QString("The matching reset is used at whichever limit is reached."));
         QVERIFY(!action["canConfirm"].toBool());
-        QVERIFY(!action["canSchedule"].toBool());
+        QVERIFY(action["canSchedule"].toBool());
         QVERIFY(controller.selectResetKind("fable"));
         action = controller.resetAction();
         QCOMPARE(action["selectedKind"].toString(), QString("fable"));
-        QCOMPARE(action["selectedKindTrigger"].toString(), QString("Uses it when Fable reaches 100%"));
+        QCOMPARE(action["selectedKindTrigger"].toString(), QString("Used when Weekly or Fable reaches 100%"));
+        QCOMPARE(action["automaticEffect"].toString(), QString("Used when Weekly or Fable reaches 100%"));
         QVERIFY(controller.resetState("Claude")["eligible"].toBool());
         QVERIFY(!controller.selectResetKind("missing"));
         QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("fable"));
