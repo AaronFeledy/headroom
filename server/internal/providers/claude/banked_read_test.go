@@ -27,7 +27,7 @@ func Test_BankedMetadata_one_usage_request_carries_status(t *testing.T) {
 			w.WriteHeader(405)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer fixture-access" || r.Header.Get("anthropic-beta") != betaHeader || r.Header.Get("User-Agent") != userAgent {
+		if r.Header.Get("Authorization") != "Bearer fixture-access" || r.Header.Get("anthropic-beta") != betaHeader || r.Header.Get("User-Agent") != "claude-cli/"+pinnedCLIVersion+" (external, cli)" {
 			t.Error("missing usage headers")
 		}
 		switch r.URL.Path {
@@ -53,7 +53,7 @@ func Test_BankedMetadata_one_usage_request_carries_status(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	c := New(Options{CredentialsPath: path, HTTPClient: server.Client(), APIBaseURL: server.URL, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token"})
+	c := New(Options{CredentialsPath: path, HomeDir: t.TempDir(), HTTPClient: server.Client(), APIBaseURL: server.URL, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token"})
 	// When
 	first, err := c.Fetch(context.Background())
 	if err != nil || first.Error != nil {
@@ -188,7 +188,7 @@ func Test_BankedMetadata_claude_429_reports_usage_rate_limit_and_upstream_header
 				w.WriteHeader(http.StatusTooManyRequests)
 			}))
 			defer server.Close()
-			c := New(Options{CredentialsPath: path, HTTPClient: server.Client(), UsageURL: server.URL + "/usage"})
+			c := New(Options{CredentialsPath: path, HomeDir: t.TempDir(), HTTPClient: server.Client(), UsageURL: server.URL + "/usage"})
 			// When
 			data, err := c.Fetch(context.Background())
 			// Then the poller owns the cooldown; the client only reports the reply.

@@ -32,7 +32,7 @@ func Test_Client_Fetch_returns_usage_when_claude_credentials_are_valid(t *testin
 		writeResponse(t, w, `{"five_hour":{"utilization":42.5,"resets_at":"2026-07-12T18:30:00-04:00"},"seven_day":{"utilization":71,"resets_at":"2026-07-19T00:00:00Z"}}`)
 	}))
 	defer server.Close()
-	client := New(Options{CredentialsPath: credentialsPath, HTTPClient: server.Client(), UsageURL: server.URL + "/api/oauth/usage", TokenURL: server.URL + "/v1/oauth/token"})
+	client := New(Options{CredentialsPath: credentialsPath, HomeDir: t.TempDir(), HTTPClient: server.Client(), UsageURL: server.URL + "/api/oauth/usage", TokenURL: server.URL + "/v1/oauth/token"})
 
 	// When
 	got, err := client.Fetch(context.Background())

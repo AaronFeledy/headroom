@@ -32,7 +32,7 @@ func (c *Client) requestUsage(ctx context.Context, endpoint string, creds *crede
 	}
 	req.Header.Set("Authorization", "Bearer "+creds.accessToken)
 	req.Header.Set("anthropic-beta", betaHeader)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", c.userAgent())
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return usage.UsageData{}, nil, nil, usage.TransportFailure(err)

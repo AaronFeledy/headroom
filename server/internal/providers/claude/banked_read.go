@@ -25,10 +25,10 @@ type bankCache struct {
 	profileDelay time.Duration
 }
 
-func applyBankHeaders(req *http.Request, token string) {
+func (c *Client) applyBankHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", betaHeader)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", c.userAgent())
 	req.Header.Set("Accept", "application/json")
 }
 
@@ -37,7 +37,7 @@ func (c *Client) readBankJSON(ctx context.Context, endpoint, token string) ([]by
 	if err != nil {
 		return nil, errResetUnavailable
 	}
-	applyBankHeaders(req, token)
+	c.applyBankHeaders(req, token)
 	client := *c.client
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
