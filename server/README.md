@@ -245,14 +245,21 @@ that interval or five minutes. OAuth refresh, credential, parsing, and trust
 failures do not receive accelerated retries.
 
 Claude's usage endpoint accepts roughly one request per two minutes per token,
-so Claude polls at least three minutes apart while other providers keep the
-configured interval. An attempt that received an HTTP response restarts that
-spacing window, and every fetch path returns the cached entry instead of fetching
-inside it; transport failures with no response keep the normal transient retry.
-A Claude 429 whose `Retry-After` is absent, unparsable, zero, or elapsed applies a
-five-minute minimum cooldown; a future `Retry-After` is honored. Diagnostics keep
-`retry_after` as the upstream header while `cooldown_until` reflects the floor
-and `cooldown_source` reports `backoff`.
+and other clients spend the same budget. Claude starts at least three minutes
+apart, doubles that spacing on each usage 429 up to fifteen minutes, and steps it
+back by a quarter after four successful usage responses. Repeating readings also
+slow scheduled polls by one and a half times up to ten minutes; a changed
+reading, a failed attempt, or any percent meter at 90% or more restores normal
+cadence. Every fetch path honors the learned spacing; transport failures with no
+response keep the normal transient retry. A 429 without a usable `Retry-After`
+uses the new spacing as its cooldown, while a future `Retry-After` is honored.
+Diagnostics keep `retry_after` as the upstream header and report the real
+`next_attempt_at`, `cooldown_until`, and `cooldown_source`.
+
+Claude requests identify as `claude-cli/<version> (external, cli)`. When
+`~/.local/bin/claude` resolves to a newer numeric version, that installed
+version is used without reading or executing the file; otherwise the pinned
+`2.1.306` identity is sent so banked-reset data stays available.
 
 Claude's optional profile GET shares the provider cooldown. A profile 429
 preserves successful usage and authentication while scheduling the next attempt
