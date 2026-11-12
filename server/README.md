@@ -278,9 +278,11 @@ When not armed, `armed_at`, `window_ends_at`, `kinds`, and
 armed. `last_event.event` is `requested`, `completed`, `failed`, or `canceled`;
 completed outcomes are `reset`, `already_redeemed`, `nothing_to_reset`,
 `no_credit`, or `unavailable`; failure reasons are `outcome_unknown`, `refused`,
-or `state_unavailable`; cancel reasons are `user`, `window_ended`,
-`identity_changed`, `kind_unavailable`, `no_trigger`, `below_floor`, or
-`no_credits`.
+or `state_unavailable`; cancel reasons are `user`, `manual_reset`,
+`window_ended`, `identity_changed`, `kind_unavailable`, `no_trigger`,
+`below_floor`, or `no_credits`. A confirmed manual reset cancels the provider's
+stored authorization with `manual_reset` before it runs; a cancel failure is
+logged and never blocks that manual reset.
 
 One JSON file, `authorizations.json`, lives in the owner-only
 `<default config directory>/reset-automation/` directory beside the Claude reset
