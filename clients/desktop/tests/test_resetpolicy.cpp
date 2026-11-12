@@ -264,6 +264,35 @@ private slots:
             QVERIFY(!result.canOpen && result.canCancelArm);
         }
     }
+    void pendingAutomationRequestBlocksEveryChoice() {
+        Facts facts = confirmed(withUsable(kinded(baseline(Provider::Claude, 100)), 1));
+        facts.selectedKind = "weekly";
+        const Phase choices = evaluate(facts).phase;
+        facts.automationPending = true;
+        auto result = evaluate(facts);
+        // The dialog keeps its phase; the manual-spend busy phase is not reused.
+        QCOMPARE(result.phase, choices);
+        QVERIFY(result.phase != Phase::Submitting);
+        QVERIFY(!result.canUseNow && !result.canConfirm);
+        QCOMPARE(result.useNowReason, Reason::Busy);
+        QVERIFY(!result.canArm && !result.canSchedule);
+        QCOMPARE(result.armReason, Reason::Busy);
+        QVERIFY(!result.canCancelArm);
+        QCOMPARE(reasonText(Reason::Busy, Provider::Claude), QString("A reset request is in progress."));
+        // A cancel in flight keeps the armed phase and blocks its own button.
+        Facts armed = confirmed(withUsable(kinded(baseline(Provider::Claude, 100)), 1));
+        armed.selectedKind = "weekly";
+        armed.automationArmed = true;
+        QVERIFY(evaluate(armed).canCancelArm);
+        const Phase phase = evaluate(armed).phase;
+        armed.automationPending = true;
+        result = evaluate(armed);
+        QCOMPARE(result.phase, phase);
+        QCOMPARE(result.phase, Phase::Armed);
+        QVERIFY(!result.canCancelArm);
+        QVERIFY(!result.canUseNow);
+        QCOMPARE(result.useNowReason, Reason::Busy);
+    }
     void kindLabelsComposeFromServerText() {
         const Facts facts = kinded(baseline(Provider::Claude, 100));
         QCOMPARE(kindCountText(facts.kinds[0]), QString("1 weekly reset"));

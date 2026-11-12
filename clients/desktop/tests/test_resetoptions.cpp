@@ -142,6 +142,13 @@ private slots:
             QTest::newRow(prefix + "large-balance") << Scene{prefix + "large-balance", provider, "choices", true, true, false, false,
                 "", "", "", "", qint64(4294967296LL)};
         }
+        // An arm or cancel is in flight: every choice is disabled with the
+        // existing busy reason while the dialog keeps its phase and shows the
+        // progress text it already set.
+        QTest::newRow("claude-arm-pending") << Scene{"claude-arm-pending", "Claude", "choices", false, false, false, false,
+            inProgress, inProgress, "Setting the automatic reset…", ""};
+        QTest::newRow("claude-cancel-pending") << Scene{"claude-cancel-pending", "Claude", "armed", false, false, false, false,
+            inProgress, alreadyArmed, "Canceling the automatic reset…", deadline};
         const QVariantMap weeklyKind = syntheticKind("weekly", "weekly reset", 1, true,
             "Refills Weekly and Fable", "Uses it when Weekly reaches 100%");
         const QVariantMap fableKind = syntheticKind("fable", "Fable reset", 2, true,

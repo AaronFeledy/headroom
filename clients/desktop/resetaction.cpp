@@ -218,6 +218,9 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
         && (provider == "Codex" || provider == "Claude")
         && m_resetBlockedReceipt.startsWith(receiptPrefix(m_settingsService.path(), provider)));
     facts.busy = m_resetBusy;
+    // An arm or cancel reply blocks every choice without entering the
+    // manual-spend phase or replacing the dialog's progress text.
+    facts.automationPending = m_automationReply != nullptr;
     facts.owner = provider == m_resetProvider;
     facts.confirmed = !m_resetConfirmation.isEmpty();
     facts.confirmationCurrent = facts.confirmed && m_resetConfirmation == resetConnectionIdentity();
@@ -512,9 +515,11 @@ bool Controller::scheduleReset() {
     // Sending the arm request keeps the open dialog bound: a failed or
     // aborted request must not lock it until it is closed and reopened.
     m_resetMessage = "Setting the automatic reset…";
-    emit changed();
     auto reply = network->put(request, body);
     m_automationReply = reply;
+    // Publish the progress text and the in-flight state together so every
+    // choice is disabled for the whole request.
+    emit changed();
     ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
@@ -533,9 +538,11 @@ void Controller::cancelScheduledReset() {
     QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
         : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
     m_resetMessage = "Canceling the automatic reset…";
-    emit changed();
     auto reply = network->deleteResource(request);
     m_automationReply = reply;
+    // Publish the progress text and the in-flight state together so every
+    // choice is disabled for the whole request.
+    emit changed();
     ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
@@ -582,6 +589,7 @@ void Controller::cancelResetRequest() {
 void Controller::consumeReset() {
     // DO NOT TEST OR INVOKE for validation: this spends a valuable real reset.
     // A confirmed manual use also cancels the server's automatic authorization.
+    if (m_automationReply) return; // An arm or cancel owns the action slot.
     if (!resetAction().value("canConfirm").toBool()) return;
     submitReset();
 }

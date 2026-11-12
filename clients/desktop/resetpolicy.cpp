@@ -65,10 +65,11 @@ Capabilities evaluate(const Facts &facts) {
         : facts.awaitingUsage ? Phase::Reconciling : Phase::Choices;
     result.openReason = foreign ? Reason::ForeignOwner : facts.busy ? Reason::Busy : Reason::None;
     result.canOpen = result.openReason == Reason::None;
-    result.canCancelArm = facts.automationArmed;
+    result.canCancelArm = facts.automationArmed && !facts.automationPending;
     // Blockers shared by both choices, most specific first. Visibility is
     // never permission: a stale or latched reading opens for information only.
     const Reason shared = foreign ? Reason::ForeignOwner : facts.busy ? Reason::Busy
+        : facts.automationPending ? Reason::Busy
         : facts.awaitingUsage ? Reason::AwaitingUsage : !facts.readingAvailable ? Reason::Unavailable
         : !facts.fresh ? Reason::Stale : !credits ? Reason::NoCredits
         : !facts.accountBound ? Reason::Unbound : Reason::None;

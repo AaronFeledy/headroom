@@ -65,6 +65,9 @@ struct Facts {
     // Session state. One provider owns the confirmation or submission.
     bool awaitingUsage = false;        // a durable receipt latch is pending
     bool busy = false;                 // a submission is in flight
+    // An arm or cancel request is in flight. It blocks every choice while the
+    // dialog keeps its phase; it is not the manual-spend busy state.
+    bool automationPending = false;
     bool owner = false;                // this provider owns the single dialog slot
     bool confirmed = false;            // options open, bound to an identity; not consent to spend
     bool confirmationCurrent = false;  // that binding matches the current identity
