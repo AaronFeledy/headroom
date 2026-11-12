@@ -99,28 +99,14 @@ func Test_UsageData_MarshalJSON_reset_credit_kinds_null_empty_and_populated(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	var nullKinds struct {
-		Credits *struct {
-			Kinds json.RawMessage `json:"kinds"`
-		} `json:"rate_limit_reset_credits"`
-	}
-	if err := json.Unmarshal(encoded, &nullKinds); err != nil || nullKinds.Credits == nil || string(nullKinds.Credits.Kinds) != "null" {
-		t.Fatalf("kinds = %s, want null", nullKinds.Credits.Kinds)
-	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.kinds", `null`)
 	// Given a classified provider with no available kind.
 	data.RateLimitResetCredits.Kinds = []usage.ResetCreditKind{}
 	encoded, err = json.Marshal(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var emptyKinds struct {
-		Credits *struct {
-			Kinds json.RawMessage `json:"kinds"`
-		} `json:"rate_limit_reset_credits"`
-	}
-	if err := json.Unmarshal(encoded, &emptyKinds); err != nil || emptyKinds.Credits == nil || string(emptyKinds.Credits.Kinds) != "[]" {
-		t.Fatalf("kinds = %s, want []", emptyKinds.Credits.Kinds)
-	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.kinds", `[]`)
 	// Given a populated kind.
 	expires := "2026-12-10T22:00:00Z"
 	data.ProviderName = "Claude"
@@ -134,7 +120,15 @@ func Test_UsageData_MarshalJSON_reset_credit_kinds_null_empty_and_populated(t *t
 	}
 	var populated struct {
 		Credits struct {
-			Kinds []usage.ResetCreditKind `json:"kinds"`
+			Kinds []struct {
+				ID              string   `json:"id"`
+				Label           string   `json:"label"`
+				AvailableCount  int64    `json:"available_count"`
+				UsableNow       bool     `json:"usable_now"`
+				Refills         []string `json:"refills"`
+				GivesBackWeekly bool     `json:"gives_back_weekly"`
+				ExpiresAt       *string  `json:"expires_at"`
+			} `json:"kinds"`
 		} `json:"rate_limit_reset_credits"`
 	}
 	if err := json.Unmarshal(encoded, &populated); err != nil {
