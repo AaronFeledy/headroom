@@ -23,6 +23,8 @@ type Config struct {
 	TLSKeyFile     string
 	TLSDir         string
 	ResetStateDir  string
+	// ResetAutomationDir holds the server-owned automatic reset authorization.
+	ResetAutomationDir string
 }
 
 type AccountConfig struct {
