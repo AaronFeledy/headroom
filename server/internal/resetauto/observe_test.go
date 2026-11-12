@@ -12,6 +12,7 @@ import (
 
 func newTestAutomation(t *testing.T) *Automation {
 	t.Helper()
+	// Keep the executor unset: observations must never enter the firing path.
 	return New(Options{
 		Dir:      filepath.Join(t.TempDir(), "reset-automation"),
 		Lifetime: context.Background(),
@@ -36,7 +37,7 @@ func Test_Automation_cancels_a_changed_identity_after_a_poll(t *testing.T) {
 	armCodex(t, automation, 95, 1)
 	other := testFingerprint[:63] + "0"
 	entry := poller.Entry{Data: usage.UsageData{
-		Buckets:               []usage.Bucket{weeklyBucket(100, testWindow())},
+		Buckets:               []usage.Bucket{weeklyBucket(95, testWindow())},
 		RateLimitResetCredits: credits(other, 1, nil),
 	}, FetchedAt: testNow()}
 
@@ -61,6 +62,10 @@ func Test_Automation_cancels_when_the_window_has_ended(t *testing.T) {
 
 	// When
 	automation.Observe("Codex", poller.Entry{})
+	state, ok := automation.State(ProviderCodex)
+	if !ok || state == nil || !state.Armed || state.LastEvent != nil {
+		t.Fatalf("missing reading changed the authorization: %+v, ok=%v", state, ok)
+	}
 
 	// A reading with no credits keeps the authorization, so move the clock past
 	// the window and evaluate again.
@@ -73,17 +78,17 @@ func Test_Automation_cancels_when_the_window_has_ended(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := records[ProviderCodex]
-	if record.Armed() || record.LastEvent == nil || *record.LastEvent.Reason != ReasonWindowEnded {
+	if record.Armed() || record.LastEvent == nil || record.LastEvent.Reason == nil || *record.LastEvent.Reason != ReasonWindowEnded {
 		t.Fatalf("record after window end = %+v", record)
 	}
 }
 
-func Test_Automation_keeps_a_fire_decision_without_an_executor(t *testing.T) {
+func Test_Automation_keeps_an_authorization_below_the_limit(t *testing.T) {
 	// Given
 	automation := newTestAutomation(t)
 	armCodex(t, automation, 95, 1)
 	entry := poller.Entry{Data: usage.UsageData{
-		Buckets:               []usage.Bucket{weeklyBucket(100, testWindow())},
+		Buckets:               []usage.Bucket{weeklyBucket(95, testWindow())},
 		RateLimitResetCredits: credits(testFingerprint, 1, nil),
 	}, FetchedAt: testNow()}
 
@@ -92,8 +97,8 @@ func Test_Automation_keeps_a_fire_decision_without_an_executor(t *testing.T) {
 
 	// Then
 	records, err := automation.store.Load()
-	if err != nil || !records[ProviderCodex].Armed() {
-		t.Fatalf("fire decision without an executor disarmed: %+v, error=%v", records[ProviderCodex], err)
+	if err != nil || !records[ProviderCodex].Armed() || records[ProviderCodex].LastEvent != nil {
+		t.Fatalf("below-limit reading changed the authorization: %+v, error=%v", records[ProviderCodex], err)
 	}
 }
 
@@ -126,7 +131,7 @@ func Test_Automation_ignores_the_copied_session_meter_during_evaluation(t *testi
 
 	// Then the copied session wall must not fire or cancel.
 	records, err := automation.store.Load()
-	if err != nil || !records[ProviderClaude].Armed() {
+	if err != nil || !records[ProviderClaude].Armed() || records[ProviderClaude].LastEvent != nil {
 		t.Fatalf("copied session meter changed the authorization: %+v, error=%v", records[ProviderClaude], err)
 	}
 }

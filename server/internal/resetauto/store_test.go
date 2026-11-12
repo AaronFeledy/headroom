@@ -41,11 +41,11 @@ func Test_Store_round_trips_with_private_modes(t *testing.T) {
 	}
 	dirInfo, err := os.Stat(store.dir)
 	if err != nil || dirInfo.Mode().Perm() != 0o700 {
-		t.Fatalf("directory mode = %v, error=%v", dirInfo.Mode().Perm(), err)
+		t.Fatalf("directory info = %v, error=%v", dirInfo, err)
 	}
 	fileInfo, err := os.Stat(filepath.Join(store.dir, stateFileName))
 	if err != nil || fileInfo.Mode().Perm() != 0o600 {
-		t.Fatalf("file mode = %v, error=%v", fileInfo.Mode().Perm(), err)
+		t.Fatalf("file info = %v, error=%v", fileInfo, err)
 	}
 }
 
@@ -58,6 +58,7 @@ func Test_Store_rearm_is_idempotent_only_for_the_same_request(t *testing.T) {
 	}
 
 	// When an identical request arrives, nothing changes.
+	store.now = func() time.Time { return testNow().Add(time.Minute) }
 	again, err := store.Arm(context.Background(), ProviderClaude, testArmRequest())
 
 	// Then
@@ -119,6 +120,9 @@ func Test_Store_records_completion_after_the_authorization_is_gone(t *testing.T)
 	err = store.FinishFire(context.Background(), ProviderCodex, newEvent(testNow(), "completed", "reset", "", ""))
 
 	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
 	loaded, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -144,8 +148,9 @@ func Test_Store_cancel_is_idempotent_and_keeps_the_last_event(t *testing.T) {
 	if err != nil || canceled.Armed() || canceled.LastEvent == nil || canceled.LastEvent.Reason == nil || *canceled.LastEvent.Reason != ReasonUser {
 		t.Fatalf("canceled = %+v, error=%v", canceled, err)
 	}
+	store.now = func() time.Time { return testNow().Add(time.Minute) }
 	again, err := store.Cancel(context.Background(), ProviderCodex, ReasonUser)
-	if err != nil || again.LastEvent == nil || *again.LastEvent.Reason != ReasonUser {
+	if err != nil || again.LastEvent == nil || again.LastEvent.Reason == nil || *again.LastEvent.Reason != ReasonUser || again.LastEvent.At != canceled.LastEvent.At {
 		t.Fatalf("repeated cancel = %+v, error=%v", again, err)
 	}
 	if !record.Armed() {
@@ -214,10 +219,7 @@ func Test_Store_rejects_damaged_or_unknown_state_without_rewriting_it(t *testing
 
 			// When
 			_, err := store.Load()
-			armErr := func() error {
-				_, err := store.Arm(context.Background(), ProviderCodex, ArmRequest{AccountFingerprint: testFingerprint, WindowEndsAt: testWindow()})
-				return err
-			}()
+			_, armErr := store.Arm(context.Background(), ProviderCodex, ArmRequest{AccountFingerprint: testFingerprint, WindowEndsAt: testWindow()})
 
 			// Then
 			if !errors.Is(err, ErrStateUnavailable) || !errors.Is(armErr, ErrStateUnavailable) {

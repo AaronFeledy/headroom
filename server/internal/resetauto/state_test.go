@@ -2,8 +2,7 @@ package resetauto
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -24,10 +23,10 @@ func Test_Project_reports_an_armed_window(t *testing.T) {
 	if !state.Armed || state.ArmedAt == nil || state.WindowEndsAt == nil || state.AccountFingerprint == nil {
 		t.Fatalf("armed state = %+v", state)
 	}
-	if *state.WindowEndsAt != testWindow().Format(time.RFC3339) || *state.AccountFingerprint != testFingerprint {
+	if *state.ArmedAt != record.ArmedAt.Format(time.RFC3339) || *state.WindowEndsAt != testWindow().Format(time.RFC3339) || *state.AccountFingerprint != testFingerprint {
 		t.Fatalf("state times/fingerprint = %+v", state)
 	}
-	if len(state.Kinds) != 2 || state.Kinds[0] != "weekly" {
+	if !slices.Equal(state.Kinds, []string{"weekly", "fable"}) {
 		t.Fatalf("state kinds = %+v", state.Kinds)
 	}
 }
@@ -75,12 +74,7 @@ func Test_Automation_state_is_null_without_a_directory_and_disarmed_when_damaged
 		t.Fatalf("unavailable state = %+v, ok=%v", state, ok)
 	}
 	automation := newTestAutomation(t)
-	if err := os.MkdirAll(automation.store.dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(automation.store.dir, stateFileName), []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeStateFile(t, automation.store, "{")
 
 	// When
 	state, ok := automation.State(ProviderCodex)
@@ -103,7 +97,7 @@ func Test_Automation_state_does_not_leak_internal_record_fields(t *testing.T) {
 	state, ok := automation.State(ProviderCodex)
 
 	// Then
-	if !ok || !state.Armed || state.Kinds != nil {
+	if !ok || state == nil || !state.Armed || state.Kinds != nil {
 		t.Fatalf("codex state = %+v, ok=%v", state, ok)
 	}
 	// The API state never carries the provider account ID; only the fingerprint.
