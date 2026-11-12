@@ -11,7 +11,11 @@ func NewHandler(opts Options) http.Handler {
 	if version == "" {
 		version = DefaultVersion
 	}
-	h := &handler{cache: opts.Cache, cursor: opts.Cursor, grok: opts.Grok, codex: opts.Codex, poller: opts.Poller, version: version, providerNames: normalizedNames(opts.ProviderNames)}
+	core := opts.Reset
+	if core == nil {
+		core = NewResetCore(ResetCoreOptions{Codex: opts.Codex, Claude: opts.Claude, Poller: opts.Poller, ProviderNames: opts.ProviderNames})
+	}
+	h := &handler{cache: opts.Cache, cursor: opts.Cursor, grok: opts.Grok, codex: opts.Codex, poller: opts.Poller, version: version, providerNames: normalizedNames(opts.ProviderNames), reset: core, automation: opts.Automation}
 	h.authToken, h.tlsFingerprint = opts.AuthToken, opts.TLSCertificateSHA256
 	h.claude = opts.Claude
 	return chain(opts, h)

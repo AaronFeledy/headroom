@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/resetauto"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -58,6 +59,10 @@ type Options struct {
 	TLSCertificateSHA256 string
 	Version              string
 	ProviderNames        []string
+	// Reset is the process-wide reset gate. Nil builds one for this handler.
+	Reset *ResetCore
+	// Automation owns automatic-reset state. Nil reports a null key.
+	Automation *resetauto.Automation
 }
 
 type Logger interface {
