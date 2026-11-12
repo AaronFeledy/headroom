@@ -846,6 +846,58 @@ private slots:
         QCOMPARE(controller.resetAction()["kindsKnown"].toBool(), false);
         QVERIFY(controller.resetState("Claude")["eligible"].toBool());
     }
+    void claudeResetKindNextGrantIsOptionalAndBounded() {
+        const auto parse = [](const QJsonValue &next, bool include = true) {
+            auto providers = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(40, 60, 3, true)).array();
+            auto claude = providers[0].toObject();
+            auto credits = claude["rate_limit_reset_credits"].toObject();
+            auto kind = TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly"});
+            if (include) kind["next"] = next; else kind.remove("next");
+            credits["kinds"] = QJsonArray{kind};
+            claude["rate_limit_reset_credits"] = credits;
+            providers[0] = claude;
+            QVariantList parsed;
+            if (!Usage::parse(QJsonDocument(providers).toJson(), parsed)) return QVariantMap{};
+            return parsed.first().toMap()["rate_limit_reset_credits"].toMap();
+        };
+        const auto grant = [&](const QJsonValue &value) {
+            return parse(value)["kinds"].toList().first().toMap()["next"];
+        };
+        // A valid object keeps only its two known keys.
+        const auto valid = grant(QJsonObject{{"label", "One full limit reset (November 2026)"},
+            {"expires_at", "2026-12-10T22:00:00Z"}, {"extra", "dropped"}}).toMap();
+        QCOMPARE(valid["label"].toString(), QString("One full limit reset (November 2026)"));
+        QCOMPARE(valid["expires_at"].toString(), QString("2026-12-10T22:00:00Z"));
+        QVERIFY(!valid.contains("extra"));
+        // An empty label is allowed; an absent expiry normalizes to null.
+        const auto empty = grant(QJsonObject{{"label", ""}}).toMap();
+        QCOMPARE(empty["label"].toString(), QString());
+        QVERIFY(empty["expires_at"].isNull());
+        // 200 code points is the ceiling; one more is malformed.
+        QCOMPARE(grant(QJsonObject{{"label", QString(200, 'a')}}).toMap()["label"].toString(),
+            QString(200, 'a'));
+        // Absent or null metadata never invalidates the kind list or the count.
+        const auto absent = parse(QJsonValue(), false);
+        QCOMPARE(absent["kinds"].toList().size(), 1);
+        QVERIFY(absent["kinds"].toList().first().toMap()["next"].isNull());
+        QCOMPARE(absent["available_count"].toLongLong(), qint64(3));
+        QVERIFY(grant(QJsonValue(QJsonValue::Null)).isNull());
+        const QList<QJsonValue> malformed{
+            QJsonValue("label"), QJsonValue(3), QJsonValue(true), QJsonValue(QJsonArray{}),
+            QJsonObject{}, QJsonObject{{"label", 3}}, QJsonObject{{"label", QJsonValue::Null}},
+            QJsonObject{{"label", QString(201, 'a')}},
+            QJsonObject{{"label", "x"}, {"expires_at", 3}},
+            QJsonObject{{"label", "x"}, {"expires_at", true}},
+            QJsonObject{{"label", "x"}, {"expires_at", QJsonObject{}}}};
+        for (const auto &value : malformed) {
+            const auto credits = parse(value);
+            QVERIFY2(!credits.isEmpty(), "a malformed grant must not invalidate the reading");
+            QCOMPARE(credits["kinds"].toList().size(), 1);
+            const auto nextValue = credits["kinds"].toList().first().toMap()["next"];
+            QVERIFY2(nextValue.isNull(), "a malformed grant normalizes to null");
+            QCOMPARE(credits["available_count"].toLongLong(), qint64(3));
+        }
+    }
     void malformedMeters() {
         auto list = QJsonDocument::fromJson(TestUsage::snapshot()).array();
         auto p = list[0].toObject(); auto buckets = p["buckets"].toArray(); auto b = buckets[0].toObject();

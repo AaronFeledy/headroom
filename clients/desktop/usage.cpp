@@ -35,6 +35,23 @@ QJsonObject normalizeFetchDiagnostics(const QJsonValue &value) {
     return result;
 }
 
+// The grant a redemption of one kind would spend right now. It is optional
+// metadata: absent, null, or malformed becomes null for that kind and never
+// invalidates the kind list. Unknown keys are dropped; the label may be
+// empty, but an over-long or non-string label is malformed.
+QJsonValue normalizeResetKindNext(const QJsonObject &kind) {
+    const auto value = kind["next"];
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto grant = value.toObject();
+    const auto label = grant["label"];
+    const auto expires = grant["expires_at"];
+    if (!label.isString() || label.toString().toUcs4().size() > 200
+        || (!expires.isNull() && !expires.isUndefined() && !expires.isString()))
+        return QJsonValue(QJsonValue::Null);
+    return QJsonObject{{"label", label},
+        {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)}};
+}
+
 // The additive kind breakdown is all-or-nothing: one malformed entry makes
 // the whole list unknown, while the rest of the reset-credit object survives.
 // Unknown keys inside an entry are dropped instead of being forwarded.
@@ -77,7 +94,8 @@ QJsonValue normalizeResetKinds(const QJsonValue &value) {
         result.append(QJsonObject{{"id", id}, {"label", label}, {"available_count", count},
             {"usable_now", kind["usable_now"]}, {"refills", normalizedRefills},
             {"gives_back_weekly", givesBack.toBool(false)},
-            {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)}});
+            {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)},
+            {"next", normalizeResetKindNext(kind)}});
     }
     return result;
 }
