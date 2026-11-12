@@ -41,6 +41,12 @@ zero; account or connection changes establish a new baseline. Disabled notificat
 still update the baseline, so enabling them does not replay past changes. A decrease
 is reported as a count change, without assuming whether a reset expired or was used.
 
+Server-held automatic resets also notify once per new recorded event. The first
+event seen on a connection is a baseline; a used reset names its kind, an
+inconclusive result asks you to check the provider, failures say no reset was
+used, and cancellations explain the reason. A requested event and the user or
+manual-reset cancellations stay quiet.
+
 When the counter comes into view, it shows a quick signed delta rising and fading
 above it: green for additions and orange for decreases, using the actual difference
 (including changes greater than one). At zero, the counter and its spacing leave the layout;
@@ -510,12 +516,13 @@ what each kind refills using the visible meter labels, any return of Fable usage
 to the weekly limit, and its expiry. When the server names the grant a kind would
 spend now, each kind row shows that grant and its expiry, and the chosen kind
 repeats them beside the irreversible-spend warning. A kind-aware Claude dialog
-asks which kind to use: a sole kind is preselected, while several kinds start
-unselected and both choices stay disabled until one is chosen. A chosen kind that
-leaves the reading is cleared, never swapped for another kind. The automatic
-choice and the redeem request are bound to that kind; the request carries it only
-for a reading that lists kinds. ChatGPT keeps the total-count label and its
-existing request.
+asks which kind to use: a sole kind is preselected, while several kinds list
+**Any matching reset** first and select it by default. That choice enables the
+automatic authorization but leaves **Use now** disabled until one kind is named;
+choosing a kind limits the automatic authorization to that kind. A chosen kind
+that leaves the reading is cleared, never swapped for another kind. The redeem
+request carries the chosen kind only for a reading that lists kinds. ChatGPT
+keeps the total-count label and its existing request.
 For either provider, **Reset options…** appears at 90% usage when an account-bound
 banked reset is available. An active automatic choice or pending request keeps
 its management controls available. The options separate **Use now** from
@@ -529,20 +536,19 @@ allow manual use when a covered allowance has less than 80% remaining, and
 assistant use at 10% remaining or less. A reset counts only when it restores a
 qualifying allowance. The provider can still refuse a request; Headroom does not retry.
 
-The automatic choice authorizes one reset for the current account, connection,
-and weekly window. It is offered independently of immediate-use permission,
-with fresh account-bound credits and a known future weekly reset deadline.
-Headroom checks the server's usage snapshot every 15 seconds while armed and
-submits once when it reports 100% and the reset is still permitted. The provider polling
-cadence still determines when new usage becomes available. Connection failures
-back that cadence off to at most five minutes, and the arm is retired as soon as
-its weekly window ends, even while the server stays unreachable. Keep Headroom
-running: quitting cancels the choice. **Auto at 100%…** reopens the dialog to
-use it now or cancel. Account, connection, or weekly-window changes, a valid
-reading below 90%, no credits, or an existing reset request cancel the choice.
-Provider errors pause monitoring; cancellation remains available while paused
-or offline. It never rearms itself or carries over to another week. Both choices
-use the selected backend transport. Each confirmed request is submitted once,
+The automatic choice asks the server to hold one reset authorization for the
+current account and weekly window. It is offered independently of immediate-use
+permission, with fresh account-bound credits and a known future weekly reset
+deadline. The server evaluates it after each completed ChatGPT poll and spends
+at most once at 100% weekly usage; the desktop does not poll separately while an
+authorization is armed. The authorization lives on the server, so it stays set
+until it is used, canceled, or the weekly window ends, even if Headroom is closed
+or the server restarts. **Auto at 100%…** reopens the dialog to use it now or
+cancel. The server cancels it when the weekly window ends, the account changes,
+credits run out, the reading stops qualifying, or a request is already pending;
+a manual use also cancels it. A server without `reset_automation` support shows
+"Update the server to use automatic resets." and cannot arm. Both choices use
+the selected backend transport. Each confirmed request is submitted once,
 without retries. Both spending choices stay disabled after submission,
 including after a connection failure or app restart, until usage for the same
 account falls below 90%; readings at 90–94.99% do not release the pending request.
@@ -556,18 +562,22 @@ Its **Reset options…** button appears with an account-bound banked reset when 
 reports that it can be used now, or when session or weekly usage reaches 90%.
 **Use now** requires Anthropic's explicit `usable_now: true` for the chosen kind;
 an unknown or false value blocks immediate use with an explanation, but does not
-block planning automatic use. **Use automatically at limit** authorizes one
-reset when a fresh reading reports 100% on one of that kind's trigger meters and
-the kind is usable now. Trigger meters come from what the kind refills, minus a
-bucket owned by a narrower available kind, so an armed weekly reset waits for the
-weekly meter when Fable resets can cover the Fable bucket. Automatic use requires
-a known future weekly reset deadline, so authorization cannot survive an unknown
-window; losing the kind, its count, or its trigger meter retires the arm. The same 15-second cache polling, weekly-window expiry,
-identity checks, and cancellation on connection/account changes, exhausted credits,
-or an existing request apply. Provider errors pause monitoring, with cancellation
-still available. Unlike ChatGPT, Claude does not cancel merely because usage falls below a floor.
-Only one provider can have an active confirmation, submission, or automatic choice
-at a time. Spending a reset cannot be undone. A durable Claude receipt prevents
+block planning automatic use. **Use automatically at limit** asks the server to
+hold one reset authorization for the chosen kinds. A kind applies to a meter when
+the meter is named by the kind's refills, or when the meter is weekly and the kind
+returns usage to the weekly limit. With **Any matching reset**, every listed kind
+with a positive count is authorized and the first applicable one is used at
+whichever limit is reached; choosing one kind limits the authorization to it.
+Automatic use requires a known future weekly reset deadline. The server
+revalidates the account, credits, applicability, and weekly window after each
+completed Claude poll, pauses while readings are unavailable, and cancels for an
+ended or changed window, an account change, a lost kind or meter, exhausted
+credits, or an existing request. Provider errors pause evaluation, with
+cancellation still available. Unlike ChatGPT, Claude does not cancel merely
+because usage falls below a floor. Each provider can hold its own server
+authorization; the desktop's confirmation and submission slot is still
+single-provider, and a manual use cancels the stored authorization. Spending a
+reset cannot be undone. A durable Claude receipt prevents
 another request until the server reports durably reconciled evidence for that
 exact request UUID and account. The server compares a fresh bank status GET
 against its final pre-submission balance, persists the resolution, and exposes
