@@ -142,26 +142,26 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 // bankedKindBreakdown names where banked resets came from, but only when the
 // server's kind counts reconcile with the total it also reported.
 func bankedKindBreakdown(credits *RateLimitResetCredits) string {
-	var parts, names []string
+	var parts []string
+	var name string
 	var total int64
 	for _, kind := range credits.Kinds {
 		if kind.AvailableCount <= 0 {
 			continue
 		}
-		name := strings.TrimSuffix(kind.Label, " reset")
+		name = strings.TrimSuffix(kind.Label, " reset")
 		if name == "" {
 			name = kind.Label
 		}
 		total += kind.AvailableCount
 		parts = append(parts, fmt.Sprintf("%d %s", kind.AvailableCount, name))
-		names = append(names, name)
 	}
 	if len(parts) == 0 || total != credits.AvailableCount {
 		return ""
 	}
-	if len(names) == 1 {
+	if len(parts) == 1 {
 		// The existing line already carries the total, so name its sole source.
-		return " (" + names[0] + ")"
+		return " (" + name + ")"
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
 }

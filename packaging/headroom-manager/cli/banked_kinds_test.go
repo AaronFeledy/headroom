@@ -106,7 +106,8 @@ func TestBankedKindBreakdownFallbacks(t *testing.T) {
 				t.Fatalf("expected today's text, got: %s", text)
 			}
 			credits := provider.RateLimitResetCredits
-			if credits == nil || credits.AvailableCount != int64(test.top) || credits.AccountFingerprint == nil {
+			if credits == nil || credits.AvailableCount != int64(test.top) || credits.AccountFingerprint == nil ||
+				*credits.AccountFingerprint != bankedKindFingerprint {
 				t.Fatalf("invalid kinds disturbed the rest: %#v", credits)
 			}
 			if test.parsed == 0 {
