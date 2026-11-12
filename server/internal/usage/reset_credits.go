@@ -11,6 +11,14 @@ type ResetCreditKind struct {
 	Refills         []string `json:"refills"`
 	GivesBackWeekly bool     `json:"gives_back_weekly"`
 	ExpiresAt       *string  `json:"expires_at"`
+	// Next describes the grant a kind redemption would spend now, or nil.
+	Next *ResetCreditNext `json:"next"`
+}
+
+// ResetCreditNext is the upstream grant wording a kind would spend next.
+type ResetCreditNext struct {
+	Label     string  `json:"label"`
+	ExpiresAt *string `json:"expires_at"`
 }
 
 // Kind returns the listed kind with this identifier, or nil when absent.

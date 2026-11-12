@@ -2,8 +2,11 @@ package claude
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 // fixtureBankStatus is the observed live shape with identifiers replaced.
@@ -166,6 +169,9 @@ func Test_BankedStatus_unknown_type_keeps_counts_and_derives_kind(t *testing.T) 
 	if len(credits.Kinds) != 1 || credits.Kinds[0].ID != resetKindWeekly || credits.Kinds[0].AvailableCount != 2 || credits.Kinds[0].UsableNow {
 		t.Fatalf("kinds = %+v, want counted weekly that is not usable", credits.Kinds)
 	}
+	if credits.Kinds[0].Next != nil {
+		t.Fatalf("unrecognized grant must not be offered next: %+v", credits.Kinds[0].Next)
+	}
 }
 
 func Test_BankedStatus_unrecognized_grant_counts_toward_totals(t *testing.T) {
@@ -185,12 +191,12 @@ func Test_BankedStatus_unrecognized_grant_counts_toward_totals(t *testing.T) {
 		t.Fatalf("credits = %+v, want top-level count 3", credits)
 	}
 	var sum, sessionCount, weeklyCount int64
-	var sessionUsable, weeklyUsable bool
+	var sessionUsable, sessionNext, weeklyUsable bool
 	for _, kind := range credits.Kinds {
 		sum += kind.AvailableCount
 		switch kind.ID {
 		case resetKindSession:
-			sessionCount, sessionUsable = kind.AvailableCount, kind.UsableNow
+			sessionCount, sessionUsable, sessionNext = kind.AvailableCount, kind.UsableNow, kind.Next != nil
 		case resetKindWeekly:
 			weeklyCount, weeklyUsable = kind.AvailableCount, kind.UsableNow
 		}
@@ -198,8 +204,8 @@ func Test_BankedStatus_unrecognized_grant_counts_toward_totals(t *testing.T) {
 	if sum != credits.AvailableCount {
 		t.Fatalf("kind sum = %d, top-level = %d", sum, credits.AvailableCount)
 	}
-	if sessionCount != 2 || sessionUsable {
-		t.Fatalf("unrecognized kind = count %d usable %t, want counted and unusable", sessionCount, sessionUsable)
+	if sessionCount != 2 || sessionUsable || sessionNext {
+		t.Fatalf("unrecognized kind = count %d usable %t next %t, want counted, unusable, and not offered", sessionCount, sessionUsable, sessionNext)
 	}
 	if weeklyCount != 1 || !weeklyUsable {
 		t.Fatalf("recognized kind = count %d usable %t, want counted and usable", weeklyCount, weeklyUsable)
@@ -219,5 +225,72 @@ func Test_BankedStatus_unrecognized_grant_is_never_selected(t *testing.T) {
 	}
 	if grant, err := selectResetGrant(status, "", now); !errors.Is(err, errResetUnavailable) || grant != nil {
 		t.Fatalf("legacy selection = %+v, %v, want refusal", grant, err)
+	}
+}
+
+func Test_BankedStatus_next_describes_the_grant_each_kind_would_spend(t *testing.T) {
+	// Given
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	endsAt := "2026-12-10T22:00:00+00:00"
+	first := testGrant("first", resetKindWeekly, 1, true)
+	preferred := testGrant("preferred", resetKindWeekly, 1, true)
+	preferred.Label = "  One full limit reset\n(November 2026)  "
+	preferred.EndsAt = &endsAt
+	blocked := testGrant("blocked", resetKindFable, 1, false)
+	blocked.GivesBackWeekly = true
+	status := &bankStatus{eligible: true, nextGrantID: "preferred", grants: []bankGrant{first, preferred, blocked}}
+	// When
+	credits := status.credits(now)
+	// Then
+	weekly := kindByID(t, credits, resetKindWeekly)
+	if weekly.Next == nil || weekly.Next.Label != "One full limit reset (November 2026)" || weekly.Next.ExpiresAt == nil || *weekly.Next.ExpiresAt != "2026-12-10T22:00:00Z" {
+		t.Fatalf("weekly next = %+v, want sanitized preferred grant", weekly.Next)
+	}
+	if blocked := kindByID(t, credits, resetKindFable); blocked.Next != nil {
+		t.Fatalf("unusable kind next = %+v, want nil", blocked.Next)
+	}
+	// Given the preferred grant is no longer a candidate.
+	status.nextGrantID = "missing"
+	// When
+	credits = status.credits(now)
+	// Then
+	weekly = kindByID(t, credits, resetKindWeekly)
+	if weekly.Next == nil || weekly.Next.Label != "" || weekly.Next.ExpiresAt != nil {
+		t.Fatalf("weekly next = %+v, want the first candidate", weekly.Next)
+	}
+}
+
+func kindByID(t *testing.T, credits *usage.RateLimitResetCredits, id string) usage.ResetCreditKind {
+	t.Helper()
+	for _, kind := range credits.Kinds {
+		if kind.ID == id {
+			return kind
+		}
+	}
+	t.Fatalf("kind %q missing from %+v", id, credits.Kinds)
+	return usage.ResetCreditKind{}
+}
+
+func Test_BankedStatus_grant_label_replaces_controls_trims_and_caps(t *testing.T) {
+	// Given
+	cases := []struct{ name, label, want string }{
+		{"controls become spaces", " One\tfull\nreset ", "One full reset"},
+		{"whitespace only", " \x00\n ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// When
+			got := grantLabel(tc.label)
+			// Then
+			if got != tc.want {
+				t.Fatalf("grantLabel(%q) = %q, want %q", tc.label, got, tc.want)
+			}
+		})
+	}
+	// When
+	long := grantLabel(strings.Repeat("a", nextGrantLabelLimit+40))
+	// Then
+	if len([]rune(long)) != nextGrantLabelLimit {
+		t.Fatalf("long label length = %d, want %d", len([]rune(long)), nextGrantLabelLimit)
 	}
 }

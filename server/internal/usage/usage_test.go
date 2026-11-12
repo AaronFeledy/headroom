@@ -401,3 +401,56 @@ func sortedKeys(values map[string]json.RawMessage) []string {
 	}
 	return keys
 }
+
+func Test_UsageData_MarshalJSON_reset_credit_next_null_and_populated(t *testing.T) {
+	// Given a kind with no selectable grant.
+	expires := "2026-12-10T22:00:00Z"
+	data := usage.UsageData{ProviderName: "Claude", RateLimitResetCredits: &usage.RateLimitResetCredits{
+		AvailableCount: 1,
+		Kinds:          []usage.ResetCreditKind{{ID: "weekly", Label: "weekly reset", AvailableCount: 1}},
+	}}
+	// When
+	encoded, err := json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty struct {
+		Credits struct {
+			Kinds []struct {
+				Next json.RawMessage `json:"next"`
+			} `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &empty); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Credits.Kinds) != 1 || string(empty.Credits.Kinds[0].Next) != "null" {
+		t.Fatalf("next = %s, want null", empty.Credits.Kinds[0].Next)
+	}
+	// Given the grant that kind would spend.
+	data.RateLimitResetCredits.Kinds[0].Next = &usage.ResetCreditNext{Label: "One full limit reset", ExpiresAt: &expires}
+	// When
+	encoded, err = json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	var populated struct {
+		Credits struct {
+			Kinds []struct {
+				Next struct {
+					Label     string  `json:"label"`
+					ExpiresAt *string `json:"expires_at"`
+				} `json:"next"`
+			} `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &populated); err != nil {
+		t.Fatal(err)
+	}
+	next := populated.Credits.Kinds[0].Next
+	if next.Label != "One full limit reset" || next.ExpiresAt == nil || *next.ExpiresAt != expires {
+		t.Fatalf("next = %+v, want populated label and expiry", next)
+	}
+}

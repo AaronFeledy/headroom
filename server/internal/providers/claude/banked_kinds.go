@@ -2,7 +2,9 @@ package claude
 
 import (
 	"errors"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
@@ -45,6 +47,8 @@ var knownLimitKeys = map[string]bool{
 	"seven_day_omelette":         true,
 	"seven_day_oauth_apps":       true,
 }
+
+const nextGrantLabelLimit = 160
 
 var errResetKindAmbiguous = errors.New("multiple reset kinds available")
 var errResetKindUnavailable = errors.New("reset kind unavailable")
@@ -204,9 +208,46 @@ func (s *bankStatus) credits(now time.Time) *usage.RateLimitResetCredits {
 			GivesBackWeekly: id == resetKindFable,
 			ExpiresAt:       expires,
 		}
+		// next mirrors the grant a kind redemption would spend right now, so
+		// the desktop can show Anthropic's own wording for that exact grant.
+		if grant, err := selectResetGrant(s, id, now); err == nil {
+			entry.Next = nextGrantSummary(grant)
+		}
 		kinds = append(kinds, entry)
 	}
 	return &usage.RateLimitResetCredits{AvailableCount: available, UsableNow: &usable, Kinds: kinds}
+}
+
+func nextGrantSummary(grant *bankGrant) *usage.ResetCreditNext {
+	if grant == nil {
+		return nil
+	}
+	next := &usage.ResetCreditNext{Label: grantLabel(grant.Label)}
+	if grant.EndsAt != nil {
+		if parsed, err := time.Parse(time.RFC3339, *grant.EndsAt); err == nil {
+			formatted := parsed.UTC().Format(time.RFC3339)
+			next.ExpiresAt = &formatted
+		}
+	}
+	return next
+}
+
+// grantLabel keeps upstream wording safe for logs and single-line UI while
+// preserving the text people see in Claude.
+func grantLabel(label string) string {
+	var builder strings.Builder
+	for _, char := range label {
+		if unicode.IsControl(char) {
+			builder.WriteRune(' ')
+			continue
+		}
+		builder.WriteRune(char)
+	}
+	runes := []rune(strings.TrimSpace(builder.String()))
+	if len(runes) > nextGrantLabelLimit {
+		runes = runes[:nextGrantLabelLimit]
+	}
+	return string(runes)
 }
 
 // selectResetGrant is the pure pre-submission choice over a parsed status.

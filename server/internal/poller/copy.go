@@ -124,6 +124,11 @@ func copyResetKinds(kinds []usage.ResetCreditKind) []usage.ResetCreditKind {
 			copy(refills, kind.Refills)
 			copied[index].Refills = refills
 		}
+		if kind.Next != nil {
+			next := *kind.Next
+			next.ExpiresAt = copyString(kind.Next.ExpiresAt)
+			copied[index].Next = &next
+		}
 	}
 	return copied
 }
