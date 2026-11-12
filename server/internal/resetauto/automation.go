@@ -50,7 +50,6 @@ type ExecutorResult struct {
 // component that reaches a provider consume call.
 type Executor func(context.Context, ExecutorRequest) ExecutorResult
 
-// Options configures the automation component.
 type Options struct {
 	// Dir is the stable reset-automation directory; blank disables automation.
 	Dir string

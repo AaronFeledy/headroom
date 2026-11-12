@@ -78,13 +78,13 @@ func ValidateArm(provider string, entry poller.Entry, request ArmRequest, now ti
 	if !applies {
 		return ArmRejectNoTrigger
 	}
-	if armUrgent(data, credits, allowed) {
+	if armUrgent(data, credits) {
 		return ""
 	}
 	return ArmRejectNotUrgent
 }
 
-func armUrgent(data usage.UsageData, credits *usage.RateLimitResetCredits, allowed []usage.ResetCreditKind) bool {
+func armUrgent(data usage.UsageData, credits *usage.RateLimitResetCredits) bool {
 	if session, ok := realMeter(data, usage.BucketSession); ok && finite(session.Utilization) && session.Utilization >= ClaudeArmFloor {
 		return true
 	}

@@ -6,6 +6,7 @@ package resetauto
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -225,12 +226,7 @@ func kindAppliesToAny(kind usage.ResetCreditKind, meters []usage.Bucket) bool {
 }
 
 func kindAppliesTo(kind usage.ResetCreditKind, meter usage.Bucket) bool {
-	for _, refill := range kind.Refills {
-		if refill == meter.ID {
-			return true
-		}
-	}
-	return meter.ID == usage.BucketWeekly && kind.GivesBackWeekly
+	return slices.Contains(kind.Refills, meter.ID) || meter.ID == usage.BucketWeekly && kind.GivesBackWeekly
 }
 
 // preference orders applicable kinds: meters named in refills first, fewer
@@ -240,7 +236,7 @@ func preference(kinds []usage.ResetCreditKind, wall usage.Bucket) []usage.ResetC
 	direct := make([]usage.ResetCreditKind, 0, len(kinds))
 	weeklyOnly := make([]usage.ResetCreditKind, 0, len(kinds))
 	for _, kind := range kinds {
-		if contains(kind.Refills, wall.ID) {
+		if slices.Contains(kind.Refills, wall.ID) {
 			direct = append(direct, kind)
 		} else if wall.ID == usage.BucketWeekly && kind.GivesBackWeekly {
 			weeklyOnly = append(weeklyOnly, kind)
@@ -248,13 +244,4 @@ func preference(kinds []usage.ResetCreditKind, wall usage.Bucket) []usage.ResetC
 	}
 	sort.SliceStable(direct, func(i, j int) bool { return len(direct[i].Refills) < len(direct[j].Refills) })
 	return append(direct, weeklyOnly...)
-}
-
-func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }

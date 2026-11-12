@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
@@ -83,7 +84,7 @@ func (s *Store) Arm(ctx context.Context, provider string, request ArmRequest) (R
 		return Record{}, err
 	}
 	defer lock.Close()
-	records, err := s.loadLocked()
+	records, err := s.Load()
 	if err != nil {
 		return Record{}, err
 	}
@@ -128,7 +129,7 @@ func (s *Store) cancel(ctx context.Context, provider, reason string, expected *R
 		return Record{}, err
 	}
 	defer lock.Close()
-	records, err := s.loadLocked()
+	records, err := s.Load()
 	if err != nil {
 		return Record{}, err
 	}
@@ -155,7 +156,7 @@ func (s *Store) BeginFire(ctx context.Context, provider string, record Record, k
 		return err
 	}
 	defer lock.Close()
-	records, err := s.loadLocked()
+	records, err := s.Load()
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func (s *Store) FinishFire(ctx context.Context, provider string, event *usage.Re
 		return err
 	}
 	defer lock.Close()
-	records, err := s.loadLocked()
+	records, err := s.Load()
 	if err != nil {
 		return err
 	}
@@ -224,10 +225,6 @@ func (s *Store) ensureDir(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) loadLocked() (map[string]Record, error) {
-	return s.Load()
-}
-
 func (s *Store) save(records map[string]Record) error {
 	file := stateFile{Version: stateVersion, Providers: make(map[string]storedRecord, len(records))}
 	for provider, record := range records {
@@ -250,21 +247,9 @@ func (s *Store) save(records map[string]Record) error {
 func (r Record) matches(request ArmRequest) bool {
 	return r.AccountFingerprint == request.AccountFingerprint &&
 		sameInstant(r.WindowEndsAt, request.WindowEndsAt) &&
-		sameKinds(r.Kinds, request.Kinds)
+		slices.Equal(r.Kinds, request.Kinds)
 }
 
 func (r Record) sameAuthorization(other Record) bool {
 	return r.ArmedAt.Equal(other.ArmedAt) && r.AccountFingerprint == other.AccountFingerprint
-}
-
-func sameKinds(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

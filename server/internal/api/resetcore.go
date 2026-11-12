@@ -161,7 +161,6 @@ func (c *ResetCore) scheduleUsageRefresh(provider string) {
 	}()
 }
 
-// AutomationExecutor adapts the shared reset core to the automation component.
 func (c *ResetCore) AutomationExecutor() resetauto.Executor {
 	return func(ctx context.Context, request resetauto.ExecutorRequest) resetauto.ExecutorResult {
 		result := c.Execute(ctx, request.Provider, ResetRequest{
