@@ -18,19 +18,23 @@ import (
 )
 
 const (
-	providerName    = "Claude"
-	primaryLabel    = "Current Session"
-	secondaryLabel  = "Weekly"
-	defaultUsageURL = "https://api.anthropic.com/api/oauth/usage"
-	defaultTokenURL = "https://platform.claude.com/v1/oauth/token"
-	betaHeader      = "oauth-2025-04-20"
-	// Banked-reset discovery requires the Claude CLI identity (2.1.280+).
-	// The legacy claude-code identity returns ineligible_reason: surface.
-	userAgent         = "claude-cli/2.1.306 (external, cli)"
+	providerName      = "Claude"
+	primaryLabel      = "Current Session"
+	secondaryLabel    = "Weekly"
+	defaultUsageURL   = "https://api.anthropic.com/api/oauth/usage"
+	defaultTokenURL   = "https://platform.claude.com/v1/oauth/token"
+	betaHeader        = "oauth-2025-04-20"
 	oauthClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	defaultTimeout    = 15 * time.Second
 	expirySkew        = 60 * time.Second
 	reauthCommandText = "claude auth login"
+
+	// Claude accepts roughly one usage request per two minutes per token, and
+	// other clients spend the same budget, so live requests bound the cadence.
+	minPollSpacing    = 3 * time.Minute
+	maxPollSpacing    = 15 * time.Minute
+	idlePollSpacing   = 10 * time.Minute
+	paramRejectionTTL = 30 * time.Minute
 )
 
 type Options struct {
@@ -69,6 +73,9 @@ type Client struct {
 	resetMu            sync.Mutex
 	resetStateDir      string
 	resetJournalFailed atomic.Bool
+	emberMu            sync.Mutex
+	emberToken         string
+	emberUntil         time.Time
 }
 
 func New(opts Options) *Client {
@@ -135,6 +142,16 @@ func (c *Client) Name() string { return c.name }
 
 func (c *Client) ProviderType() string { return providerName }
 
+// PollPolicy keeps Claude requests inside its per-token budget while adapting
+// to observed rate limits and idle, unchanged readings.
+func (c *Client) PollPolicy() usage.PollPolicy {
+	return usage.PollPolicy{
+		MinSpacing:  minPollSpacing,
+		MaxSpacing:  maxPollSpacing,
+		IdleSpacing: idlePollSpacing,
+	}
+}
+
 func (c *Client) Account() *usage.Account { return c.account.Clone() }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
@@ -192,7 +209,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		creds = ready
 		epoch = usage.CredentialEpoch(c.name, creds.path, fmt.Sprint(creds.source), creds.accessToken)
-		data, statusErr, err := c.fetchUsage(ctx, creds)
+		data, bank, statusErr, err := c.fetchUsage(ctx, creds)
 		if err != nil {
 			var typed *usage.FetchFailure
 			if errors.As(err, &typed) {
@@ -202,7 +219,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		}
 		if statusErr == nil {
 			authExpired = false
-			c.attachResetCredits(ctx, creds, &data)
+			c.attachResetCredits(ctx, creds, &data, bank)
 			failure = data.FetchFailure
 			// A canceled bank attachment has no trustworthy reset binding.
 			// Let the poller retain last-good display data as a failed fetch so

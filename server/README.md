@@ -127,11 +127,13 @@ waiting, then continues normal polling. These reads never resubmit a reset.
 ### Claude banked resets
 
 Anthropic's banked-reset status, profile, and consumption endpoints are
-undocumented. Successful Claude usage may include the same
-`rate_limit_reset_credits` object, with `available_count`, nullable
-`account_fingerprint`, and boolean `usable_now`. Available counts sum unpaused
-grants with remaining resets. `usable_now` additionally requires eligibility,
-no active cooldown, and a usable next grant. Valid status with no available grants
+undocumented. One `GET /api/oauth/usage?cedar_ember=1` returns the ordinary
+windows and the reset-status block, so each ordinary poll makes one usage
+request. Successful usage may include the same `rate_limit_reset_credits`
+object, with `available_count`, nullable `account_fingerprint`, and boolean
+`usable_now`. Available counts sum unpaused grants with remaining resets.
+`usable_now` additionally requires eligibility, no active cooldown, and a usable
+next grant. Valid status with no available grants
 reports zero available resets and `usable_now: false`, retaining the verified
 account fingerprint so the desktop can reconcile a pending receipt. Absent or
 malformed status and provider usage errors report null metadata. A malformed,
@@ -141,15 +143,14 @@ pending reset. Profile lookup failure leaves the count visible but the fingerpri
 null, which prevents consumption and account-bound receipt release. Account and
 organization UUIDs never appear in API JSON.
 
-The ordinary usage GET remains unchanged so extra-usage data is preserved. A
-separate read-only GET appends exactly `?cedar_ember=1&skip_spend=1`. Status reads
-are normally at least five minutes apart, shortened to one minute when the
-ordinary session or weekly reading reaches 95%. Failed status reads, including
-429s, do not fail ordinary usage; last-good metadata is retained for at most
-15 minutes. Status is not read after a failed ordinary usage fetch. Profiles
-are fetched for valid banked status, including zero available counts, and cached
-by access token. This preserves account binding after a server restart without
-reusing another token's identity.
+If a token's account rejects the parameter with `400`, or `403` without
+`user:profile`, the same fetch retries once with the plain URL and remembers the
+rejection for that token for 30 minutes; later polls use the plain URL and reset
+status follows the no-parsable-block rule. `401` and `429` are not retried.
+Failed usage does not read status. A status-less response retains last-good
+metadata for at most 15 minutes. Profiles are fetched for valid banked status,
+including zero available counts, and cached by access token. This preserves
+account binding after a server restart without reusing another token's identity.
 
 The Claude reset route applies the same JSON size/shape, confirmation, UUID,
 fingerprint, browser-header, authentication, shared in-flight lock, and deadline
@@ -243,10 +244,27 @@ larger of the configured interval or 60 seconds and doubles up to the larger of
 that interval or five minutes. OAuth refresh, credential, parsing, and trust
 failures do not receive accelerated retries.
 
-Claude's optional banked-status and profile GETs share the provider cooldown.
-An auxiliary 429 preserves successful usage and authentication while scheduling
-both ordinary and auxiliary reads after the cooldown. Failed profile discovery
-also backs off from one to five minutes within the same credential context.
+Claude's usage endpoint accepts roughly one request per two minutes per token,
+and other clients spend the same budget. Claude starts at least three minutes
+apart, doubles that spacing on each usage 429 up to fifteen minutes, and steps it
+back by a quarter after four successful usage responses. Repeating readings also
+slow scheduled polls by one and a half times up to ten minutes; a changed
+reading, a failed attempt, or any percent meter at 90% or more restores normal
+cadence. Every fetch path honors the learned spacing; transport failures with no
+response keep the normal transient retry. A 429 without a usable `Retry-After`
+uses the new spacing as its cooldown, while a future `Retry-After` is honored.
+Diagnostics keep `retry_after` as the upstream header and report the real
+`next_attempt_at`, `cooldown_until`, and `cooldown_source`.
+
+Claude requests identify as `claude-cli/<version> (external, cli)`. When
+`~/.local/bin/claude` resolves to a newer numeric version, that installed
+version is used without reading or executing the file; otherwise the pinned
+`2.1.306` identity is sent so banked-reset data stays available.
+
+Claude's optional profile GET shares the provider cooldown. A profile 429
+preserves successful usage and authentication while scheduling the next attempt
+after the cooldown. Failed profile discovery also backs off from one to five
+minutes within the same credential context.
 
 Polled entries optionally include `fetch_status`: `fetched_at` is the actual
 attempt-completion UTC RFC3339Nano timestamp; `failure_kind` is `null` on success

@@ -9,11 +9,22 @@ import (
 )
 
 func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) Entry {
+	current := now()
 	s.mu.RLock()
 	rateUntil := s.rateUntil
+	spaced := s.insideSpacingWindow(current)
 	entry := copyEntry(s.entry)
 	s.mu.RUnlock()
-	if !rateUntil.IsZero() && now().Before(rateUntil) {
+	if !rateUntil.IsZero() && current.Before(rateUntil) {
+		return entry
+	}
+	if spaced {
+		// Spacing is not a rate-limit cooldown: only the next due time moves.
+		s.mu.Lock()
+		if until := s.responseAt.Add(s.spacing); s.nextDue.Before(until) {
+			s.nextDue = until
+		}
+		s.mu.Unlock()
 		return entry
 	}
 
@@ -46,7 +57,23 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 		failure = &usage.FetchFailure{Kind: *kind}
 	}
 	entry.Data.FetchFailure = copyFetchFailure(failure)
-	s.schedule(ctx, entry, failure)
+	// Distinguish an upstream reply from a transport failure that never
+	// reached the provider.
+	responded := err == nil && entry.Data.Error == nil
+	if failure != nil && failure.HTTPStatus != 0 {
+		responded = true
+	}
+	if responded {
+		s.responseAt = completed
+	}
+	success := entry.Data.Error == nil
+	s.learnSpacing(success, failure)
+	if success {
+		s.recordReading(entry.Data)
+	} else {
+		s.idle = 0
+	}
+	s.schedule(ctx, entry, failure, responded)
 	entry.Data.FetchStatus.Diagnostics = s.diagnostics(entry, failure)
 	s.logAttempt(ctx, entry, failure)
 	s.entry = copyEntry(entry)

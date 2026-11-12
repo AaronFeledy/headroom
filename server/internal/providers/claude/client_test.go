@@ -32,7 +32,7 @@ func Test_Client_Fetch_returns_usage_when_claude_credentials_are_valid(t *testin
 		writeResponse(t, w, `{"five_hour":{"utilization":42.5,"resets_at":"2026-07-12T18:30:00-04:00"},"seven_day":{"utilization":71,"resets_at":"2026-07-19T00:00:00Z"}}`)
 	}))
 	defer server.Close()
-	client := New(Options{CredentialsPath: credentialsPath, HTTPClient: server.Client(), UsageURL: server.URL + "/api/oauth/usage", TokenURL: server.URL + "/v1/oauth/token"})
+	client := New(Options{CredentialsPath: credentialsPath, HomeDir: t.TempDir(), HTTPClient: server.Client(), UsageURL: server.URL + "/api/oauth/usage", TokenURL: server.URL + "/v1/oauth/token"})
 
 	// When
 	got, err := client.Fetch(context.Background())
@@ -149,9 +149,7 @@ func Test_Client_Fetch_forces_refresh_after_401_even_when_token_expiry_is_future
 			assertRefreshRequest(t, r, "refresh-token")
 			writeResponse(t, w, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`)
 		case "/api/oauth/usage":
-			if r.URL.RawQuery == "" {
-				atomic.AddInt32(&usageCalls, 1)
-			}
+			atomic.AddInt32(&usageCalls, 1)
 			if r.Header.Get("Authorization") == "Bearer revoked-access" {
 				w.WriteHeader(http.StatusUnauthorized)
 				writeResponse(t, w, `{"error":"unauthorized"}`)

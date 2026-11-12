@@ -25,10 +25,10 @@ type bankCache struct {
 	profileDelay time.Duration
 }
 
-func applyBankHeaders(req *http.Request, token string) {
+func (c *Client) applyBankHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", betaHeader)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", c.userAgent())
 	req.Header.Set("Accept", "application/json")
 }
 
@@ -37,7 +37,7 @@ func (c *Client) readBankJSON(ctx context.Context, endpoint, token string) ([]by
 	if err != nil {
 		return nil, errResetUnavailable
 	}
-	applyBankHeaders(req, token)
+	c.applyBankHeaders(req, token)
 	client := *c.client
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
@@ -142,9 +142,11 @@ func matchesAccountFingerprint(accountID, expected string) bool {
 	return actual != nil && subtle.ConstantTimeCompare([]byte(*actual), []byte(expected)) == 1
 }
 
-func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, data *usage.UsageData) {
+// attachResetCredits exposes the reset status parsed from this same usage
+// response. The ordinary poll path never issues its own status GET.
+func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, data *usage.UsageData, status *bankStatus) {
 	// All paths that can reconcile or submit use this order. The cross-process
-	// lock is acquired before any bank GET that may reconcile a pending attempt.
+	// lock is acquired before any journal read that may reconcile a pending attempt.
 	data.RateLimitResetCredits = nil
 	data.ProviderAccountID = ""
 	// A timed-out attachment must never expose cached reset metadata or a
@@ -168,23 +170,10 @@ func (c *Client) attachResetCredits(ctx context.Context, creds *credentials, dat
 		defer lock.Close()
 	}
 	c.selectBankToken(creds.accessToken)
-	now := time.Now()
-	interval := 5 * time.Minute
-	for _, bucket := range data.Buckets {
-		if (bucket.ID == usage.BucketSession || bucket.ID == usage.BucketWeekly) && bucket.Utilization >= 95 {
-			interval = time.Minute
-		}
+	if status != nil {
+		c.bank.status, c.bank.goodAt = status, time.Now()
 	}
-	fresh := false
-	if now.Sub(c.bank.attemptedAt) >= interval {
-		c.bank.attemptedAt = now
-		status, err := c.readBankStatus(ctx, creds.accessToken)
-		fresh = err == nil && status != nil
-		var failure *usage.FetchFailure
-		if errors.As(err, &failure) {
-			data.FetchFailure = failure
-		}
-	}
+	fresh := status != nil
 	if time.Since(c.bank.goodAt) <= 15*time.Minute {
 		data.RateLimitResetCredits = c.bank.status.credits(time.Now())
 	}

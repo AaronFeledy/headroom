@@ -88,5 +88,8 @@ func (s *providerState) logAttempt(ctx context.Context, entry Entry, failure *us
 	if d.CooldownSource != nil {
 		attrs = append(attrs, slog.String("cooldown_source", *d.CooldownSource))
 	}
+	if s.hasPolicy() {
+		attrs = append(attrs, slog.Duration("spacing", s.spacing), slog.Duration("idle", s.idle))
+	}
 	s.owner.logger.LogAttrs(ctx, slog.LevelInfo, "provider fetch", attrs...)
 }

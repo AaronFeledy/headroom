@@ -49,8 +49,15 @@ type providerState struct {
 	hasLastGood      bool
 	owner            *Poller
 	interval         time.Duration
+	policy           usage.PollPolicy
+	spacing          time.Duration
+	idle             time.Duration
+	cleanStreak      int
+	lastReading      reading
+	hasReading       bool
 	nextDue          time.Time
 	rateUntil        time.Time
+	responseAt       time.Time
 	transientRetries int
 	rateDelay        time.Duration
 }
@@ -90,7 +97,10 @@ func (p *Poller) Register(provider usage.Provider, enabled bool) error {
 		}
 		account = ap.Account().Clone()
 	}
-	p.providers[key] = &providerState{name: name, providerType: providerType, account: account, provider: provider, enabled: enabled, owner: p}
+	state := &providerState{name: name, providerType: providerType, account: account, provider: provider, enabled: enabled, owner: p}
+	state.policy = providerPolicy(provider)
+	state.spacing = state.policy.MinSpacing
+	p.providers[key] = state
 	return nil
 }
 

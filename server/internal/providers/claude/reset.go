@@ -137,7 +137,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	}
 	// Never permit upload replay or redirects for this valuable mutation.
 	req.GetBody = nil
-	applyBankHeaders(req, creds.accessToken)
+	c.applyBankHeaders(req, creds.accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	client := *c.client
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }

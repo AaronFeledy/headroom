@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +15,8 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-// These tests only seed disk state, inspect policy, serialize usage, and GET
-// status. Never call a consumer, prepare/arm an action, or invoke reset routes.
+// These tests only seed disk state, inspect policy, and serialize usage. Never
+// call a consumer, prepare/arm an action, or invoke reset routes.
 const journalFixtureID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 const journalNextID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 const journalAccount = "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222"
@@ -85,40 +82,25 @@ func Test_ResetJournal_final_baseline_and_fresh_bank_only(t *testing.T) {
 		{"another account", 1, false, false, otherAccount, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var gets atomic.Int32
 			body := fmt.Sprintf(`{"cedar_ember":{"eligible":true,"next_grant_id":"a","grants":[{"id":"a","resets_total":3,"resets_left":%d,"paused":false,"usable_now":%t}]}}`, tc.count, tc.usable)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Path != "/usage" || r.URL.RawQuery != "cedar_ember=1&skip_spend=1" {
-					t.Error("only the read-only bank status GET is permitted")
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
-				gets.Add(1)
-				writeResponse(t, w, body)
-			}))
-			defer server.Close()
-			c := New(Options{UsageURL: server.URL + "/usage", APIBaseURL: server.URL, HTTPClient: server.Client()})
+			c := New(Options{})
 			seedPendingJournal(t, c, journalAccount, 2) // Final server baseline, not displayed 3.
 			c.bank = bankCache{token: "fixture", accountID: tc.account}
+			var status *bankStatus
 			if tc.cached {
 				c.bank.status = parseBankStatus([]byte(body))
-				c.bank.attemptedAt, c.bank.goodAt = time.Now(), time.Now()
+				c.bank.goodAt = time.Now()
+			} else {
+				status = parseBankStatus([]byte(body))
 			}
 			data := usage.UsageData{ProviderName: "Claude", FetchStatus: &usage.FetchStatus{FetchedAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}}
-			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+			c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, status)
 			if _, blocked := c.ResetAttemptStatus(journalNextID); blocked == tc.resolved {
 				t.Fatalf("blocked=%t, want resolved=%t", blocked, tc.resolved)
 			}
 			ids := encodedEvidence(t, data)
 			if tc.resolved && (len(ids) != 1 || ids[0] != journalFixtureID) || !tc.resolved && len(ids) != 0 {
 				t.Fatalf("reconciled IDs=%v, resolved=%t", ids, tc.resolved)
-			}
-			wantGets := int32(1)
-			if tc.cached {
-				wantGets = 0
-			}
-			if gets.Load() != wantGets {
-				t.Fatalf("status GETs=%d, want %d", gets.Load(), wantGets)
 			}
 			// A fresh client must recover the same pending gate/tombstone.
 			restarted := New(Options{ResetStateDir: c.resetStateDir})
@@ -299,19 +281,8 @@ func Test_ResetJournal_keeps_all_UUID_tombstones_and_account_binding(t *testing.
 	}
 }
 
-func Test_ResetJournal_bank_GET_waits_for_shared_transaction_lock(t *testing.T) {
-	called := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.RawQuery != "cedar_ember=1&skip_spend=1" {
-			t.Error("only a read-only bank GET is permitted")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		called <- struct{}{}
-		writeResponse(t, w, `{"cedar_ember":{"eligible":true,"grants":[]}}`)
-	}))
-	defer server.Close()
-	c := New(Options{UsageURL: server.URL, HTTPClient: server.Client()})
+func Test_ResetJournal_reconciliation_waits_for_shared_transaction_lock(t *testing.T) {
+	c := New(Options{})
 	seedPendingJournal(t, c, journalAccount, 2)
 	c.bank = bankCache{token: "fixture", accountID: journalAccount}
 	lock, err := credstore.LockFile(context.Background(), c.resetStateDir+".lock")
@@ -322,12 +293,12 @@ func Test_ResetJournal_bank_GET_waits_for_shared_transaction_lock(t *testing.T) 
 	go func() {
 		defer close(done)
 		data := usage.UsageData{}
-		c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data)
+		c.attachResetCredits(context.Background(), &credentials{accessToken: "fixture"}, &data, parseBankStatus([]byte(`{"cedar_ember":{"eligible":true,"grants":[]}}`)))
 	}()
 	select {
-	case <-called:
+	case <-done:
 		_ = lock.Close()
-		t.Fatal("bank GET started before the shared transaction finished")
+		t.Fatal("reconciliation finished before the shared transaction")
 	case <-time.After(40 * time.Millisecond):
 	}
 	if err := lock.Close(); err != nil {

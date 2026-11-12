@@ -103,8 +103,10 @@ func (p *Poller) RequestRefresh() (RefreshResult, error) {
 	for _, s := range states {
 		s.mu.RLock()
 		limited := now.Before(s.rateUntil)
+		spaced := s.insideSpacingWindow(now)
 		s.mu.RUnlock()
-		if limited {
+		// A spaced provider is skipped for this round without delaying others.
+		if limited || spaced {
 			continue
 		}
 		p.round[s] = true
@@ -134,10 +136,10 @@ func (s *providerState) release() {
 	s.owner.mu.Unlock()
 }
 
-func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usage.FetchFailure) {
+func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usage.FetchFailure, responded bool) {
 	now := entry.FetchedAt
 	success := entry.Data.Error == nil
-	delay := s.interval
+	delay := s.scheduledDelay()
 	if success {
 		s.transientRetries = 0
 	}
@@ -145,7 +147,14 @@ func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usag
 		switch failure.Kind {
 		case usage.FailureTransient:
 			if !success && !errors.Is(ctx.Err(), context.Canceled) && s.transientRetries < 3 {
-				delay = min(delay, 10*time.Second<<s.transientRetries)
+				retry := 10 * time.Second << s.transientRetries
+				if responded && s.hasPolicy() {
+					// A real response restarts adaptive spacing, so an earlier
+					// transient retry would not be the real next attempt.
+					delay = max(delay, retry)
+				} else {
+					delay = min(delay, retry)
+				}
 				s.transientRetries++
 			}
 		case usage.FailureRateLimited:
@@ -156,11 +165,22 @@ func (s *providerState) schedule(ctx context.Context, entry Entry, failure *usag
 		cooldown := max(0, failure.RetryAfter.Sub(now))
 		// Zero or elapsed deadlines must not turn a 429 into a rapid retry loop.
 		if cooldown == 0 || failure.RateLimitFallback {
-			s.rateDelay = min(max(s.interval, 5*time.Minute), max(max(s.interval, time.Minute), s.rateDelay*2))
-			cooldown = max(cooldown, s.rateDelay)
+			if s.hasPolicy() && usageRateLimited(failure) {
+				// The poller owns adaptive spacing; the provider only reports
+				// the bare upstream header now.
+				cooldown = s.spacing
+			} else {
+				// Preserve the pre-adaptive backoff: its floor was the provider's
+				// minimum spacing, never the idle delay.
+				base := max(s.interval, s.spacing)
+				s.rateDelay = min(max(base, 5*time.Minute), max(max(base, time.Minute), s.rateDelay*2))
+				cooldown = max(cooldown, s.rateDelay)
+			}
 		}
-		s.rateUntil = now.Add(cooldown)
-		if success {
+		if until := now.Add(cooldown); until.After(s.rateUntil) {
+			s.rateUntil = until
+		}
+		if s.hasPolicy() || success {
 			delay = max(delay, cooldown)
 		} else {
 			switch failure.Kind {
