@@ -976,8 +976,20 @@ private slots:
         controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(40, 60,
             QJsonArray{TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly"})}));
         QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 1);
-        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString());
+        action = controller.resetAction();
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QVERIFY(action["selectedKindMissing"].toBool());
+        QVERIFY(!action["canConfirm"].toBool());
+        QVERIFY(!action["canSchedule"].toBool());
+        QVERIFY(action["automaticEffect"].toString().isEmpty());
+        QCOMPARE(action["useNowReason"].toString(),
+            QString("The banked reset you chose is no longer available. Choose a banked reset again."));
+        QCOMPARE(action["automaticReason"].toString(), action["useNowReason"].toString());
         QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        // Choosing any row, including "Any matching reset", clears it.
+        QVERIFY(controller.selectResetKind(""));
+        QVERIFY(!controller.resetAction()["selectedKindMissing"].toBool());
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("weekly"));
         // Closing the options drops the stale choice; with no choice at all,
         // a sole kind is preselected.
         controller.cancelResetConfirmation();
@@ -989,6 +1001,56 @@ private slots:
         QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString());
         QCOMPARE(controller.resetAction()["kindsKnown"].toBool(), false);
         QVERIFY(controller.resetState("Claude")["eligible"].toBool());
+    }
+    void claudeResetKindMissingChoiceNeverWidens() {
+        QTemporaryDir dir;
+        const auto weekly = TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly"});
+        const auto fable = TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true);
+        const auto session = TestUsage::claudeResetKind("session", "5-hour reset", 1, true, {"session"});
+        const QString missingReason =
+            QString("The banked reset you chose is no longer available. Choose a banked reset again.");
+        ControllerFixture controller(dir.filePath("settings.json"),
+            TestUsage::snapshotWithClaudeKinds(95, 95, QJsonArray{weekly, fable}));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QVERIFY(controller.prepareReset("Claude"));
+        QVERIFY(controller.selectResetKind("fable"));
+        // The chosen kind leaves with one kind remaining: neither action
+        // silently widens to the kind nobody chose.
+        controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(95, 95, QJsonArray{weekly}));
+        QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 1);
+        auto action = controller.resetAction();
+        QVERIFY(action["selectedKindMissing"].toBool());
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QVERIFY(!action["canConfirm"].toBool());
+        QVERIFY(!action["canSchedule"].toBool());
+        QVERIFY(action["automaticEffect"].toString().isEmpty());
+        QCOMPARE(action["useNowReason"].toString(), missingReason);
+        QCOMPARE(action["automaticReason"].toString(), missingReason);
+        QVERIFY(!controller.resetState("Claude")["eligible"].toBool());
+        // The same holds with several kinds remaining; choosing a listed
+        // row, or "Any matching reset", clears the missing state.
+        controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(95, 95, QJsonArray{weekly, session}));
+        QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 2);
+        action = controller.resetAction();
+        QVERIFY(action["selectedKindMissing"].toBool());
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QVERIFY(!action["canConfirm"].toBool());
+        QVERIFY(!action["canSchedule"].toBool());
+        QCOMPARE(action["automaticReason"].toString(), missingReason);
+        QVERIFY(controller.selectResetKind("weekly"));
+        QVERIFY(!controller.resetAction()["selectedKindMissing"].toBool());
+        QCOMPARE(controller.resetAction()["selectedKind"].toString(), QString("weekly"));
+        // Choosing the any row again is a real choice, not the stale kind.
+        controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(95, 95, QJsonArray{weekly, fable}));
+        QTRY_COMPARE(controller.resetAction()["kinds"].toList().size(), 2);
+        QVERIFY(controller.selectResetKind(""));
+        action = controller.resetAction();
+        QVERIFY(!action["selectedKindMissing"].toBool());
+        QCOMPARE(action["selectedKind"].toString(), QString());
+        QCOMPARE(action["automaticEffect"].toString(),
+            QString("The matching reset is used at whichever limit is reached."));
+        QVERIFY(action["canSchedule"].toBool());
+        controller.cancelResetConfirmation();
     }
     void claudeResetKindNextGrantIsOptionalAndBounded() {
         const auto parse = [](const QJsonValue &next, bool include = true) {

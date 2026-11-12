@@ -223,7 +223,8 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     facts.confirmationCurrent = facts.confirmed && m_resetConfirmation == resetConnectionIdentity();
     // The dialog choice is session-only. With several kinds an empty choice
     // means "Any matching reset"; a sole listed kind is preselected. A choice
-    // that has left the reading stays unselected and is never replaced.
+    // that has left the reading keeps its own missing state: it is never
+    // replaced by another kind and never widened to "any".
     const QString selection = m_resetKind;
     if (selection.isEmpty() && facts.automationArmed && facts.automationKinds.size() == 1) {
         if (const auto chosen = ResetPolicy::findKind(facts, facts.automationKinds.first()))
@@ -232,6 +233,8 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
         if (facts.kinds.size() == 1) facts.selectedKind = facts.kinds.first().id;
     } else if (const auto chosen = ResetPolicy::findKind(facts, selection)) {
         facts.selectedKind = chosen->id;
+    } else {
+        facts.selectedKindMissing = facts.kindsKnown;
     }
     return facts;
 }
@@ -325,6 +328,7 @@ QVariantMap Controller::resetAction() const {
         {"automaticReason", ResetPolicy::reasonText(capabilities.armReason, facts.provider)},
         {"kinds", kinds}, {"kindsKnown", facts.kindsKnown},
         {"selectedKind", selected ? selected->id : QString()},
+        {"selectedKindMissing", facts.selectedKindMissing},
         {"selectedKindTitle", selected ? ResetPolicy::kindTitle(*selected) : QString()},
         {"selectedKindCount", selected ? ResetPolicy::kindCountText(*selected) : QString()},
         {"selectedKindTrigger", selected ? ResetPolicy::kindApplicabilityText(facts, *selected) : QString()},

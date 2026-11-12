@@ -19,7 +19,7 @@ enum class Phase { Hidden, Choices, Submitting, Armed, Paused, Reconciling };
 enum class Reason {
     None, Unavailable, Stale, NoCredits, Unbound, BelowFloor, ProviderRefused, ProviderUnknown,
     AwaitingUsage, Busy, ForeignOwner, WindowUnknown, WindowEnded, AlreadyArmed, ConfirmationStale,
-    KindRequired, NoTrigger, ServerUnsupported
+    KindRequired, KindMissing, NoTrigger, ServerUnsupported
 };
 
 // One additive kind of banked reset, as the server reports it.
@@ -74,6 +74,9 @@ struct Facts {
     QVector<Kind> kinds;
     QVector<Bucket> buckets;            // the provider's meters, for labels and applicability
     std::optional<QString> selectedKind; // the dialog's choice, if any; empty means any matching
+    // True when that choice is absent from the current reading. It is its own
+    // state: a specific choice is never widened to any matching kind.
+    bool selectedKindMissing = false;
 };
 
 struct Capabilities {

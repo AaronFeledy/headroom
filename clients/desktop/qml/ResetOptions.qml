@@ -42,6 +42,8 @@ Popup {
     readonly property var kinds: action.kinds || []
     readonly property bool kindAware: claude && kinds.length > 0
     readonly property string selectedKindId: action.selectedKind || ""
+    // The stored choice left the reading, so no row may look selected.
+    readonly property bool selectionMissing: action.selectedKindMissing === true
     readonly property var selectedKindInfo: {
         for (const kind of kinds) if (kind.id === selectedKindId) return kind
         return null
@@ -118,6 +120,7 @@ Popup {
             visible: options.kindAware && !options.armed && !options.busy
             kinds: options.kinds
             selectedKindId: options.selectedKindId
+            selectionMissing: options.selectionMissing
             onKindSelected: function(kind) { options.kindSelected(kind) }
         }
         Text {

@@ -397,6 +397,37 @@ private slots:
         ended.selectedKind = "weekly"; ended.window = Window::Ended;
         QCOMPARE(evaluate(ended).armReason, Reason::WindowEnded);
     }
+    void missingSelectionDisablesBothChoicesWithoutWidening() {
+        Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
+        facts.selectedKind = "fable";
+        facts.selectedKindMissing = true;
+        auto result = evaluate(facts);
+        QVERIFY(result.visible && result.canOpen);
+        QVERIFY(!result.canUseNow);
+        QCOMPARE(result.useNowReason, Reason::KindMissing);
+        QVERIFY(!result.canArm);
+        QCOMPARE(result.armReason, Reason::KindMissing);
+        QVERIFY(automaticKinds(facts).isEmpty());
+        QVERIFY(automaticEffectText(facts).isEmpty());
+        // It never widens to whatever kind happens to remain, one or several.
+        facts.kinds.removeLast();
+        result = evaluate(facts);
+        QCOMPARE(result.useNowReason, Reason::KindMissing);
+        QCOMPARE(result.armReason, Reason::KindMissing);
+        QVERIFY(automaticKinds(facts).isEmpty());
+        // ChatGPT facts and kindless Claude readings ignore the fact.
+        Facts codex = baseline(Provider::Codex, 100);
+        codex.selectedKind = "weekly"; codex.selectedKindMissing = true;
+        result = evaluate(codex);
+        QVERIFY(result.canUseNow && result.canArm);
+        QVERIFY(automaticKinds(codex).isEmpty());
+        Facts legacy = withUsable(baseline(Provider::Claude, 100), 1);
+        legacy.selectedKindMissing = true;
+        result = evaluate(legacy);
+        QVERIFY(result.canUseNow && result.canArm);
+        QCOMPARE(result.useNowReason, Reason::None);
+        QVERIFY(automaticEffectText(legacy).isEmpty());
+    }
     void armingRequiresAServerThatSupportsIt() {
         Facts facts = confirmed(withUsable(baseline(Provider::Claude, 100), 1));
         facts.automationSupported = false;

@@ -28,6 +28,7 @@ struct Scene {
     QString automaticEffect;
     QVariantList automaticKinds;
     QVariantMap lastEvent;
+    bool selectedKindMissing = false;
 };
 Q_DECLARE_METATYPE(Scene)
 
@@ -67,7 +68,8 @@ QVariantMap synthetic(const Scene &scene) {
         {"canCancel", scene.canCancel}, {"useNowReason", scene.useNowReason},
         {"automaticReason", scene.automaticReason}, {"windowEndsAt", QString()},
         {"kinds", scene.kinds}, {"kindsKnown", !scene.kinds.isEmpty()},
-        {"selectedKind", scene.selectedKind}, {"useNowGrant", scene.useNowGrant},
+        {"selectedKind", scene.selectedKind}, {"selectedKindMissing", scene.selectedKindMissing},
+        {"useNowGrant", scene.useNowGrant},
         {"automaticEffect", scene.automaticEffect}, {"automaticKinds", scene.automaticKinds},
         {"lastEvent", scene.lastEvent},
         {"requested", scene.lastEvent.value("event").toString() == "requested"}};
@@ -127,6 +129,13 @@ private slots:
             QVariantList{weeklyKind, fableKind}, "", "",
             "The matching reset is used at whichever limit is reached.",
             QVariantList{"weekly reset", "Fable reset"}};
+        // A chosen kind that left the reading selects no row at all; the any
+        // row must not look selected, and both actions explain themselves.
+        QTest::newRow("claude-kind-missing") << Scene{"claude-kind-missing", "Claude", "choices", false, false, false, false,
+            "The banked reset you chose is no longer available. Choose a banked reset again.",
+            "The banked reset you chose is no longer available. Choose a banked reset again.",
+            "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "", "", "",
+            QVariantList{}, QVariantMap{}, true};
         QTest::newRow("claude-kind-many-selected") << Scene{"claude-kind-many-selected", "Claude", "choices", true, true, false, false,
             "", "", "", "", qint64(3), QVariantList{weeklyKind, fableKind}, "fable", "",
             "Used when Fable reaches 100%", QVariantList{"Fable reset"}};
@@ -271,7 +280,8 @@ private slots:
             QCOMPARE(anyRow->isVisible(), !armed && !scene.busy && scene.kinds.size() > 1);
             if (anyRow->isVisible()) {
                 QCOMPARE(anyRow->property("text").toString(), QString("Any matching reset"));
-                QCOMPARE(anyRow->property("accent").toBool(), scene.selectedKind.isEmpty());
+                QCOMPARE(anyRow->property("accent").toBool(),
+                    scene.selectedKind.isEmpty() && !scene.selectedKindMissing);
             }
             QCOMPARE(kindTrigger->isVisible(), kindAware && !armed && !scene.automaticEffect.isEmpty());
             if (kindTrigger->isVisible())

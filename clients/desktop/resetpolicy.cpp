@@ -47,6 +47,8 @@ Capabilities evaluate(const Facts &facts) {
     const bool atOfferFloor = known(facts.utilization) && *facts.utilization >= offerFloor;
     const bool atCodexFloor = known(facts.utilization) && *facts.utilization >= codexManualFloor;
     const bool kindAware = facts.provider == Provider::Claude && facts.kindsKnown && !facts.kinds.isEmpty();
+    // A choice that left the reading is its own state: it never becomes "any".
+    const bool selectionMissing = kindAware && facts.selectedKindMissing;
     const Kind *selected = kindAware ? findKind(facts, facts.selectedKind) : nullptr;
     const bool anyKindUsable = kindAware && std::any_of(facts.kinds.cbegin(), facts.kinds.cend(),
         [](const Kind &kind) { return kind.availableCount > 0 && kind.usableNow; });
@@ -71,6 +73,7 @@ Capabilities evaluate(const Facts &facts) {
         : !facts.fresh ? Reason::Stale : !credits ? Reason::NoCredits
         : !facts.accountBound ? Reason::Unbound : Reason::None;
     if (shared != Reason::None) result.useNowReason = shared;
+    else if (selectionMissing) result.useNowReason = Reason::KindMissing;
     else if (kindAware) {
         // A kind's own answer is authoritative once the reading lists kinds.
         // "Any matching reset" cannot spend now because Use now must name one.
@@ -88,6 +91,7 @@ Capabilities evaluate(const Facts &facts) {
     if (facts.automationArmed) result.armReason = Reason::AlreadyArmed;
     else if (!facts.automationSupported) result.armReason = Reason::ServerUnsupported;
     else if (shared != Reason::None) result.armReason = shared;
+    else if (selectionMissing) result.armReason = Reason::KindMissing;
     else if (!offered) result.armReason = Reason::BelowFloor;
     else if (kindAware) {
         const QStringList chosen = automaticKinds(facts);
@@ -142,7 +146,7 @@ bool kindApplies(const Facts &facts, const Kind &kind) {
 
 QStringList automaticKinds(const Facts &facts) {
     const bool kindAware = facts.provider == Provider::Claude && facts.kindsKnown && !facts.kinds.isEmpty();
-    if (!kindAware) return {};
+    if (!kindAware || facts.selectedKindMissing) return {};
     if (const Kind *selected = findKind(facts, facts.selectedKind))
         return selected->availableCount > 0 ? QStringList{selected->id} : QStringList{};
     QStringList chosen;
@@ -222,7 +226,7 @@ QString kindUseNowText(const Kind &kind, const QString &expiryLabel) {
 
 QString automaticEffectText(const Facts &facts) {
     const bool kindAware = facts.provider == Provider::Claude && facts.kindsKnown && !facts.kinds.isEmpty();
-    if (!kindAware) return {};
+    if (!kindAware || facts.selectedKindMissing) return {};
     if (const Kind *selected = findKind(facts, facts.selectedKind))
         return kindApplicabilityText(facts, *selected);
     return facts.kinds.size() > 1
@@ -262,6 +266,7 @@ QString reasonText(Reason reason, Provider provider) {
     case Reason::AlreadyArmed: return QStringLiteral("Automatic use is already set.");
     case Reason::ConfirmationStale: return QStringLiteral("The account or connection changed. Close and reopen.");
     case Reason::KindRequired: return QStringLiteral("Choose which banked reset to use now.");
+    case Reason::KindMissing: return QStringLiteral("The banked reset you chose is no longer available. Choose a banked reset again.");
     case Reason::NoTrigger: return QStringLiteral("This reset does not refill a usage meter on this account.");
     case Reason::ServerUnsupported: return QStringLiteral("Update the server to use automatic resets.");
     }
