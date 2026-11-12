@@ -39,7 +39,7 @@ Rectangle {
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
     // The server's additive kind breakdown is shown when it is a real list;
     // null, absent, or an empty list keeps the legacy total-count text.
-    readonly property var resetKinds: resetCredits && resetCredits.kinds ? resetCredits.kinds : []
+    readonly property var resetKinds: (resetCredits && resetCredits.kinds) || []
     readonly property bool hasKindBreakdown: hasBankedResets && resetKinds.length > 0
     // Kind wording is composed only by the C++ reset policy. The Controller
     // builds it from this row's own reading and meters, so read-only

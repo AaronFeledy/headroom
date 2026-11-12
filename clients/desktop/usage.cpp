@@ -84,15 +84,13 @@ QJsonValue normalizeResetKinds(const QJsonValue &value) {
             || (!givesBack.isUndefined() && !givesBack.isBool())
             || (!expires.isNull() && !expires.isUndefined() && !expires.isString()))
             return QJsonValue(QJsonValue::Null);
-        QJsonArray normalizedRefills;
         for (const auto &refill : refills.toArray()) {
             if (!refill.isString() || !refillPattern.match(refill.toString()).hasMatch())
                 return QJsonValue(QJsonValue::Null);
-            normalizedRefills.append(refill);
         }
         ids.insert(id.toString());
         result.append(QJsonObject{{"id", id}, {"label", label}, {"available_count", count},
-            {"usable_now", kind["usable_now"]}, {"refills", normalizedRefills},
+            {"usable_now", kind["usable_now"]}, {"refills", refills},
             {"gives_back_weekly", givesBack.toBool(false)},
             {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)},
             {"next", normalizeResetKindNext(kind)}});
@@ -143,13 +141,11 @@ QJsonValue normalizeResetAutomation(const QJsonValue &value) {
         static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9_]{1,32}\\z"));
         if (!kindsValue.isArray() || kindsValue.toArray().size() > 8)
             return QJsonValue(QJsonValue::Null);
-        QJsonArray normalized;
         for (const auto &entry : kindsValue.toArray()) {
             if (!entry.isString() || !idPattern.match(entry.toString()).hasMatch())
                 return QJsonValue(QJsonValue::Null);
-            normalized.append(entry);
         }
-        kinds = normalized;
+        kinds = kindsValue;
     }
     const auto fingerprint = input["account_fingerprint"];
     if (!fingerprint.isUndefined() && !fingerprint.isNull()) {

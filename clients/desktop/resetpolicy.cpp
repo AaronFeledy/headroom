@@ -13,14 +13,6 @@ constexpr double codexManualFloor = 90;
 
 bool known(std::optional<double> value) { return value && std::isfinite(*value) && *value >= 0; }
 
-// Capitalize the first letter only; provider labels keep their own casing.
-QString capitalizeFirst(const QString &text) {
-    if (text.isEmpty()) return text;
-    QString result = text;
-    result[0] = result[0].toUpper();
-    return result;
-}
-
 QString joinHuman(const QStringList &items, const QString &conjunction) {
     if (items.isEmpty()) return {};
     if (items.size() == 1) return items.first();
@@ -41,17 +33,6 @@ QString grantName(const ResetPolicy::Kind &kind) {
     return QStringLiteral("one ") + kind.label;
 }
 
-QStringList applicableLabels(const ResetPolicy::Facts &facts, const ResetPolicy::Kind &kind) {
-    QStringList labels;
-    for (const auto &bucket : facts.buckets) {
-        const bool applies = kind.refills.contains(bucket.id)
-            || (bucket.id == QStringLiteral("weekly") && kind.givesBackWeekly);
-        if (!applies) continue;
-        const QString label = bucket.label.isEmpty() ? bucket.id : bucket.label;
-        if (!labels.contains(label)) labels.append(label);
-    }
-    return labels;
-}
 }
 
 namespace ResetPolicy {
@@ -142,7 +123,7 @@ bool releasesCodexReceipt(std::optional<double> utilization) {
 }
 
 const Kind *findKind(const Facts &facts, const std::optional<QString> &id) {
-    if (!id || id->isEmpty()) return nullptr;
+    if (!id) return nullptr;
     return findKind(facts, *id);
 }
 
@@ -175,7 +156,11 @@ QString kindCountText(const Kind &kind) {
 }
 
 QString kindTitle(const Kind &kind) {
-    return capitalizeFirst(kind.label);
+    // Capitalize the first letter only; provider labels keep their own casing.
+    if (kind.label.isEmpty()) return kind.label;
+    QString result = kind.label;
+    result[0] = result[0].toUpper();
+    return result;
 }
 
 QString kindRefillText(const Facts &facts, const Kind &kind) {
@@ -188,7 +173,14 @@ QString kindRefillText(const Facts &facts, const Kind &kind) {
 }
 
 QString kindApplicabilityText(const Facts &facts, const Kind &kind) {
-    const QStringList labels = applicableLabels(facts, kind);
+    QStringList labels;
+    for (const auto &bucket : facts.buckets) {
+        const bool applies = kind.refills.contains(bucket.id)
+            || (bucket.id == QStringLiteral("weekly") && kind.givesBackWeekly);
+        if (!applies) continue;
+        const QString label = bucket.label.isEmpty() ? bucket.id : bucket.label;
+        if (!labels.contains(label)) labels.append(label);
+    }
     return labels.isEmpty() ? QString()
         : QStringLiteral("Used when %1 reaches 100%").arg(joinHuman(labels, QStringLiteral(" or ")));
 }
