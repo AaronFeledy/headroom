@@ -34,6 +34,138 @@ QJsonObject normalizeFetchDiagnostics(const QJsonValue &value) {
         result["http_status"] = int(code);
     return result;
 }
+
+// The grant a redemption of one kind would spend right now. It is optional
+// metadata: absent, null, or malformed becomes null for that kind and never
+// invalidates the kind list. Unknown keys are dropped; the label may be
+// empty, but an over-long or non-string label is malformed.
+QJsonValue normalizeResetKindNext(const QJsonObject &kind) {
+    const auto value = kind["next"];
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto grant = value.toObject();
+    const auto label = grant["label"];
+    const auto expires = grant["expires_at"];
+    if (!label.isString() || label.toString().toUcs4().size() > 200
+        || (!expires.isNull() && !expires.isUndefined() && !expires.isString()))
+        return QJsonValue(QJsonValue::Null);
+    return QJsonObject{{"label", label},
+        {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)}};
+}
+
+// The additive kind breakdown is all-or-nothing: one malformed entry makes
+// the whole list unknown, while the rest of the reset-credit object survives.
+// Unknown keys inside an entry are dropped instead of being forwarded.
+QJsonValue normalizeResetKinds(const QJsonValue &value) {
+    if (!value.isArray()) return QJsonValue(QJsonValue::Null);
+    const auto input = value.toArray();
+    if (input.size() > 8) return QJsonValue(QJsonValue::Null);
+    static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9_]{1,32}\\z"));
+    static const QRegularExpression refillPattern(QStringLiteral("\\A[a-z0-9_]{1,64}\\z"));
+    constexpr double maxSafeInteger = 9007199254740991.0;
+    QSet<QString> ids;
+    QJsonArray result;
+    for (const auto &entry : input) {
+        if (!entry.isObject()) return QJsonValue(QJsonValue::Null);
+        const auto kind = entry.toObject();
+        const auto id = kind["id"];
+        const auto label = kind["label"];
+        const auto countValue = kind["available_count"];
+        const double count = countValue.toDouble(-1);
+        const auto refills = kind["refills"];
+        const auto givesBack = kind["gives_back_weekly"];
+        const auto expires = kind["expires_at"];
+        const QString labelText = label.toString();
+        if (!id.isString() || !idPattern.match(id.toString()).hasMatch() || ids.contains(id.toString())
+            || !label.isString() || labelText.trimmed().isEmpty() || labelText.toUcs4().size() > 64
+            || !countValue.isDouble() || !std::isfinite(count) || count < 0
+            || count > maxSafeInteger || std::floor(count) != count
+            || !kind["usable_now"].isBool()
+            || !refills.isArray() || refills.toArray().size() > 12
+            || (!givesBack.isUndefined() && !givesBack.isBool())
+            || (!expires.isNull() && !expires.isUndefined() && !expires.isString()))
+            return QJsonValue(QJsonValue::Null);
+        for (const auto &refill : refills.toArray()) {
+            if (!refill.isString() || !refillPattern.match(refill.toString()).hasMatch())
+                return QJsonValue(QJsonValue::Null);
+        }
+        ids.insert(id.toString());
+        result.append(QJsonObject{{"id", id}, {"label", label}, {"available_count", count},
+            {"usable_now", kind["usable_now"]}, {"refills", refills},
+            {"gives_back_weekly", givesBack.toBool(false)},
+            {"expires_at", expires.isString() ? expires : QJsonValue(QJsonValue::Null)},
+            {"next", normalizeResetKindNext(kind)}});
+    }
+    return result;
+}
+
+// The server-owned automatic reset is all-or-nothing: one malformed field
+// makes the whole state unavailable, so the desktop never offers an arm the
+// server cannot honour. Unknown keys are dropped instead of being forwarded.
+QJsonValue normalizeResetAutomationEvent(const QJsonValue &value) {
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto event = value.toObject();
+    const auto at = event["at"];
+    const auto name = event["event"];
+    static const QStringList names{"requested", "completed", "failed", "canceled"};
+    if (!at.isString() || !name.isString() || !names.contains(name.toString()))
+        return QJsonValue(QJsonValue::Null);
+    const auto optionalString = [](const QJsonValue &field) {
+        return field.isString() ? field : QJsonValue(QJsonValue::Null);
+    };
+    for (const auto &field : {"outcome", "reason", "kind"}) {
+        const auto value = event[field];
+        if (!value.isUndefined() && !value.isNull() && !value.isString())
+            return QJsonValue(QJsonValue::Null);
+    }
+    return QJsonObject{{"at", at}, {"event", name},
+        {"outcome", optionalString(event["outcome"])},
+        {"reason", optionalString(event["reason"])},
+        {"kind", optionalString(event["kind"])}};
+}
+
+QJsonValue normalizeResetAutomation(const QJsonValue &value) {
+    if (!value.isObject()) return QJsonValue(QJsonValue::Null);
+    const auto input = value.toObject();
+    if (!input["armed"].isBool()) return QJsonValue(QJsonValue::Null);
+    for (const auto &field : {"armed_at", "window_ends_at"}) {
+        const auto fieldValue = input[field];
+        if (!fieldValue.isUndefined() && !fieldValue.isNull() && !fieldValue.isString())
+            return QJsonValue(QJsonValue::Null);
+    }
+    const auto optionalString = [](const QJsonValue &field) {
+        return field.isString() ? field : QJsonValue(QJsonValue::Null);
+    };
+    QJsonValue kinds(QJsonValue::Null);
+    const auto kindsValue = input["kinds"];
+    if (!kindsValue.isUndefined() && !kindsValue.isNull()) {
+        static const QRegularExpression idPattern(QStringLiteral("\\A[a-z0-9_]{1,32}\\z"));
+        if (!kindsValue.isArray() || kindsValue.toArray().size() > 8)
+            return QJsonValue(QJsonValue::Null);
+        for (const auto &entry : kindsValue.toArray()) {
+            if (!entry.isString() || !idPattern.match(entry.toString()).hasMatch())
+                return QJsonValue(QJsonValue::Null);
+        }
+        kinds = kindsValue;
+    }
+    const auto fingerprint = input["account_fingerprint"];
+    if (!fingerprint.isUndefined() && !fingerprint.isNull()) {
+        static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
+        if (!fingerprint.isString() || fingerprint.toString().size() != 64
+            || !fingerprintPattern.match(fingerprint.toString()).hasMatch())
+            return QJsonValue(QJsonValue::Null);
+    }
+    QJsonValue lastEvent(QJsonValue::Null);
+    const auto eventValue = input["last_event"];
+    if (!eventValue.isUndefined() && !eventValue.isNull()) {
+        lastEvent = normalizeResetAutomationEvent(eventValue);
+        if (lastEvent.isNull()) return QJsonValue(QJsonValue::Null);
+    }
+    return QJsonObject{{"armed", input["armed"]},
+        {"armed_at", optionalString(input["armed_at"])},
+        {"window_ends_at", optionalString(input["window_ends_at"])},
+        {"kinds", kinds}, {"account_fingerprint", optionalString(fingerprint)},
+        {"last_event", lastEvent}};
+}
 }
 
 bool Usage::isPercent(const QVariantMap &bucket) {
@@ -128,7 +260,8 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
                 QJsonObject normalized{{"available_count", count},
                     {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
                         ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)},
-                    {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)}};
+                    {"usable_now", credits["usable_now"].isBool() ? credits["usable_now"] : QJsonValue(QJsonValue::Null)},
+                    {"kinds", normalizeResetKinds(credits["kinds"])}};
                 // Evidence is an optional, bounded list of canonical request
                 // UUIDs. A malformed list cannot retire any local receipt.
                 const auto evidence = credits["reconciled_request_ids"];
@@ -150,6 +283,7 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;
+        p["reset_automation"] = normalizeResetAutomation(p["reset_automation"]);
         p["usage_details"] = p["error"].isNull() ? normalizeDetails(p["usage_details"]) : QJsonValue(QJsonValue::Null);
         // Optional per-entry fetch metadata. Older servers omit it; anything
         // malformed or inconsistent with the frozen error contract is dropped

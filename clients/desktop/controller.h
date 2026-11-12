@@ -75,10 +75,16 @@ public:
     Q_INVOKABLE virtual void requestRefresh();
     Q_INVOKABLE QString readingAgeLabel(qint64 observedAt) const;
     QVariantMap resetAction() const;
+    // Display-ready kind text for one provider row, including read-only rows
+    // with no reset action. Composed only by the reset policy.
+    Q_INVOKABLE QVariantMap resetKindContent(const QString &name) const;
     // DO NOT test this button, endpoint, or any code that could trigger a reset.
     // A reset is valuable and irreversible; the skip-only tests are intentional.
     Q_INVOKABLE bool prepareReset(const QString &provider);
     Q_INVOKABLE void cancelResetConfirmation();
+    // Records which listed kind the options are about. Selection only: the
+    // reset policy still decides whether that kind may be used or armed.
+    Q_INVOKABLE bool selectResetKind(const QString &kind);
     Q_INVOKABLE void consumeReset();
     Q_INVOKABLE bool scheduleReset();
     Q_INVOKABLE void cancelScheduledReset();
@@ -148,6 +154,7 @@ private:
     void syncConnection();
     void verifyRemote(bool upgrade);
     QVariantMap resetReading(const QString &provider) const;
+    QVariantMap resetAutomation(const QString &provider) const;
     bool resetReadingFresh(const QString &provider) const;
     ResetPolicy::Facts resetFacts(const QString &provider) const;
     bool resetAwaitingUsage(const QString &provider) const;
@@ -155,12 +162,12 @@ private:
     QString resetReceiptPath(const QString &provider) const;
     QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
-    void observeScheduledReset();
-    void expireScheduledReset();
-    void clearScheduledReset();
-    void retireScheduledReset(ResetPolicy::Reason reason);
-    void submitReset(bool automatic);
+    void submitReset();
     void cancelResetRequest();
+    ServerConnection resetTransport() const;
+    QNetworkRequest resetRouteRequest(const QString &provider, const QString &route) const;
+    void cancelAutomationRequest();
+    void finishAutomationRequest(QNetworkReply *reply, bool arming, const QString &provider);
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
     QStringList m_order;
@@ -203,10 +210,10 @@ private:
     bool m_proofAttempted = false;
     QPointer<QNetworkReply> m_reply;
     QPointer<QNetworkReply> m_resetReply;
+    QPointer<QNetworkReply> m_automationReply;
     QString m_resetProvider = "Codex", m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
     bool m_resetBusy = false;
-    // One-shot authorization is session-only and bound to this account,
-    // transport, and weekly window. Never restore it on an app restart.
-    QString m_autoResetConnection, m_autoResetWindow;
+    // Session-only kind choice for the open options and the redeem request.
+    QString m_resetKind;
     QTimer m_poll, m_clock;
 };

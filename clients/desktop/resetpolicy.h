@@ -1,11 +1,13 @@
 #pragma once
 // Pure banked-reset capability policy: typed facts in, capabilities out.
-// It decides what a card may show, which option a user may choose, and how an
-// armed one-shot authorization reacts to a snapshot. It never reads usage,
-// touches receipts, or performs an action: the Controller gathers the facts
-// and owns every request. DO NOT turn these decisions into test actions; a
-// Submit outcome is an eligibility fact, never something a test may execute.
+// It decides what a card may show and which option a user may choose. It never
+// reads usage, touches receipts, or performs an action: the Controller gathers
+// the facts and owns every request. Automatic resets are evaluated by the
+// server, so this policy can only offer an arm and cancel one; it has no
+// outcome that spends. DO NOT turn these decisions into test actions.
 #include <QString>
+#include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 #include <optional>
 
@@ -17,9 +19,31 @@ enum class Phase { Hidden, Choices, Submitting, Armed, Paused, Reconciling };
 enum class Reason {
     None, Unavailable, Stale, NoCredits, Unbound, BelowFloor, ProviderRefused, ProviderUnknown,
     AwaitingUsage, Busy, ForeignOwner, WindowUnknown, WindowEnded, AlreadyArmed, ConfirmationStale,
-    IdentityChanged
+    KindRequired, KindMissing, NoTrigger, ServerUnsupported
 };
-enum class ArmOutcome { Keep, Wait, Cancel, Submit };
+
+// One additive kind of banked reset, as the server reports it.
+struct Kind {
+    QString id;
+    QString label;
+    qint64 availableCount = 0;
+    bool usableNow = false;
+    QStringList refills;
+    bool givesBackWeekly = false;
+    QString expiresAt; // empty when the server reported no expiry
+    // The specific grant a redemption would spend right now, when the server
+    // reports one. nextLabel is Anthropic's own wording and may be empty;
+    // nextExpiresAt is empty when that grant has no expiry.
+    bool hasNext = false;
+    QString nextLabel;
+    QString nextExpiresAt;
+};
+// One meter in the provider reading, used for labels and applicability.
+struct Bucket {
+    QString id;
+    QString label;
+    std::optional<double> utilization;
+};
 
 struct Facts {
     Provider provider = Provider::Codex;
@@ -32,16 +56,30 @@ struct Facts {
     std::optional<bool> usableNow;     // Claude's explicit flag; unknown when null
     bool accountBound = false;         // valid opaque account fingerprint
     Window window = Window::Unknown;   // the reading's weekly deadline
-    // Session state. One provider owns the confirmation, arm, or submission.
+    // The server-owned automatic reset. Supported only when the row carried a
+    // well-formed reset_automation object; the desktop never keeps its own arm.
+    bool automationSupported = false;
+    bool automationArmed = false;
+    QStringList automationKinds;       // the allowed kinds the server stored
+    QString automationWindowEndsAt;
+    // Session state. One provider owns the confirmation or submission.
     bool awaitingUsage = false;        // a durable receipt latch is pending
     bool busy = false;                 // a submission is in flight
-    bool owner = false;                // this provider owns the single slot
+    // An arm or cancel request is in flight. It blocks every choice while the
+    // dialog keeps its phase; it is not the manual-spend busy state.
+    bool automationPending = false;
+    bool owner = false;                // this provider owns the single dialog slot
     bool confirmed = false;            // options open, bound to an identity; not consent to spend
     bool confirmationCurrent = false;  // that binding matches the current identity
-    bool armed = false;                // the owner has a one-shot automatic authorization
-    bool armIdentityCurrent = false;   // the arm matches the current identity
-    bool armWindowCurrent = false;     // the reading's weekly window is the arm's window
-    Window armWindow = Window::Unknown; // the arm's recorded deadline; it ends even offline
+    // The server's additive kind breakdown. kindsKnown means the reading
+    // explicitly reported an array; that array may itself be empty.
+    bool kindsKnown = false;
+    QVector<Kind> kinds;
+    QVector<Bucket> buckets;            // the provider's meters, for labels and applicability
+    std::optional<QString> selectedKind; // the dialog's choice, if any; empty means any matching
+    // True when that choice is absent from the current reading. It is its own
+    // state: a specific choice is never widened to any matching kind.
+    bool selectedKindMissing = false;
 };
 
 struct Capabilities {
@@ -50,30 +88,42 @@ struct Capabilities {
     bool canOpen = false;      // the entry control opens the options
     bool canUseNow = false;    // immediate use is permitted for this reading
     bool canConfirm = false;   // canUseNow within current-identity options; Use now is the consent
-    bool canArm = false;       // a one-shot automatic authorization is permitted
+    bool canArm = false;       // the server may store an automatic authorization
     bool canSchedule = false;  // canArm within current-identity options; the automatic choice is the consent
-    bool canCancelArm = false; // an owned arm may be canceled, fresh or not
+    bool canCancelArm = false; // a server-held arm may be canceled, fresh or not
     Reason openReason = Reason::None;
     Reason useNowReason = Reason::None;
     Reason armReason = Reason::None;
 };
 
-struct ArmDecision {
-    ArmOutcome outcome = ArmOutcome::Keep;
-    Reason reason = Reason::None; // set for Cancel
-};
-
 Capabilities evaluate(const Facts &facts);
-// How an owned arm reacts to the current facts. Submit only reports that
-// usage is at the limit and immediate use is permitted right now.
-ArmDecision observeArm(const Facts &facts);
-// WindowEnded or WindowUnknown once an arm's recorded deadline no longer lies ahead.
-Reason armExpiry(Window armWindow);
 // A successful reading below the manual floor releases a Codex receipt latch.
 bool releasesCodexReceipt(std::optional<double> utilization);
+// The kind whose id matches, or nullptr. Unknown ids never match.
+const Kind *findKind(const Facts &facts, const std::optional<QString> &id);
+const Kind *findKind(const Facts &facts, const QString &id);
+// A kind applies to a present meter when the meter is named by its refills, or
+// when the meter is weekly and the kind gives usage back to the weekly limit.
+bool kindApplies(const Facts &facts, const Kind &kind);
+// The kinds one automatic choice would authorize: the selected kind, otherwise
+// every listed kind with a positive count. Empty when none can be armed.
+QStringList automaticKinds(const Facts &facts);
+QString kindCountText(const Kind &kind);
+QString kindTitle(const Kind &kind);
+QString kindRefillText(const Facts &facts, const Kind &kind);
+QString kindApplicabilityText(const Facts &facts, const Kind &kind);
+QString kindReturnText(const Facts &facts, const Kind &kind);
+// The single implementation of kind wording for both the card and the
+// options dialog. expiryLabel is the already-localized reset time for the
+// relevant timestamp; an empty label omits the expiry clause.
+QString kindDetailText(const Facts &facts, const Kind &kind, const QString &expiryLabel);
+QString kindNextText(const Kind &kind, const QString &expiryLabel);
+QString kindUseNowText(const Kind &kind, const QString &expiryLabel);
+// What the automatic choice authorizes, in words. Empty when kinds do not
+// apply (Codex and legacy Claude keep their dialog copy).
+QString automaticEffectText(const Facts &facts);
 
 QString phaseName(Phase phase);
 QString reasonText(Reason reason, Provider provider);
-QString cancellationText(Reason reason);
 QString awaitingUsageText(Provider provider, bool uncertain);
 }

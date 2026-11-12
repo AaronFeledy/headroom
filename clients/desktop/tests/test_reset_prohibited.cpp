@@ -29,6 +29,12 @@ private slots:
     void claudeAutomaticResetMustNotBeTested() {
         QSKIP("DO NOT TEST Claude automatic reset arming or firing, even with fixtures or fakes. It can burn a very valuable banked reset. This skip is intentional; do not implement or enable this test.");
     }
+    void automaticArmRequestMustNotBeTested() {
+        QSKIP("DO NOT TEST arming the server-owned automatic reset, its PUT route, or its SSH forward, even with fixtures, fakes, or synthetic usage. It authorizes a real reset. This skip is intentional; do not implement or enable this test.");
+    }
+    void automaticCancelRequestMustNotBeTested() {
+        QSKIP("DO NOT TEST canceling the server-owned automatic reset, its DELETE route, or its SSH forward, even with fixtures or fakes. This skip is intentional; do not implement or enable this test.");
+    }
     void claudeResetReceiptAndTransportsMustNotBeTestedThroughRedemption() {
         QSKIP("DO NOT TEST Claude reset submission, the reset endpoint, durable receipts, latch release, HTTP(S), or SSH through redemption, even with mocked transports. A reset is very valuable; do not implement or enable this test.");
     }

@@ -219,6 +219,10 @@ ColumnLayout {
                 sourceComponent: meter.footerAccessory
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
+                // An accessory that asks for it is told how wide the meter is,
+                // so it can lay itself out without extending past the meter.
+                onLoaded: if (item && item.availableWidth !== undefined)
+                    item.availableWidth = Qt.binding(() => meterFooter.width)
             }
         }
     }

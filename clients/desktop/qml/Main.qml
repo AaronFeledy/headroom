@@ -216,8 +216,9 @@ ApplicationWindow {
         onClosed: { backend.cancelResetConfirmation(); restoreEscapeFocus() }
         onUsagePageRequested: Qt.openUrlExternally(claude ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage")
         onUseNowRequested: backend.consumeReset()
-        onAutomaticRequested: if (backend.scheduleReset()) close()
-        onCancelAutomaticRequested: { backend.cancelScheduledReset(); close() }
+        onKindSelected: function(kind) { backend.selectResetKind(kind) }
+        onAutomaticRequested: backend.scheduleReset()
+        onCancelAutomaticRequested: backend.cancelScheduledReset()
     }
 
     ColumnLayout {

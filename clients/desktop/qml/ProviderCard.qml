@@ -37,6 +37,27 @@ Rectangle {
     property bool hasResetCount: countsResets && !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count >= 0
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
+    // The server's additive kind breakdown is shown when it is a real list;
+    // null, absent, or an empty list keeps the legacy total-count text.
+    readonly property var resetKinds: (resetCredits && resetCredits.kinds) || []
+    readonly property bool hasKindBreakdown: hasBankedResets && resetKinds.length > 0
+    // Kind wording is composed only by the C++ reset policy. The Controller
+    // builds it from this row's own reading and meters, so read-only
+    // multi-account rows show the same text without a second implementation.
+    readonly property var kindContent: {
+        card.provider; card.resetCredits
+        return backend.resetKindContent(card.name)
+    }
+    readonly property string resetCountText: {
+        if (hasKindBreakdown) return kindContent.countText
+        if (!hasResetCount) return ""
+        return resetCredits.available_count === 1 ? "1 banked reset"
+            : resetCredits.available_count + " banked resets"
+    }
+    // The same breakdown with one kind per line, for a meter too narrow to
+    // hold it beside the options button.
+    readonly property string resetKindLines: kindContent.lines
+    readonly property string resetKindDetails: kindContent.details
     readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
     readonly property bool managingReset: resetState.managing === true
     readonly property string usageUrl: name === "Claude" ? "https://claude.ai/settings/usage" : name === "Codex" ? "https://chatgpt.com/codex/settings/usage" : ""
@@ -52,12 +73,24 @@ Rectangle {
     Component {
         id: bankedResetsFooter
         GridLayout {
+            id: resetFooter
+            // A meter reports its own width here. A kind breakdown is longer
+            // than a total, so it is laid out to stay inside that width: on one
+            // line when it fits beside the button, otherwise one kind per line.
+            property real availableWidth: 0
+            readonly property bool bounded: card.hasKindBreakdown && availableWidth > 0
+            readonly property real buttonSpace: resetButton.visible ? resetButton.implicitWidth + columnSpacing : 0
+            readonly property bool breakdownFits: !bounded
+                || Math.ceil(breakdownMetrics.advanceWidth) + 1 + buttonSpace <= availableWidth
             columns: !card.weeklyBucket && !card.stacked ? 1 : 2
             columnSpacing: 8; rowSpacing: 4
+            TextMetrics { id: breakdownMetrics; font: resetLabel.font; text: card.resetCountText }
             Item {
                 // Keep the transient delta anchored even when the last reset
                 // disappears. Only positive counts have a visible/focusable label.
                 Layout.fillWidth: true
+                Layout.maximumWidth: resetFooter.bounded
+                    ? Math.max(0, resetFooter.availableWidth - resetFooter.buttonSpace) : Number.POSITIVE_INFINITY
                 implicitWidth: resetLabel.implicitWidth
                 implicitHeight: resetLabel.implicitHeight
                 Text {
@@ -67,24 +100,34 @@ Rectangle {
                     objectName: "bankedResets_" + card.name
                     visible: card.hasBankedResets
                     textFormat: Text.PlainText
-                    text: !card.hasResetCount ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
-                        : card.resetCredits.available_count + " banked resets"
+                    readonly property string detailText: card.resetKindDetails
+                    text: resetFooter.breakdownFits ? card.resetCountText : card.resetKindLines
                     color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
                     font.pixelSize: 11; elide: Text.ElideRight
                     horizontalAlignment: Text.AlignRight
                     font.underline: card.resetProvider && (bankedResetHover.hovered || activeFocus)
                     activeFocusOnTab: visible && card.resetProvider
                     Accessible.role: card.resetProvider ? Accessible.Link : Accessible.StaticText
-                    Accessible.name: text
+                    Accessible.name: card.resetCountText
                     Accessible.description: card.resetProvider ? "Open " + card.displayName + " usage and reset controls" : ""
                     Accessible.onPressAction: openUsage()
                     Keys.onReturnPressed: openUsage()
                     Keys.onEnterPressed: openUsage()
                     Keys.onSpacePressed: openUsage()
                     TapHandler { enabled: card.resetProvider; onTapped: parent.openUsage() }
-                    HoverHandler { id: bankedResetHover; enabled: card.resetProvider; cursorShape: Qt.PointingHandCursor }
-                    ToolTip.visible: card.resetProvider && bankedResetHover.hovered
-                    ToolTip.text: card.resetProvider ? "Open " + card.displayName + " usage and reset controls" : ""
+                    // Hover works for read-only account rows too, so their kind
+                    // breakdown remains explainable without adding actions.
+                    HoverHandler {
+                        id: bankedResetHover; enabled: card.countsResets
+                        cursorShape: card.resetProvider ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    }
+                    ToolTip.visible: card.countsResets && bankedResetHover.hovered
+                    ToolTip.text: {
+                        const lines = []
+                        if (card.resetProvider) lines.push("Open " + card.displayName + " usage and reset controls")
+                        if (card.resetKindDetails.length) lines.push(card.resetKindDetails)
+                        return lines.join("\n")
+                    }
                 }
                 NotificationHighlight {
                     visible: card.hasBankedResets
@@ -137,6 +180,7 @@ Rectangle {
             // that might trigger a reset. It can burn a very valuable reset.
             // The intentionally skipped tests must not be filled in or enabled.
             ActionButton {
+                id: resetButton
                 objectName: "useBankedReset_" + card.name
                 // A failed or stale card keeps only the management of an owned
                 // arm, submission, or pending request; fresh choices wait.

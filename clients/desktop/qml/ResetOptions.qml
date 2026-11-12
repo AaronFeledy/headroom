@@ -16,6 +16,7 @@ Popup {
     signal automaticRequested()
     signal cancelAutomaticRequested()
     signal usagePageRequested()
+    signal kindSelected(string kind)
     readonly property bool claude: action.provider === "Claude"
     // The API provider key stays Codex; people know it as ChatGPT.
     readonly property string providerName: claude ? "Claude" : "ChatGPT"
@@ -30,6 +31,30 @@ Popup {
     readonly property string useNowReason: action.useNowReason || ""
     readonly property string automaticReason: action.automaticReason || ""
     readonly property string message: action.message || ""
+    // What Use now would spend, when the chosen kind names a grant.
+    readonly property string useNowGrant: action.useNowGrant || ""
+    // The server's last automatic-reset event, already validated by the parser.
+    readonly property var lastEvent: action.lastEvent || ({})
+    // An automatic spend was requested and its result is still pending.
+    readonly property bool automaticPending: action.requested === true
+    // What the automatic choice authorizes, in words from the policy.
+    readonly property string automaticEffect: action.automaticEffect || ""
+    // The additive breakdown. Null or an empty list keeps the legacy dialog.
+    readonly property var kinds: action.kinds || []
+    readonly property bool kindAware: claude && kinds.length > 0
+    readonly property string selectedKindId: action.selectedKind || ""
+    // The stored choice left the reading, so no row may look selected.
+    readonly property bool selectionMissing: action.selectedKindMissing === true
+    readonly property var selectedKindInfo: {
+        for (const kind of kinds) if (kind.id === selectedKindId) return kind
+        return null
+    }
+    readonly property string anyCounts: {
+        const counts = []
+        for (const kind of kinds) counts.push(kind.countText)
+        return counts.join(" · ")
+    }
+    readonly property string serverHoldsText: "It stays set until it is used, canceled, or the weekly window ends, even if Headroom is closed or the server restarts."
     readonly property string title: {
         switch (phase) {
         case "submitting": return "Using a banked " + providerName + " reset"
@@ -42,15 +67,26 @@ Popup {
     readonly property string summary: {
         switch (phase) {
         case "submitting": return "Waiting for the server's answer. Keep Headroom running."
-        case "armed": return claude
-            ? "One Claude reset will be used when a usage update reports a session or weekly limit and Anthropic allows a reset. The choice ends with this weekly window; quitting Headroom cancels it."
-            : "One reset will be used when a usage update reports 100% weekly usage. The choice ends with this weekly window; quitting Headroom cancels it."
-        case "paused": return "Usage is unavailable, so monitoring is paused. The choice still ends with this weekly window; quitting Headroom cancels it."
+        case "armed":
+            if (!claude) return "The server holds one reset for 100% weekly usage. " + serverHoldsText
+            if (automaticEffect.length > 0) {
+                // The effect text has no closing period when it names meters.
+                const effect = /[.!?]$/.test(automaticEffect) ? automaticEffect : automaticEffect + "."
+                return "The server holds this automatic reset. " + effect + " " + serverHoldsText
+            }
+            return "The server holds this automatic reset. " + serverHoldsText
+        case "paused":
+            if (!claude) return "Usage is unavailable. The server keeps this reset for 100% weekly usage and evaluates it when readings return. " + serverHoldsText
+            return "Usage is unavailable. The server keeps this automatic reset and evaluates it when readings return. " + serverHoldsText
         case "reconciling": return "A previous request is still being reconciled with updated usage. Nothing can be used until then."
         // The irreversible-spend warning sits under Use now wherever it can be chosen.
-        default: return claude
-            ? "Use one Claude reset now when Anthropic allows it, or automatically once usage reports a session or weekly limit."
-            : "Use one reset now, or automatically once a usage update reports 100% weekly usage."
+        default:
+            if (kindAware) return selectedKindInfo
+                ? "Use one " + selectedKindInfo.label + " now when Anthropic allows it, or let the server use it automatically at its limit."
+                : "Use one of the banked resets now when Anthropic allows it, or let the server use the matching reset at whichever limit is reached."
+            return claude
+                ? "Use one Claude reset now when Anthropic allows it, or let the server use one automatically once usage reports a session or weekly limit."
+                : "Use one reset now, or let the server use one automatically once a usage update reports 100% weekly usage."
         }
     }
     anchors.centerIn: parent
@@ -75,9 +111,31 @@ Popup {
         }
         Text {
             objectName: "resetOptionsBalance"
-            visible: options.availableCount > 0
-            text: "Banked resets: " + options.availableCount
+            visible: options.kindAware || options.availableCount > 0
+            text: options.kindAware
+                ? (options.selectedKindInfo ? "Banked: " + options.selectedKindInfo.countText
+                    : options.kinds.length > 1 ? "Banked: " + options.anyCounts
+                    : "Choose which banked reset to use")
+                : "Banked resets: " + options.availableCount
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12
+            Layout.fillWidth: true; wrapMode: Text.WordWrap
+            Accessible.name: text
+        }
+        ResetKindChooser {
+            // Use now needs one specific kind even while an automatic reset is
+            // set, so the rows stay; only "Any matching reset" is for arming.
+            visible: options.kindAware && !options.busy
+            allowAny: !options.armed
+            kinds: options.kinds
+            selectedKindId: options.selectedKindId
+            selectionMissing: options.selectionMissing
+            onKindSelected: function(kind) { options.kindSelected(kind) }
+        }
+        Text {
+            objectName: "resetOptionsKindTrigger"
+            visible: options.kindAware && !options.armed && options.automaticEffect.length > 0
+            text: options.automaticEffect
+            textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 12
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }
@@ -86,6 +144,14 @@ Popup {
             visible: options.armed && options.deadlineLabel.length > 0
             text: "Weekly reset: " + options.deadlineLabel
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 12
+            Layout.fillWidth: true; wrapMode: Text.WordWrap
+            Accessible.name: text
+        }
+        Text {
+            objectName: "resetOptionsRequested"
+            visible: options.automaticPending
+            text: "An automatic reset was requested. Waiting for the result."
+            textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 13
             Layout.fillWidth: true; wrapMode: Text.WordWrap
             Accessible.name: text
         }
@@ -119,6 +185,13 @@ Popup {
                 accent: options.canConfirm; Layout.fillWidth: true
                 Accessible.description: options.canConfirm ? useNowWarning.text : options.useNowReason
                 onClicked: options.useNowRequested()
+            }
+            Text {
+                objectName: "useNowGrant"
+                visible: options.useNowGrant.length > 0
+                text: options.useNowGrant
+                textFormat: Text.PlainText; color: Theme.muted; font.pixelSize: 11
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
             }
             Text {
                 id: useNowWarning; objectName: "useNowWarning"

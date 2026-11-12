@@ -28,6 +28,29 @@ private slots:
             QVERIFY2(!SshTransport::parseAddress(invalid), qPrintable(invalid));
     }
 
+    void allowlistAcceptsOnlyTheResetAutomationRoutes()
+    {
+        // Pure decisions: no SSH process or fixture is involved.
+        for (const QString &provider : {QStringLiteral("codex"), QStringLiteral("claude")}) {
+            const QString path = "/api/v1/providers/" + provider + "/reset/automatic";
+            QVERIFY(SshTransport::allowsRequest("PUT", path));
+            QVERIFY(SshTransport::allowsBody("PUT", path));
+            QVERIFY(SshTransport::allowsRequest("DELETE", path));
+            QVERIFY(!SshTransport::allowsBody("DELETE", path));
+            QVERIFY(SshTransport::allowsRequest("POST", "/api/v1/providers/" + provider + "/reset"));
+            QVERIFY(SshTransport::allowsBody("POST", "/api/v1/providers/" + provider + "/reset"));
+        }
+        QVERIFY(SshTransport::allowsRequest("GET", "/api/v1/usage"));
+        QVERIFY(!SshTransport::allowsBody("GET", "/api/v1/usage"));
+        QVERIFY(SshTransport::allowsRequest("POST", "/api/v1/usage/refresh"));
+        QVERIFY(!SshTransport::allowsBody("POST", "/api/v1/usage/refresh"));
+        QVERIFY(SshTransport::allowsRequest("PUT", "/api/v1/providers/grok/credentials"));
+        QVERIFY(!SshTransport::allowsRequest("DELETE", "/api/v1/providers/codex/reset"));
+        QVERIFY(!SshTransport::allowsRequest("DELETE", "/api/v1/usage"));
+        QVERIFY(!SshTransport::allowsRequest("PUT", "/api/v1/providers/claude/reset/automatic/extra"));
+        QVERIFY(!SshTransport::allowsRequest("PATCH", "/api/v1/providers/claude/reset/automatic"));
+    }
+
     void acceptsGoFieldOrderAfterEof()
     {
         SshNetworkAccessManager network(SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
