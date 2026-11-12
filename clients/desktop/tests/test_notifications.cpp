@@ -256,6 +256,8 @@ private slots:
         notifications.observeAutomaticReset("Claude", event("t2", "completed", "reset", {}, "weekly"), true);
         QCOMPARE(native.size(), 1);
         QCOMPARE(notifications.unreadCount(), 1);
+        notifications.observeAutomaticReset("Claude", event("t2", "completed", "reset", {}, "weekly"), true);
+        QCOMPARE(native.size(), 1);
         notifications.present();
         auto posted = notifications.presented().first().toMap();
         QCOMPARE(posted["target"].toString(), QString("providerCard_Claude"));
@@ -301,6 +303,8 @@ private slots:
         };
         notifications.observeAutomaticReset("Codex", event("t1"), true);
         notifications.observeAutomaticReset("Codex", event("t2"), false);
+        QCOMPARE(native.size(), 0);
+        notifications.observeAutomaticReset("Codex", event("t2"), true);
         QCOMPARE(native.size(), 0);
         notifications.observeAutomaticReset("Codex", event("t3"), true);
         QCOMPARE(native.size(), 1);

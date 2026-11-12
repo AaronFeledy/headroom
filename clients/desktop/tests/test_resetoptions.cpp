@@ -248,12 +248,10 @@ private slots:
                     chosen = value.toMap()["countText"].toString();
                     chosenLabel = value.toMap()["label"].toString();
                 }
-                QString anyCounts;
                 QStringList counts;
                 for (const auto &value : scene.kinds) counts.append(value.toMap()["countText"].toString());
-                anyCounts = counts.join(" · ");
                 QCOMPARE(balance->property("text").toString(),
-                    chosen.isEmpty() && scene.kinds.size() > 1 ? "Banked: " + anyCounts
+                    chosen.isEmpty() && scene.kinds.size() > 1 ? "Banked: " + counts.join(" · ")
                     : chosen.isEmpty() ? QString("Choose which banked reset to use") : "Banked: " + chosen);
                 // One reset is spent, so the summary names one reset of the chosen
                 // kind and never quotes the whole balance as the amount used.

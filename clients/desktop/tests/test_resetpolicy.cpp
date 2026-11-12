@@ -316,7 +316,7 @@ private slots:
         Facts giveBack = kinded(baseline(Provider::Claude, 100));
         giveBack.kinds[1].refills = {"weekly_missing"};
         QVERIFY(kindApplies(giveBack, giveBack.kinds[1]));
-        QVERIFY(kindApplicabilityText(giveBack, giveBack.kinds[1]).contains("Weekly"));
+        QCOMPARE(kindApplicabilityText(giveBack, giveBack.kinds[1]), QString("Used when Weekly reaches 100%"));
         Facts fableOnly = kinded(baseline(Provider::Claude, 100));
         fableOnly.kinds[1].givesBackWeekly = false;
         QCOMPARE(kindApplicabilityText(fableOnly, fableOnly.kinds[1]), QString("Used when Fable reaches 100%"));
@@ -329,8 +329,8 @@ private slots:
         // The session meter never triggers a kind that does not refill it.
         Facts session = kinded(baseline(Provider::Claude, 100));
         session.buckets.append(Bucket{"session_extra", "Session", 100.0});
-        QVERIFY(!kindApplies(session, session.kinds[0]) || kindApplicabilityText(session, session.kinds[0]).contains("Weekly"));
-        QVERIFY(!kindApplicabilityText(session, session.kinds[0]).contains("Session"));
+        QVERIFY(kindApplies(session, session.kinds[0]));
+        QCOMPARE(kindApplicabilityText(session, session.kinds[0]), QString("Used when Weekly or Fable reaches 100%"));
     }
     void kindAwareUseNowNeedsTheChosenKind() {
         Facts facts = kinded(withUsable(baseline(Provider::Claude, 100), 1));
