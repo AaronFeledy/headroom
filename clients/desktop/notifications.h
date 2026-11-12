@@ -19,8 +19,9 @@ public:
     void observeUpdate(const QString &state, const QString &version, const QString &message, bool enabled);
     void observeBankedResetCount(const QString &provider, qint64 count, const QString &accountFingerprint, bool enabled);
     void resetBankedResetBaseline(const QString &provider = {});
-    // Server-owned automatic resets report their last event; the first event
-    // on a connection is a baseline, and a connection change resets it.
+    // Server-owned automatic resets report their last event; the first
+    // observation on a connection (even with no event yet) is the baseline, and
+    // a connection change resets it so the current event does not notify.
     void observeAutomaticReset(const QString &provider, const QVariantMap &event, bool enabled);
     void resetAutomaticResetBaseline(const QString &provider = {});
     void observeUsage(const QVariantList &providers, bool enabled,

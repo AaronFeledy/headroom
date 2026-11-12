@@ -106,10 +106,16 @@ void Notifications::resetAutomaticResetBaseline(const QString &provider) {
 
 void Notifications::observeAutomaticReset(const QString &provider, const QVariantMap &event, bool enabled) {
     const QString at = event.value("at").toString();
-    if (at.isEmpty()) return;
-    const QString before = m_automaticResetBaselines.value(provider);
-    m_automaticResetBaselines[provider] = at;
-    if (before.isEmpty() || before == at) return;
+    const auto baseline = m_automaticResetBaselines.constFind(provider);
+    if (baseline == m_automaticResetBaselines.cend()) {
+        // The first observation of this provider's automation state establishes
+        // the baseline even when no event has happened yet, so the first event
+        // on this connection is still news rather than becoming that baseline.
+        m_automaticResetBaselines.insert(provider, at);
+        return;
+    }
+    if (at.isEmpty() || baseline.value() == at) return;
+    m_automaticResetBaselines.insert(provider, at);
     const QString type = event.value("event").toString();
     if (type == "requested") return;
     const QString outcome = event.value("outcome").toString();
