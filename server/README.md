@@ -254,7 +254,7 @@ The server can own one automatic reset authorization per provider. A desktop
 arms it explicitly; the server evaluates it after every completed default
 Claude or ChatGPT (`Codex`) poll and spends at most once.
 
-- `PUT /api/v1/providers/{claude|codex}/reset/automatic` - arm with `{"confirmed": true, "account_fingerprint": "<64 lowercase hex>", "window_ends_at": "<RFC 3339>", "kinds": ["weekly", "fable"]}`. `kinds` is required for Claude (1-8 unique `^[a-z0-9_]{1,32}$` IDs) and forbidden for Codex. Arming never contacts the provider and never spends. An identical request while armed returns `200`; a different one returns `409`. Other refusals are `400` malformed, `404` provider not available, `409` ineligible reading, and `503` unavailable state directory.
+- `PUT /api/v1/providers/{claude|codex}/reset/automatic` - arm with `{"confirmed": true, "account_fingerprint": "<64 lowercase hex>", "window_ends_at": "<RFC 3339>", "kinds": ["weekly", "fable"]}`. `kinds` is required for Claude (1-8 unique `^[a-z0-9_]{1,32}$` IDs) and forbidden for Codex. Arming never contacts the provider and never spends. An identical request while armed returns `200`; a different one returns `409`. Other refusals are `400` malformed, `404` provider not available, `409` ineligible reading or an automatic reset still in progress, and `503` unavailable state directory.
 - `DELETE /api/v1/providers/{claude|codex}/reset/automatic` - cancel without a body, idempotent, returning `200` with the state object. A `canceled`/`user` event is recorded only when something was armed.
 
 Both routes use the manual reset route's bearer authentication, browser-origin

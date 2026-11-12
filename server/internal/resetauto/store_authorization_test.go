@@ -72,3 +72,62 @@ func Test_Store_replacement_in_the_same_second_is_a_different_authorization(t *t
 		})
 	}
 }
+
+func Test_Store_refuses_to_arm_while_a_spend_has_no_recorded_result(t *testing.T) {
+	// Given a spend that began and has not been recorded as finished
+	store := newTestStore(t)
+	request := ArmRequest{AccountFingerprint: testFingerprint, WindowEndsAt: testWindow(), Kinds: []string{"fable"}}
+	armed, err := store.Arm(context.Background(), ProviderClaude, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginFire(context.Background(), ProviderClaude, armed, "fable"); err != nil {
+		t.Fatal(err)
+	}
+
+	// When a new authorization is requested during it
+	_, err = store.Arm(context.Background(), ProviderClaude, request)
+
+	// Then it is refused and nothing is armed
+	if !errors.Is(err, ErrSpendInProgress) {
+		t.Fatalf("Arm error = %v, want ErrSpendInProgress", err)
+	}
+	loaded, loadErr := store.Load()
+	if loadErr != nil || loaded[ProviderClaude].Armed() {
+		t.Fatalf("an authorization was stored during a spend: %+v, error=%v", loaded[ProviderClaude], loadErr)
+	}
+
+	// And a recorded result, or an abandoned spend past its time budget, allows arming again
+	store.now = func() time.Time { return testNow().Add(2*resetBudget - time.Second) }
+	if _, err := store.Arm(context.Background(), ProviderClaude, request); !errors.Is(err, ErrSpendInProgress) {
+		t.Fatalf("Arm just inside the budget = %v, want ErrSpendInProgress", err)
+	}
+	store.now = func() time.Time { return testNow().Add(2 * resetBudget) }
+	if _, err := store.Arm(context.Background(), ProviderClaude, request); err != nil {
+		t.Fatalf("Arm after the abandoned spend's budget = %v", err)
+	}
+}
+
+func Test_Store_allows_arming_once_a_spend_result_is_recorded(t *testing.T) {
+	// Given
+	store := newTestStore(t)
+	request := ArmRequest{AccountFingerprint: testFingerprint, WindowEndsAt: testWindow(), Kinds: []string{"fable"}}
+	armed, err := store.Arm(context.Background(), ProviderClaude, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginFire(context.Background(), ProviderClaude, armed, "fable"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishFire(context.Background(), ProviderClaude, newEvent(testNow(), "completed", "reset", "", "fable")); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	_, err = store.Arm(context.Background(), ProviderClaude, request)
+
+	// Then
+	if err != nil {
+		t.Fatalf("Arm after a recorded result = %v", err)
+	}
+}

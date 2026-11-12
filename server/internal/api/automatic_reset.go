@@ -161,6 +161,8 @@ func (h *handler) armAutomaticReset(w http.ResponseWriter, r *http.Request, prov
 			writeError(w, http.StatusConflict, automaticResetIneligibleMessage(notEligible.Code))
 		case errors.Is(err, resetauto.ErrConflicting):
 			writeError(w, http.StatusConflict, "a different automatic reset is already armed")
+		case errors.Is(err, resetauto.ErrSpendInProgress):
+			writeError(w, http.StatusConflict, "an automatic reset is in progress")
 		default:
 			writeError(w, http.StatusServiceUnavailable, "automatic reset state unavailable")
 		}

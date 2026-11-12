@@ -27,6 +27,9 @@ var (
 	ErrStateUnavailable = errors.New("automatic reset state unavailable")
 	// ErrConflicting means a different authorization is already armed.
 	ErrConflicting = errors.New("a different automatic reset is armed")
+	// ErrSpendInProgress means an automatic spend was started and its result is
+	// not recorded yet, so a new authorization must wait for it.
+	ErrSpendInProgress = errors.New("an automatic reset is in progress")
 	// ErrStaleAuthorization means the authorization changed between evaluation
 	// and the spend transition, so nothing may be spent.
 	ErrStaleAuthorization = errors.New("automatic reset authorization changed")
@@ -94,6 +97,9 @@ func (s *Store) Arm(ctx context.Context, provider string, request ArmRequest) (R
 			return existing, nil
 		}
 		return existing, ErrConflicting
+	}
+	if spendInFlight(existing.LastEvent, s.now()) {
+		return existing, ErrSpendInProgress
 	}
 	record := Record{
 		ArmedAt:            s.now().UTC().Truncate(time.Second),
@@ -248,6 +254,18 @@ func (r Record) matches(request ArmRequest) bool {
 	return r.AccountFingerprint == request.AccountFingerprint &&
 		sameInstant(r.WindowEndsAt, request.WindowEndsAt) &&
 		slices.Equal(r.Kinds, request.Kinds)
+}
+
+// spendInFlight reports a spend that began and has no recorded result. Arming
+// during it would store an authorization the unfinished spend's result is then
+// written onto. A "requested" event left behind by a crash stops blocking once
+// the spend's own time budget has safely passed.
+func spendInFlight(event *usage.ResetAutomationEvent, now time.Time) bool {
+	if event == nil || event.Event != "requested" {
+		return false
+	}
+	startedAt, err := parseStateTime(event.At)
+	return err == nil && now.Sub(startedAt) < 2*resetBudget
 }
 
 // sameAuthorization compares everything the person authorized. The stored
