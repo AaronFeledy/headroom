@@ -167,7 +167,7 @@ private:
     ServerConnection resetTransport() const;
     QNetworkRequest resetRouteRequest(const QString &provider, const QString &route) const;
     void cancelAutomationRequest();
-    void finishAutomationRequest(QNetworkReply *reply, bool arming);
+    void finishAutomationRequest(QNetworkReply *reply, bool arming, const QString &provider);
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
     QStringList m_order;

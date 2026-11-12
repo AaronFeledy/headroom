@@ -470,7 +470,10 @@ void Controller::cancelAutomationRequest() {
     m_resetMessage.clear();
 }
 
-void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming) {
+void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming, const QString &provider) {
+    // The options may have been reopened for the other provider while this
+    // request was in flight; its result text belongs only to its own provider.
+    const bool current = provider == m_resetProvider;
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
     const auto error = reply->error();
@@ -478,7 +481,7 @@ void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming) {
     reply->deleteLater();
     if (m_automationReply == reply) m_automationReply.clear();
     if (!redirected && error == QNetworkReply::NoError && status == 200) {
-        m_resetMessage.clear();
+        if (current) m_resetMessage.clear();
         // One ordinary cache read makes the server's new state visible.
         if (m_startPolling) m_poll.start(0);
         emit changed();
@@ -486,6 +489,7 @@ void Controller::finishAutomationRequest(QNetworkReply *reply, bool arming) {
     }
     const auto answer = bytes.size() <= 4096 ? QJsonDocument::fromJson(bytes).object() : QJsonObject{};
     const QString serverError = answer.value("error").toString();
+    if (!current) { emit changed(); return; }
     if (status == 404 || status == 405) m_resetMessage = "Update the server to use automatic resets.";
     else if (!serverError.isEmpty()) m_resetMessage = serverError;
     else m_resetMessage = arming ? "The automatic reset could not be set. Check the connection."
@@ -527,7 +531,8 @@ bool Controller::scheduleReset() {
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply] { finishAutomationRequest(reply, true); });
+    connect(reply, &QNetworkReply::finished, this,
+        [this, reply, provider = m_resetProvider] { finishAutomationRequest(reply, true, provider); });
     return true;
 }
 
@@ -549,7 +554,8 @@ void Controller::cancelScheduledReset() {
     ServerTransport::requirePinnedPeer(reply, transport.certificate, m_mode == QStringLiteral("remote"));
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
-    connect(reply, &QNetworkReply::finished, this, [this, reply] { finishAutomationRequest(reply, false); });
+    connect(reply, &QNetworkReply::finished, this,
+        [this, reply, provider = m_resetProvider] { finishAutomationRequest(reply, false, provider); });
 }
 
 void Controller::observeResetUsage() {
