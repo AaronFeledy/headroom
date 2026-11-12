@@ -1,6 +1,7 @@
 package poller
 
 import (
+	"slices"
 	"sort"
 	"time"
 
@@ -46,15 +47,7 @@ func (r reading) equal(other reading) bool {
 	if r.hasCredits != other.hasCredits || r.resetCredits != other.resetCredits {
 		return false
 	}
-	if len(r.buckets) != len(other.buckets) {
-		return false
-	}
-	for i := range r.buckets {
-		if r.buckets[i] != other.buckets[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(r.buckets, other.buckets)
 }
 
 // recordReading grows the idle delay only while readings repeat below the

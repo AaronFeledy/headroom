@@ -34,14 +34,7 @@ func (s *providerState) hasPolicy() bool { return s.policy.MinSpacing > 0 }
 // scheduledDelay is the configured interval raised to the learned spacing and
 // idle delay.
 func (s *providerState) scheduledDelay() time.Duration {
-	delay := s.interval
-	if s.spacing > delay {
-		delay = s.spacing
-	}
-	if s.idle > delay {
-		delay = s.idle
-	}
-	return delay
+	return max(s.interval, s.spacing, s.idle)
 }
 
 // insideSpacingWindow reports whether the last attempt that received an HTTP

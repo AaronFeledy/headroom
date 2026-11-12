@@ -57,7 +57,12 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 		failure = &usage.FetchFailure{Kind: *kind}
 	}
 	entry.Data.FetchFailure = copyFetchFailure(failure)
-	responded := receivedHTTPResponse(entry, err, failure)
+	// Distinguish an upstream reply from a transport failure that never
+	// reached the provider.
+	responded := err == nil && entry.Data.Error == nil
+	if failure != nil && failure.HTTPStatus != 0 {
+		responded = true
+	}
 	if responded {
 		s.responseAt = completed
 	}
@@ -74,13 +79,4 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 	s.entry = copyEntry(entry)
 	s.hasEntry = true
 	return copyEntry(entry)
-}
-
-// receivedHTTPResponse distinguishes an upstream reply (success or HTTP
-// failure) from a transport failure that never reached the provider.
-func receivedHTTPResponse(entry Entry, err error, failure *usage.FetchFailure) bool {
-	if failure != nil && failure.HTTPStatus != 0 {
-		return true
-	}
-	return err == nil && entry.Data.Error == nil
 }
