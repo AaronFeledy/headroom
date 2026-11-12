@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -30,11 +31,18 @@ func Test_decodeAutomaticResetRequest_accepts_each_provider_shape(t *testing.T) 
 	codex, codexErr := decodeAutomaticFixture(t, codexBody, false)
 
 	// Then
-	if claudeErr != nil || len(claude.Kinds) != 2 || !claude.WindowEndsAt.Equal(time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)) {
+	window := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	if claudeErr != nil || !claude.Confirmed || claude.AccountFingerprint != automaticFixtureFingerprint {
 		t.Fatalf("claude request = %+v, error=%v", claude, claudeErr)
 	}
-	if codexErr != nil || codex.Kinds != nil {
+	if !claude.WindowEndsAt.Equal(window) || !slices.Equal(claude.Kinds, []string{"weekly", "fable"}) {
+		t.Fatalf("claude window = %v, kinds=%v", claude.WindowEndsAt, claude.Kinds)
+	}
+	if codexErr != nil || !codex.Confirmed || codex.AccountFingerprint != automaticFixtureFingerprint {
 		t.Fatalf("codex request = %+v, error=%v", codex, codexErr)
+	}
+	if !codex.WindowEndsAt.Equal(window) || codex.Kinds != nil {
+		t.Fatalf("codex window = %v, kinds=%v", codex.WindowEndsAt, codex.Kinds)
 	}
 }
 
@@ -95,12 +103,13 @@ func Test_attachResetAutomation_adds_state_only_for_supported_rows(t *testing.T)
 	// Given
 	window := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
 	automation := resetauto.New(resetauto.Options{Dir: filepath.Join(t.TempDir(), "reset-automation")})
+	fingerprint := automaticFixtureFingerprint
 	entry := poller.Entry{Data: usage.UsageData{
 		ProviderName: "Codex",
 		Buckets:      []usage.Bucket{{ID: usage.BucketWeekly, Label: "Weekly", Utilization: 95, ResetsAt: &window}},
 		RateLimitResetCredits: &usage.RateLimitResetCredits{
 			AvailableCount:     1,
-			AccountFingerprint: strPtr(automaticFixtureFingerprint),
+			AccountFingerprint: &fingerprint,
 		},
 	}}
 	if _, err := automation.Arm(context.Background(), resetauto.ProviderCodex, resetauto.ArmRequest{
@@ -131,5 +140,3 @@ func Test_attachResetAutomation_adds_state_only_for_supported_rows(t *testing.T)
 		t.Fatalf("codex JSON = %s, error=%v", encoded, err)
 	}
 }
-
-func strPtr(value string) *string { return &value }
