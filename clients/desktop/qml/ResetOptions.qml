@@ -35,7 +35,8 @@ Popup {
     readonly property string useNowGrant: action.useNowGrant || ""
     // The server's last automatic-reset event, already validated by the parser.
     readonly property var lastEvent: action.lastEvent || ({})
-    readonly property bool automaticRequested: action.requested === true
+    // An automatic spend was requested and its result is still pending.
+    readonly property bool automaticPending: action.requested === true
     // What the automatic choice authorizes, in words from the policy.
     readonly property string automaticEffect: action.automaticEffect || ""
     // The additive breakdown. Null or an empty list keeps the legacy dialog.
@@ -141,7 +142,7 @@ Popup {
         }
         Text {
             objectName: "resetOptionsRequested"
-            visible: options.automaticRequested
+            visible: options.automaticPending
             text: "An automatic reset was requested. Waiting for the result."
             textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 13
             Layout.fillWidth: true; wrapMode: Text.WordWrap

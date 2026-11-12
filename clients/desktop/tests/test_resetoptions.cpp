@@ -2,6 +2,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -81,6 +82,32 @@ class ResetOptionsTest : public QObject {
 private slots:
     void init() {
         failOnStateMachineWarning();
+    }
+    // A property that shares a name with a signal shadows it inside QML, so the
+    // button would throw instead of emitting. Check the names the buttons call
+    // without opening a dialog or activating anything.
+    void intentSignalsStayCallable_data() {
+        QTest::addColumn<QString>("name");
+        for (const QString &name : {QStringLiteral("useNowRequested"), QStringLiteral("automaticRequested"),
+                 QStringLiteral("cancelAutomaticRequested"), QStringLiteral("kindSelected")})
+            QTest::newRow(qPrintable(name)) << name;
+    }
+    void intentSignalsStayCallable() {
+        QFETCH(QString, name);
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty("captureMode", true);
+        QQmlComponent component(&engine);
+        component.setData(harness, QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/ResetOptionsHarness.qml"));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> root(component.create());
+        auto window = qobject_cast<QQuickWindow *>(root.data()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto options = window->findChild<QObject *>("resetOptions"); QVERIFY(options);
+        QQmlExpression expression(QQmlEngine::contextForObject(options), options,
+            QStringLiteral("typeof %1").arg(name));
+        const QVariant value = expression.evaluate();
+        QVERIFY2(!expression.hasError(), qPrintable(expression.error().toString()));
+        QCOMPARE(value.toString(), QString("function"));
     }
     void rendersEveryStateWithoutActions_data() {
         QTest::addColumn<Scene>("scene");
