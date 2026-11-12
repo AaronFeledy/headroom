@@ -41,6 +41,13 @@ ChatGPT are read-only metadata; the CLI never consumes them. `--json` passes the
 additive `kinds` array through unchanged. Claude's `usable_now` signal is
 separate from its available count and does not trigger an automatic action.
 
+When the server reports an armed `reset_automation`, the dashboard prints one
+extra line under the banked-reset line, for example
+`automatic reset set until Resets in 2d 4h`, falling back to
+`automatic reset set` when no window is reported. The CLI only displays this
+state: `--json` passes the field through unchanged, and the CLI never arms,
+cancels, or redeems anything.
+
 ## Read-only details and older servers
 
 The compatibility policy keeps provider keys, stable meter IDs, and legacy

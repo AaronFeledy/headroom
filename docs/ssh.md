@@ -96,8 +96,13 @@ providers with that socket, so a successful credential update affects the server
 already supplying your usage data. It does not write a credential exchange file
 or pass cookies in command arguments.
 
-The receiver accepts only usage and health reads and Cursor/Grok credential
-updates. It has bounded requests and responses, deadlines, and no TCP fallback.
+The receiver accepts only a fixed list of requests: usage and health reads,
+the usage refresh, Cursor/Grok credential updates, the confirmed manual reset
+routes, and the automatic-reset routes
+`PUT`/`DELETE /api/v1/providers/{claude|codex}/reset/automatic`, so the desktop
+can arm or cancel an authorization over the selected SSH transport.
+Cancellation carries an empty body; arming uses the same bounded JSON contract
+as HTTP. It has bounded requests and responses, deadlines, and no TCP fallback.
 The SSH client disables agent forwarding, PTY allocation, local commands, and
 connection multiplex reuse. It does not trust an unrelated localhost HTTP
 listener as proof of an SSH connection.

@@ -20,6 +20,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/codex"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/grok"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/resetauto"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/server"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/sshaccess"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -99,6 +100,8 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return err
 	}
+	resetCore := api.NewResetCore(api.ResetCoreOptions{Codex: codexClient, Claude: claudeClient, Poller: providerPoller, ProviderNames: names})
+	automation := buildResetAutomation(ctx, cfg, logger, resetCore, providerPoller)
 	handler := api.NewHandler(api.Options{
 		Cache:         providerPoller,
 		Cursor:        cursorClient,
@@ -110,6 +113,8 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		AuthToken:     cfg.AuthToken,
 		Version:       desktopOptions.version,
 		ProviderNames: names,
+		Reset:         resetCore,
+		Automation:    automation,
 	})
 	listener, err := desktopOptions.listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -119,7 +124,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return errors.Join(err, listener.Close())
 	}
-	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Claude: claudeClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint})
+	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Claude: claudeClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint, Reset: resetCore, Automation: automation})
 	defer listener.Close()
 	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
 		return err
@@ -144,6 +149,8 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	if err != nil {
 		return err
 	}
+	resetCore := api.NewResetCore(api.ResetCoreOptions{Codex: codexClient, Claude: claudeClient, Poller: providerPoller, ProviderNames: names})
+	automation := buildResetAutomation(ctx, cfg, logger, resetCore, providerPoller)
 	handler := api.NewHandler(api.Options{
 		Cache:         providerPoller,
 		Cursor:        cursorClient,
@@ -155,6 +162,8 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		AuthToken:     cfg.AuthToken,
 		Version:       options.version,
 		ProviderNames: names,
+		Reset:         resetCore,
+		Automation:    automation,
 	})
 	if err := prepared.publishIdentity(); err != nil {
 		return err
@@ -167,6 +176,14 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		poller:   providerPoller,
 		interval: cfg.PollInterval,
 	})
+}
+
+// buildResetAutomation creates the one process-wide component and installs its
+// post-poll observer before the poller starts.
+func buildResetAutomation(ctx context.Context, cfg config.Config, logger *slog.Logger, core *api.ResetCore, providerPoller *poller.Poller) *resetauto.Automation {
+	automation := resetauto.New(resetauto.Options{Dir: cfg.ResetAutomationDir, Executor: core.AutomationExecutor(), Lifetime: ctx, Logger: logger})
+	providerPoller.SetAfterPoll(automation.Observe)
+	return automation
 }
 
 func acknowledgeReady(ctx context.Context, ready func() error) error {

@@ -75,12 +75,39 @@ type Provider struct {
 	IsSuccess             bool                   `json:"is_success"`
 	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 	UsageDetails          *UsageDetails          `json:"usage_details"`
+	ResetAutomation       *ResetAutomation       `json:"reset_automation"`
 }
 
 type ProviderAuth struct {
 	State         string  `json:"state"`
 	SignInCommand *string `json:"sign_in_command"`
 	SignInURL     *string `json:"sign_in_url"`
+}
+
+// ResetAutomation is the server-owned automatic reset state. Only the fields
+// the text dashboard needs are decoded; --json passes the raw body through.
+type ResetAutomation struct {
+	Armed        bool
+	WindowEndsAt *time.Time
+}
+
+// UnmarshalJSON tolerates malformed display metadata. A bad time never hides
+// the armed marker, and the countdown falls back to its short form.
+func (automation *ResetAutomation) UnmarshalJSON(data []byte) error {
+	*automation = ResetAutomation{}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return nil
+	}
+	var armed bool
+	if json.Unmarshal(fields["armed"], &armed) == nil {
+		automation.Armed = armed
+	}
+	var endsAt time.Time
+	if json.Unmarshal(fields["window_ends_at"], &endsAt) == nil && !endsAt.IsZero() {
+		automation.WindowEndsAt = &endsAt
+	}
+	return nil
 }
 
 type RateLimitResetCredits struct {

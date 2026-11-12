@@ -130,6 +130,13 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 			}
 			fmt.Fprintf(&output, "  %d banked %s%s\n", credits.AvailableCount, noun, bankedKindBreakdown(credits))
 		}
+		if automation := provider.ResetAutomation; automation != nil && automation.Armed {
+			line := "  automatic reset set"
+			if automation.WindowEndsAt != nil {
+				line += " until " + countdown(automation.WindowEndsAt, now)
+			}
+			output.WriteString(line + "\n")
+		}
 	}
 	for key := range warnings {
 		if !active[key] {

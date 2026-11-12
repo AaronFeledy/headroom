@@ -14,7 +14,14 @@ func (p *Poller) UpdateCredentials(ctx context.Context, name string, update func
 		return Entry{}, false, nil
 	}
 	state.fetchMu.Lock()
-	defer state.release()
+	var entry Entry
+	fetched := false
+	defer func() {
+		state.release()
+		if fetched {
+			p.notifyAfterPoll(state.name, entry)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return Entry{}, true, err
 	}
@@ -30,5 +37,6 @@ func (p *Poller) UpdateCredentials(ctx context.Context, name string, update func
 	state.lastGood = usage.UsageData{}
 	state.hasLastGood = false
 	state.mu.Unlock()
-	return state.pollLocked(ctx, p.clock.Now), true, nil
+	entry, fetched = state.pollLocked(ctx, p.clock.Now)
+	return entry, true, nil
 }

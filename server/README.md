@@ -248,6 +248,72 @@ Never exercise either provider's consume method, reset HTTP route, or SSH reset
 forwarding during tests or manual validation, even with a fake upstream. Their
 skip-only safety tests are intentional, not TODOs.
 
+### Automatic reset
+
+The server can own one automatic reset authorization per provider. A desktop
+arms it explicitly; the server evaluates it after every completed default
+Claude or ChatGPT (`Codex`) poll and spends at most once. It decides only from a
+reading fetched in the last two minutes, and the reading the shared reset path
+then spends on must itself satisfy the same firing rule or the spend is refused.
+
+- `PUT /api/v1/providers/{claude|codex}/reset/automatic` - arm with `{"confirmed": true, "account_fingerprint": "<64 lowercase hex>", "window_ends_at": "<RFC 3339>", "kinds": ["weekly", "fable"]}`. `kinds` is required for Claude (1-8 unique `^[a-z0-9_]{1,32}$` IDs) and forbidden for Codex. Arming never contacts the provider and never spends. An identical request while armed returns `200`; a different one returns `409`. Other refusals are `400` malformed, `404` provider not available, `409` ineligible reading or an automatic reset still in progress, and `503` unavailable state directory.
+- `DELETE /api/v1/providers/{claude|codex}/reset/automatic` - cancel without a body, idempotent, returning `200` with the state object. A `canceled`/`user` event is recorded only when something was armed.
+
+Both routes use the manual reset route's bearer authentication, browser-origin
+rejection, and 1024-byte JSON body limit. SSH forwards exactly these two method
+and path pairs for both providers, with an empty `DELETE` body.
+
+State is additive on the default Claude and Codex usage rows as
+`reset_automation`, and `null` for every other row, for extra Claude accounts,
+and when the state directory is unavailable:
+
+```json
+{"armed": true, "armed_at": "2026-11-11T12:00:00Z",
+ "window_ends_at": "2026-11-13T12:00:00Z", "kinds": ["weekly"],
+ "account_fingerprint": "<64 lowercase hex>",
+ "last_event": {"at": "2026-11-11T12:00:00Z", "event": "requested",
+                "outcome": null, "reason": null, "kind": "weekly"}}
+```
+
+When not armed, `armed_at`, `window_ends_at`, `kinds`, and
+`account_fingerprint` are `null`, and an ended window is never reported as
+armed. `last_event.event` is `requested`, `completed`, `failed`, or `canceled`;
+completed outcomes are `reset`, `already_redeemed`, `nothing_to_reset`,
+`no_credit`, or `unavailable`; failure reasons are `outcome_unknown`, `refused`,
+or `state_unavailable`; cancel reasons are `user`, `manual_reset`,
+`window_ended`, `identity_changed`, `kind_unavailable`, `no_trigger`,
+`below_floor`, or `no_credits`. A confirmed manual reset cancels the provider's
+stored authorization with `manual_reset` before it runs; a cancel failure is
+logged and never blocks that manual reset.
+
+One JSON file, `authorizations.json`, lives in the owner-only
+`<default config directory>/reset-automation/` directory beside the Claude reset
+journal, with a stable sibling cross-process lock around every read-modify-write.
+It stores only the account fingerprint, arming time, weekly window end, and
+allowed kinds: no provider account ID, token, or grant identifier. Every
+evaluation re-reads it. A damaged or unknown-version file reports disarmed
+state, never fires, refuses new arming with `503`, and is never rewritten or
+deleted.
+
+Arming requires a successful cached reading whose fingerprint matches, an
+available banked reset, and a future `weekly` reset equal to `window_ends_at`.
+Codex additionally requires weekly usage of at least 90%. Claude requires every
+requested kind to be listed with resets available, at least one requested kind
+to apply to a reported meter, and session or weekly usage of at least 90%,
+top-level `usable_now: true`, or a listed usable kind.
+
+Evaluation is pure and asynchronous after a completed poll, never while the
+provider fetch lock is held. It cancels when the window ends, the fingerprint or
+weekly window changes, a saved kind is unavailable, no saved kind applies, the
+Codex weekly floor is no longer met, or no credits remain. At a full percent
+meter it fires the first applicable saved kind that is usable now, preferring
+kinds whose `refills` name that meter (fewer names first) and putting weekly
+give-backs last. The synthesized session copy of a weekly window is never
+treated as a session limit. Firing disarms and records `requested` under the
+lock before spending; the spend uses the same single cross-provider gate,
+eligibility check, consume call, and delayed refresh as a manual reset. The
+authorization is gone whatever happens next, so nothing is ever retried.
+
 Each usage entry includes additive `provider_type` (`Claude`, `Codex`, `Cursor`,
 or `Grok`) and `account` (`null`, or `{"id", "label"}` for an extra Claude
 account). Each usage entry also includes an always-present `auth` object: `state`

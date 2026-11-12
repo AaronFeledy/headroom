@@ -16,6 +16,7 @@ func Test_Claude_reset_state_uses_stable_default_config_base(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
+			wantAutomation := filepath.Join(filepath.Dir(defaultPath), "reset-automation")
 			for _, args := range [][]string{
 				{},
 				{"--config", filepath.Join(home, "other", "config.yaml"), "--listen-addr", "127.0.0.1:9944", "--auth-token", "fixture"},
@@ -23,6 +24,9 @@ func Test_Claude_reset_state_uses_stable_default_config_base(t *testing.T) {
 				cfg, err := loadForOS(context.Background(), LoadOptions{Args: args, Env: env}, goos, migrationOps{})
 				if err != nil || cfg.ResetStateDir != want {
 					t.Fatalf("state directory=%q, want %q, error=%v", cfg.ResetStateDir, want, err)
+				}
+				if cfg.ResetAutomationDir != wantAutomation {
+					t.Fatalf("automation directory=%q, want %q", cfg.ResetAutomationDir, wantAutomation)
 				}
 			}
 		})

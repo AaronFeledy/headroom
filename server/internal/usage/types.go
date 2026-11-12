@@ -124,6 +124,13 @@ type UsageData struct {
 	NeedsReauth           bool
 	RateLimitResetCredits *RateLimitResetCredits
 	UsageDetails          *UsageDetails `json:"usage_details"`
+	// ResetAutomation is attached when a response is written; it never enters
+	// the poller cache. Nil means the row has no automation support.
+	ResetAutomation *ResetAutomationState `json:"reset_automation"`
+	// SessionFromFiveHour is internal-only. It is true only when the session
+	// meter came from a real five-hour window, so a weekly copy in the same slot
+	// is never mistaken for a session limit.
+	SessionFromFiveHour bool `json:"-"`
 	// ProviderAccountID binds sensitive provider actions to the account whose
 	// usage was checked. It is internal-only and must never enter API JSON.
 	ProviderAccountID string `json:"-"`
@@ -219,6 +226,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 		Auth                  Auth                   `json:"auth"`
 		UsageDetails          *UsageDetails          `json:"usage_details"`
+		ResetAutomation       *ResetAutomationState  `json:"reset_automation"`
 	}
 	buckets := d.Buckets
 	if d.Error != nil || buckets == nil {
@@ -262,6 +270,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		IsSuccess:             d.Error == nil,
 		RateLimitResetCredits: resetCredits,
 		UsageDetails:          details,
+		ResetAutomation:       d.ResetAutomation,
 	})
 }
 

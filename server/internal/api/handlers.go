@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/resetauto"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -28,21 +29,19 @@ var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var resetKindPattern = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
 type handler struct {
-	authToken            string
-	tlsFingerprint       string
-	cache                Cache
-	cursor               CursorCredentials
-	grok                 GrokCredentials
-	codex                ProviderResetter
-	claude               ProviderResetter
-	poller               ProviderPoller
-	version              string
-	providerNames        []string
-	credentialMu         sync.Mutex
-	resetMu              sync.Mutex
-	resetRefreshMu       sync.Mutex
-	codexRefreshPending  bool
-	claudeRefreshPending bool
+	authToken      string
+	tlsFingerprint string
+	cache          Cache
+	cursor         CursorCredentials
+	grok           GrokCredentials
+	codex          ProviderResetter
+	claude         ProviderResetter
+	poller         ProviderPoller
+	version        string
+	providerNames  []string
+	credentialMu   sync.Mutex
+	reset          *ResetCore
+	automation     *resetauto.Automation
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +78,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.route(w, r, http.MethodPost, h.providerReset)
 		return
 	}
+	if path == "/api/v1/providers/codex/reset/automatic" || path == "/api/v1/providers/claude/reset/automatic" {
+		h.automaticResetRoute(w, r)
+		return
+	}
 	writeError(w, http.StatusNotFound, "not found")
 }
 
@@ -99,11 +102,13 @@ type codexResetResponse struct {
 // button, this endpoint, or any code that may trigger a reset. The skipped
 // safety tests are intentional and must not be converted into executable tests.
 func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
-	provider, label, resetter := "codex", "ChatGPT", h.codex
-	eligible := eligibleForCodexReset
+	provider := "codex"
 	if r.URL.Path == "/api/v1/providers/claude/reset" {
-		provider, label, resetter = "claude", "Claude", h.claude
-		eligible = eligibleForClaudeReset
+		provider = "claude"
+	}
+	resetter := h.codex
+	if provider == "claude" {
+		resetter = h.claude
 	}
 	if resetter == nil || h.poller == nil || !h.hasProvider(provider) {
 		writeError(w, http.StatusNotFound, "provider not found")
@@ -127,8 +132,7 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxResetBodyBytes)
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	request, err := decodeResetRequest(decoder, provider == "claude")
+	request, err := decodeResetRequest(json.NewDecoder(r.Body), provider == "claude")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
@@ -137,71 +141,19 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
 		return
 	}
-	request.RequestID = strings.ToLower(request.RequestID)
-	if resetCtx.Err() != nil {
-		finalizeResetRejection(provider, resetter, request)
-		writeError(w, http.StatusRequestTimeout, "reset request timed out")
+	// A manual reset replaces any armed automatic authorization. A cancel
+	// failure never blocks the manual reset; this is a preference.
+	h.automation.CancelManualReset(resetCtx, provider)
+	result := h.reset.Execute(resetCtx, provider, ResetRequest{
+		RequestID:          strings.ToLower(request.RequestID),
+		AccountFingerprint: request.AccountFingerprint,
+		Kind:               request.Kind,
+	})
+	if result.Status != 0 {
+		writeError(w, result.Status, result.Message)
 		return
 	}
-
-	if !h.resetMu.TryLock() {
-		finalizeResetRejection(provider, resetter, request)
-		writeError(w, http.StatusConflict, "another reset request is in progress")
-		return
-	}
-	releaseResetGate := sync.OnceFunc(h.resetMu.Unlock)
-	defer releaseResetGate()
-	known, blocked := resetter.ResetAttemptStatus(request.RequestID)
-	if blocked {
-		finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
-		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
-		return
-	}
-	expectedAccountID := ""
-	if !known {
-		if provider == "claude" && request.Kind != "" {
-			kind := request.Kind
-			eligible = func(entry poller.Entry) bool { return eligibleForClaudeResetKind(entry, kind) }
-		}
-		entry, ok, err := h.poller.PollProvider(resetCtx, provider)
-		if err != nil || !ok || !eligible(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
-			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
-			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
-			return
-		}
-		if provider == "claude" && request.Kind == "" && claudeResetKindAmbiguous(entry) {
-			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
-			writeError(w, http.StatusConflict, multiKindResetMessage)
-			return
-		}
-		expectedAccountID = entry.Data.ProviderAccountID
-	}
-	var outcome string
-	var ambiguous bool
-	if request.Kind != "" {
-		kindResetter, kindOK := resetter.(ProviderKindResetter)
-		if !kindOK {
-			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
-			writeError(w, http.StatusConflict, "fresh eligible "+label+" usage is required")
-			return
-		}
-		outcome, ambiguous, err = kindResetter.ConsumeResetCreditKind(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint, request.Kind)
-	} else {
-		outcome, ambiguous, err = resetter.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
-	}
-	// Reconcile even an uncertain response with a delayed read-only fetch. Never
-	// repeat ConsumeResetCredit automatically or exercise this flow in tests.
-	h.scheduleResetUsageRefresh(provider)
-	if err != nil {
-		if ambiguous {
-			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
-		} else {
-			finalizeResetRejectionAfterGate(releaseResetGate, func() { finalizeResetRejection(provider, resetter, request) })
-			writeError(w, http.StatusBadGateway, "reset request unavailable")
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
+	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: result.Outcome})
 }
 
 // The provider finalizer keeps its own mutex and durable journal lock while it
@@ -213,7 +165,7 @@ func finalizeResetRejectionAfterGate(releaseGate func(), finalize func()) {
 
 // Only use after validated rejection, and after a consumer has returned when
 // one ran. A lost or ambiguous response is never proof of non-submission.
-func finalizeResetRejection(provider string, resetter ProviderResetter, request codexResetRequest) {
+func finalizeResetRejection(provider string, resetter ProviderResetter, request ResetRequest) {
 	if provider != "claude" {
 		return
 	}
@@ -225,34 +177,6 @@ func finalizeResetRejection(provider string, resetter ProviderResetter, request 
 	// the response deadline. Healthy contention must not abandon this UUID.
 	// A crash or failed durable write still leaves the receipt latched.
 	_ = finalizer.RecordResetNotSubmitted(context.Background(), request.RequestID, request.AccountFingerprint)
-}
-
-func (h *handler) scheduleResetUsageRefresh(provider string) {
-	h.resetRefreshMu.Lock()
-	pending := &h.codexRefreshPending
-	if provider == "claude" {
-		pending = &h.claudeRefreshPending
-	}
-	if *pending {
-		h.resetRefreshMu.Unlock()
-		return
-	}
-	*pending = true
-	h.resetRefreshMu.Unlock()
-	go func() {
-		defer func() {
-			h.resetRefreshMu.Lock()
-			*pending = false
-			h.resetRefreshMu.Unlock()
-		}()
-		// Give the provider time to apply the reset, then update the ordinary usage
-		// cache once. This is only a provider GET, never another redemption.
-		// It outlives the response but has its own bounded fetch deadline.
-		time.Sleep(3 * time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		_, _, _ = h.poller.PollProvider(ctx, provider)
-	}()
 }
 
 func decodeResetRequest(decoder *json.Decoder, allowKind bool) (codexResetRequest, error) {
@@ -312,7 +236,9 @@ func (h *handler) route(w http.ResponseWriter, r *http.Request, method string, n
 }
 
 func (h *handler) usageCollection(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, entriesData(h.cache.Snapshot()))
+	data := entriesData(h.cache.Snapshot())
+	h.attachResetAutomation(data)
+	writeJSON(w, http.StatusOK, data)
 }
 
 func (h *handler) providerUsage(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +247,9 @@ func (h *handler) providerUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, entry.Data)
+	data := []usage.UsageData{entry.Data}
+	h.attachResetAutomation(data)
+	writeJSON(w, http.StatusOK, data[0])
 }
 
 func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -453,6 +381,23 @@ func decodeCredentialRequest(w http.ResponseWriter, r *http.Request) (credential
 		request.accessToken = strings.TrimSpace(*raw.AccessToken)
 	}
 	return request, nil
+}
+
+// attachResetAutomation adds the server-owned state when a response is written.
+// It never enters the poller cache.
+func (h *handler) attachResetAutomation(data []usage.UsageData) {
+	if h.automation == nil {
+		return
+	}
+	for index := range data {
+		provider := resetAutomationProvider(data[index])
+		if provider == "" {
+			continue
+		}
+		if state, ok := h.automation.State(provider); ok {
+			data[index].ResetAutomation = state
+		}
+	}
 }
 
 func entriesData(entries []poller.Entry) []usage.UsageData {

@@ -175,6 +175,18 @@ methods, HTTP reset routes, and SSH reset forwarding must never be executed in
 tests, including against fakes: banked resets have real value. Keep their safety
 tests skip-only and never enable live provider tests for validation.
 
+The Go server owns one explicit, one-shot automatic reset authorization per
+provider ("use automatically at limit"), stored under the default config
+directory's `reset-automation/` directory instead of desktop memory so it
+survives app and server restarts. Arming is allowed only from an urgent reading
+with banked resets; the server evaluates the authorization after completed polls
+and spends at most once through the same cross-provider reset gate as a manual
+reset. The automatic `PUT`/`DELETE` routes, their SSH forwards, and the firing
+path are never executed in tests, including against fakes; their safety tests
+stay skip-only. The state directory is independent of `--config`, address,
+bearer token, and installation generation, and stores only the account
+fingerprint, weekly window, and allowed kinds.
+
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
 trusted native per-user install. Capture, explicit-config, source, and

@@ -8,7 +8,16 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) Entry {
+// pollAndRelease releases the fetch lock before an observer can start another
+// poll for the same provider. The deferred release still covers a panic.
+// fetched is false when the provider was not contacted, so callers must not
+// treat the returned cached reading as a fresh observation.
+func (s *providerState) pollAndRelease(ctx context.Context, now func() time.Time) (Entry, bool) {
+	defer s.release()
+	return s.pollLocked(ctx, now)
+}
+
+func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) (Entry, bool) {
 	current := now()
 	s.mu.RLock()
 	rateUntil := s.rateUntil
@@ -16,7 +25,7 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 	entry := copyEntry(s.entry)
 	s.mu.RUnlock()
 	if !rateUntil.IsZero() && current.Before(rateUntil) {
-		return entry
+		return entry, false
 	}
 	if spaced {
 		// Spacing is not a rate-limit cooldown: only the next due time moves.
@@ -25,7 +34,7 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 			s.nextDue = until
 		}
 		s.mu.Unlock()
-		return entry
+		return entry, false
 	}
 
 	data, err := fetchProvider(ctx, s.name, s.provider)
@@ -78,5 +87,5 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) En
 	s.logAttempt(ctx, entry, failure)
 	s.entry = copyEntry(entry)
 	s.hasEntry = true
-	return copyEntry(entry)
+	return copyEntry(entry), true
 }
