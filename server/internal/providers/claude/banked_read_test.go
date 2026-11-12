@@ -11,7 +11,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-const fixtureUsageWithStatus = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10},"cedar_ember":{"eligible":true,"next_grant_id":"fixture","grants":[{"id":"fixture","resets_total":4,"resets_left":3,"paused":false,"usable_now":true}]}}`
+const fixtureUsageWithStatus = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10},"cedar_ember":{"eligible":true,"next_grant_id":"fixture","grants":[{"id":"fixture","resets_total":4,"resets_left":3,"paused":false,"usable_now":true,"type":"weekly"}]}}`
 
 const fixtureUsageOnly = `{"five_hour":{"utilization":96},"seven_day":{"utilization":50},"extra_usage":{"is_enabled":true,"monthly_limit":1000,"used_credits":100,"utilization":10}}`
 
@@ -63,6 +63,9 @@ func Test_BankedMetadata_one_usage_request_carries_status(t *testing.T) {
 	// Then the status came from the same body, and only one profile lookup ran.
 	if err != nil || second.RateLimitResetCredits == nil || second.RateLimitResetCredits.AvailableCount != 3 || second.RateLimitResetCredits.UsableNow == nil || !*second.RateLimitResetCredits.UsableNow {
 		t.Fatalf("missing banked metadata: %+v %v", second.RateLimitResetCredits, err)
+	}
+	if len(second.RateLimitResetCredits.Kinds) != 1 || second.RateLimitResetCredits.Kinds[0].ID != resetKindWeekly {
+		t.Fatalf("status kinds not classified from the usage body: %+v", second.RateLimitResetCredits.Kinds)
 	}
 	if second.ProviderAccountID != "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222" || !matchesAccountFingerprint(second.ProviderAccountID, *second.RateLimitResetCredits.AccountFingerprint) {
 		t.Fatal("account binding missing")

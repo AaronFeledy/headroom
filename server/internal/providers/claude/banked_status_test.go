@@ -57,6 +57,7 @@ func Test_BankedStatus_rejects_mistyped_optional_fields(t *testing.T) {
 		{`"percent_used":42`, true},
 		{`"blocking":42`, true},
 		{`"gives_back_weekly":42`, true},
+		{`"type":42`, true},
 		{`"unavailable_reason":42`, true},
 		{`"ineligible_reason":42`, false},
 		{`"at_limit":42`, false},

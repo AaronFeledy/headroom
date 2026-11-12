@@ -49,6 +49,19 @@ func (c *Client) resetAttemptStatus(ctx context.Context, requestID string) (know
 // method, the endpoint it calls, or code that may trigger it: even a test can
 // consume a real reset. The skipped safety test is intentional, not a TODO.
 func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAccountID, expectedAccountFingerprint string) (outcome string, ambiguous bool, err error) {
+	return c.consumeResetCredit(ctx, requestID, expectedAccountID, expectedAccountFingerprint, "")
+}
+
+// ConsumeResetCreditKind redeems exactly the requested kind. Do not test this
+// method or the reset route for the same reason as ConsumeResetCredit.
+func (c *Client) ConsumeResetCreditKind(ctx context.Context, requestID, expectedAccountID, expectedAccountFingerprint, kind string) (outcome string, ambiguous bool, err error) {
+	if kind == "" {
+		return "", false, errResetUnavailable
+	}
+	return c.consumeResetCredit(ctx, requestID, expectedAccountID, expectedAccountFingerprint, kind)
+}
+
+func (c *Client) consumeResetCredit(ctx context.Context, requestID, expectedAccountID, expectedAccountFingerprint, kind string) (outcome string, ambiguous bool, err error) {
 	if lockResetMutex(ctx, &c.resetMu) != nil {
 		return "", false, errResetUnavailable
 	}
@@ -116,8 +129,19 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 		return "", false, errResetUnavailable
 	}
 	credits := status.credits(time.Now())
-	if credits == nil || credits.AvailableCount <= 0 || !*credits.UsableNow {
+	if credits == nil || credits.AvailableCount <= 0 {
 		return "", false, errResetUnavailable
+	}
+	if kind == "" {
+		if credits.UsableNow == nil || !*credits.UsableNow {
+			return "", false, errResetUnavailable
+		}
+	} else if selected := credits.Kind(kind); selected == nil || selected.AvailableCount <= 0 || !selected.UsableNow {
+		return "", false, errResetUnavailable
+	}
+	grant, err := selectResetGrant(status, kind, time.Now())
+	if err != nil {
+		return "", false, err
 	}
 	org, _, ok := strings.Cut(accountID, "/")
 	if !ok || !uuidPattern.MatchString(org) {
@@ -127,7 +151,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 		Program   string `json:"program"`
 		GrantID   string `json:"grant_id"`
 		RequestID string `json:"request_id"`
-	}{"cedar_ember", status.nextGrantID, requestID})
+	}{"cedar_ember", grant.ID, requestID})
 	if err != nil {
 		return "", false, errResetUnavailable
 	}

@@ -90,6 +90,58 @@ func Test_UsageData_MarshalJSON_emits_optional_reset_credit_metadata(t *testing.
 	assertJSONField(t, encoded, "rate_limit_reset_credits", `null`)
 }
 
+func Test_UsageData_MarshalJSON_reset_credit_kinds_null_empty_and_populated(t *testing.T) {
+	// Given provider credits without kind classification.
+	data := usage.UsageData{ProviderName: "Codex", RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3}}
+	// When
+	encoded, err := json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.kinds", `null`)
+	// Given a classified provider with no available kind.
+	data.RateLimitResetCredits.Kinds = []usage.ResetCreditKind{}
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.kinds", `[]`)
+	// Given a populated kind.
+	expires := "2026-12-10T22:00:00Z"
+	data.ProviderName = "Claude"
+	data.RateLimitResetCredits.Kinds = []usage.ResetCreditKind{{
+		ID: "weekly", Label: "weekly reset", AvailableCount: 1, UsableNow: true,
+		Refills: []string{"weekly", "weekly_fable"}, GivesBackWeekly: false, ExpiresAt: &expires,
+	}}
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var populated struct {
+		Credits struct {
+			Kinds []struct {
+				ID              string   `json:"id"`
+				Label           string   `json:"label"`
+				AvailableCount  int64    `json:"available_count"`
+				UsableNow       bool     `json:"usable_now"`
+				Refills         []string `json:"refills"`
+				GivesBackWeekly bool     `json:"gives_back_weekly"`
+				ExpiresAt       *string  `json:"expires_at"`
+			} `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &populated); err != nil {
+		t.Fatal(err)
+	}
+	kind := populated.Credits.Kinds
+	if len(kind) != 1 || kind[0].ID != "weekly" || kind[0].Label != "weekly reset" || kind[0].AvailableCount != 1 ||
+		!kind[0].UsableNow || kind[0].GivesBackWeekly || kind[0].ExpiresAt == nil || *kind[0].ExpiresAt != expires ||
+		len(kind[0].Refills) != 2 || kind[0].Refills[0] != "weekly" || kind[0].Refills[1] != "weekly_fable" {
+		t.Fatalf("populated kind = %+v", kind)
+	}
+}
+
 func Test_RefreshResult_String_returns_stable_wire_text_for_all_variants(t *testing.T) {
 	tests := []struct {
 		name string
@@ -342,4 +394,57 @@ func sortedKeys(values map[string]json.RawMessage) []string {
 		}
 	}
 	return keys
+}
+
+func Test_UsageData_MarshalJSON_reset_credit_next_null_and_populated(t *testing.T) {
+	// Given a kind with no selectable grant.
+	expires := "2026-12-10T22:00:00Z"
+	data := usage.UsageData{ProviderName: "Claude", RateLimitResetCredits: &usage.RateLimitResetCredits{
+		AvailableCount: 1,
+		Kinds:          []usage.ResetCreditKind{{ID: "weekly", Label: "weekly reset", AvailableCount: 1}},
+	}}
+	// When
+	encoded, err := json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty struct {
+		Credits struct {
+			Kinds []struct {
+				Next json.RawMessage `json:"next"`
+			} `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &empty); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Credits.Kinds) != 1 || string(empty.Credits.Kinds[0].Next) != "null" {
+		t.Fatalf("next = %s, want null", empty.Credits.Kinds[0].Next)
+	}
+	// Given the grant that kind would spend.
+	data.RateLimitResetCredits.Kinds[0].Next = &usage.ResetCreditNext{Label: "One full limit reset", ExpiresAt: &expires}
+	// When
+	encoded, err = json.Marshal(data)
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	var populated struct {
+		Credits struct {
+			Kinds []struct {
+				Next struct {
+					Label     string  `json:"label"`
+					ExpiresAt *string `json:"expires_at"`
+				} `json:"next"`
+			} `json:"kinds"`
+		} `json:"rate_limit_reset_credits"`
+	}
+	if err := json.Unmarshal(encoded, &populated); err != nil {
+		t.Fatal(err)
+	}
+	next := populated.Credits.Kinds[0].Next
+	if next.Label != "One full limit reset" || next.ExpiresAt == nil || *next.ExpiresAt != expires {
+		t.Fatalf("next = %+v, want populated label and expiry", next)
+	}
 }

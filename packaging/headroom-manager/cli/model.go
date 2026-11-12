@@ -84,8 +84,18 @@ type ProviderAuth struct {
 }
 
 type RateLimitResetCredits struct {
-	AvailableCount     int64   `json:"available_count"`
-	AccountFingerprint *string `json:"account_fingerprint"`
+	AvailableCount     int64             `json:"available_count"`
+	AccountFingerprint *string           `json:"account_fingerprint"`
+	Kinds              []ResetCreditKind `json:"-"`
+}
+
+// ResetCreditKind is one reported kind of banked reset. Only the fields the
+// text dashboard needs are decoded; other additive fields stay intact in the
+// raw body that --json emits.
+type ResetCreditKind struct {
+	ID             string
+	Label          string
+	AvailableCount int64
 }
 
 func decodeUsage(body []byte) ([]Provider, error) {
@@ -212,6 +222,7 @@ func (credits *RateLimitResetCredits) UnmarshalJSON(data []byte) error {
 	}
 	credits.AvailableCount = int64(*count)
 	_ = json.Unmarshal(fields["account_fingerprint"], &credits.AccountFingerprint)
+	credits.Kinds = decodeResetCreditKinds(fields["kinds"])
 	return nil
 }
 

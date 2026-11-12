@@ -182,15 +182,25 @@ Optional strings and reset timestamps are explicit `null`. `is_success` is true 
 
 ChatGPT (`Codex`) and Claude responses may also include
 `"rate_limit_reset_credits": {"available_count": 3, "account_fingerprint":
-"<64 lowercase hex characters>", "usable_now": null}`. For Claude, `usable_now`
-is a boolean indicating whether an eligible next grant is usable without an
-active cooldown; for Codex it remains `null`. This metadata reports how many usage resets
-are currently banked and, when available, an account fingerprint used to keep a
-manual action bound to the account whose usage was checked. The fingerprint is
-otherwise `null`. The complete metadata object is `null` when the count is
-unknown or the provider returned an error; zero is a known count. The GET usage
-endpoints and Home Assistant sensors only read this metadata and never redeem a
-reset. Headroom's desktop has a separate, explicitly confirmed reset action.
+"<64 lowercase hex characters>", "usable_now": null, "kinds": null}`. For Claude,
+`usable_now` is a boolean indicating whether an eligible next grant is usable
+without an active cooldown, and `kinds` lists the reset kinds that currently have
+resets available (an empty array when none). Each kind is `{"id", "label",
+"available_count", "usable_now", "refills", "gives_back_weekly",
+"expires_at", "next"}` in the fixed order `session`, `weekly`, `fable`, `full`;
+`refills` lists the usage windows a grant clears (`session`, `weekly`,
+`weekly_opus`, `weekly_sonnet`, `weekly_fable`), and `expires_at` is RFC 3339 UTC
+or `null`. `next` is `null` when that kind would refuse, otherwise the upstream
+grant whose `label` and RFC 3339 UTC `expires_at` Headroom would spend for that
+kind right now; the label is trimmed, strips control characters, and is at most
+160 characters. For Codex, `usable_now` and `kinds` remain `null`. This metadata
+reports how many usage resets are currently banked and, when available, an
+account fingerprint used to keep a manual action bound to the account whose
+usage was checked. The fingerprint is otherwise `null`. The complete metadata
+object is `null` when the count is unknown or the provider returned an error;
+zero is a known count. The GET usage endpoints and Home Assistant sensors only
+read this metadata and never redeem a reset. Headroom's desktop has a separate,
+explicitly confirmed reset action.
 
 `buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.
 

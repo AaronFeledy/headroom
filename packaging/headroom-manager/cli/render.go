@@ -124,12 +124,11 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		}
 		output.WriteString(renderDetails(provider.UsageDetails))
 		if credits := provider.RateLimitResetCredits; credits != nil && credits.AvailableCount > 0 {
-			fmt.Fprintf(&output, "  %d banked %s\n", credits.AvailableCount, func() string {
-				if credits.AvailableCount == 1 {
-					return "reset"
-				}
-				return "resets"
-			}())
+			noun := "resets"
+			if credits.AvailableCount == 1 {
+				noun = "reset"
+			}
+			fmt.Fprintf(&output, "  %d banked %s%s\n", credits.AvailableCount, noun, bankedKindBreakdown(credits))
 		}
 	}
 	for key := range warnings {
@@ -138,6 +137,33 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		}
 	}
 	return output.String()
+}
+
+// bankedKindBreakdown names where banked resets came from, but only when the
+// server's kind counts reconcile with the total it also reported.
+func bankedKindBreakdown(credits *RateLimitResetCredits) string {
+	var parts []string
+	var name string
+	var total int64
+	for _, kind := range credits.Kinds {
+		if kind.AvailableCount <= 0 {
+			continue
+		}
+		name = strings.TrimSuffix(kind.Label, " reset")
+		if name == "" {
+			name = kind.Label
+		}
+		total += kind.AvailableCount
+		parts = append(parts, fmt.Sprintf("%d %s", kind.AvailableCount, name))
+	}
+	if len(parts) == 0 || total != credits.AvailableCount {
+		return ""
+	}
+	if len(parts) == 1 {
+		// The existing line already carries the total, so name its sole source.
+		return " (" + name + ")"
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func countdown(reset *time.Time, now time.Time) string {

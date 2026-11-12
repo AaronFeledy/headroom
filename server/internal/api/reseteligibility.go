@@ -20,7 +20,24 @@ func eligibleForCodexReset(entry poller.Entry) bool {
 	return false
 }
 
+const multiKindResetMessage = "This account has more than one kind of banked reset. Update Headroom to choose which one to use."
+
 func eligibleForClaudeReset(entry poller.Entry) bool {
 	credits := entry.Data.RateLimitResetCredits
 	return entry.Data.Error == nil && entry.Data.ProviderAccountID != "" && credits != nil && credits.AvailableCount > 0 && credits.UsableNow != nil && *credits.UsableNow
+}
+
+// eligibleForClaudeResetKind requires fresh, account-bound usage whose requested
+// kind is listed with resets available and usable now.
+func eligibleForClaudeResetKind(entry poller.Entry, kind string) bool {
+	credits := entry.Data.RateLimitResetCredits
+	if entry.Data.Error != nil || entry.Data.ProviderAccountID == "" || credits == nil {
+		return false
+	}
+	selected := credits.Kind(kind)
+	return selected != nil && selected.AvailableCount > 0 && selected.UsableNow
+}
+
+func claudeResetKindAmbiguous(entry poller.Entry) bool {
+	return entry.Data.RateLimitResetCredits != nil && entry.Data.RateLimitResetCredits.AvailableKindCount() > 1
 }
