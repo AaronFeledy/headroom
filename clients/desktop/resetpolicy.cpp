@@ -33,6 +33,15 @@ QString bucketLabel(const ResetPolicy::Facts &facts, const QString &id) {
     for (const auto &bucket : facts.buckets) if (bucket.id == id) return bucket.label;
     return {};
 }
+
+// Anthropic's own wording for the next grant when the server supplied one,
+// otherwise our name for the kind. The quotes are curly to match user-facing
+// copy without putting non-ASCII in this source file.
+QString grantName(const ResetPolicy::Kind &kind) {
+    if (!kind.nextLabel.isEmpty())
+        return QString(QChar(0x201C)) + kind.nextLabel + QChar(0x201D);
+    return QStringLiteral("one ") + kind.label;
+}
 }
 
 namespace ResetPolicy {
@@ -234,6 +243,30 @@ QString kindReturnText(const Facts &facts, const Kind &kind) {
             return QStringLiteral("Returns what %1 used to your weekly limit").arg(label);
     }
     return {};
+}
+
+QString kindDetailText(const Facts &facts, const Kind &kind, const QString &expiryLabel) {
+    QStringList parts{kindCountText(kind)};
+    const QString refills = kindRefillText(facts, kind);
+    if (!refills.isEmpty()) parts.append(refills);
+    const QString returned = kindReturnText(facts, kind);
+    if (!returned.isEmpty()) parts.append(returned);
+    if (!expiryLabel.isEmpty()) parts.append(QStringLiteral("Expires ") + expiryLabel);
+    return parts.join(QStringLiteral(" %1 ").arg(QChar(0x00B7)));
+}
+
+QString kindNextText(const Kind &kind, const QString &expiryLabel) {
+    if (!kind.hasNext) return {};
+    QString text = QStringLiteral("Next: ") + grantName(kind);
+    if (!expiryLabel.isEmpty()) text += QStringLiteral(", expires ") + expiryLabel;
+    return text;
+}
+
+QString kindUseNowText(const Kind &kind, const QString &expiryLabel) {
+    if (!kind.hasNext) return {};
+    QString text = QStringLiteral("Uses ") + grantName(kind);
+    if (!expiryLabel.isEmpty()) text += QStringLiteral(", which expires ") + expiryLabel;
+    return text + QStringLiteral(".");
 }
 
 QString phaseName(Phase phase) {

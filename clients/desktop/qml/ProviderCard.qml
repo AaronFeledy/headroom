@@ -41,67 +41,23 @@ Rectangle {
     // null, absent, or an empty list keeps the legacy total-count text.
     readonly property var resetKinds: resetCredits && resetCredits.kinds ? resetCredits.kinds : []
     readonly property bool hasKindBreakdown: hasBankedResets && resetKinds.length > 0
+    // Kind wording is composed only by the C++ reset policy. The Controller
+    // builds it from this row's own reading and meters, so read-only
+    // multi-account rows show the same text without a second implementation.
+    readonly property var kindContent: {
+        card.provider; card.resetCredits
+        return backend.resetKindContent(card.name)
+    }
     readonly property string resetCountText: {
-        if (hasKindBreakdown) {
-            const parts = []
-            for (const kind of resetKinds) parts.push(kindCountText(kind))
-            return parts.join(" · ")
-        }
+        if (hasKindBreakdown) return kindContent.countText
         if (!hasResetCount) return ""
         return resetCredits.available_count === 1 ? "1 banked reset"
             : resetCredits.available_count + " banked resets"
     }
     // The same breakdown with one kind per line, for a meter too narrow to
     // hold it beside the options button.
-    readonly property string resetKindLines: {
-        const parts = []
-        for (const kind of resetKinds) parts.push(kindCountText(kind))
-        return parts.join("\n")
-    }
-    readonly property string resetKindDetails: {
-        if (!hasKindBreakdown) return ""
-        const lines = []
-        for (const kind of resetKinds) lines.push(kindDetailText(kind))
-        return lines.join("\n")
-    }
-    function kindCountText(kind) {
-        return kind.available_count + " " + kind.label + (kind.available_count === 1 ? "" : "s")
-    }
-    function kindBucketLabel(refill) {
-        for (const bucket of provider.buckets || []) if (bucket.id === refill) return bucket.label
-        return ""
-    }
-    function kindRefillText(kind) {
-        const labels = []
-        for (const refill of kind.refills || []) {
-            const label = kindBucketLabel(refill)
-            if (label.length && labels.indexOf(label) < 0) labels.push(label)
-        }
-        if (!labels.length) return ""
-        if (labels.length === 1) return "Refills " + labels[0]
-        return "Refills " + labels.slice(0, -1).join(", ") + " and " + labels[labels.length - 1]
-    }
-    function kindReturnText(kind) {
-        if (!kind.gives_back_weekly) return ""
-        for (const refill of kind.refills || []) {
-            if (refill === "weekly") continue
-            const label = kindBucketLabel(refill)
-            if (label.length) return "Returns what " + label + " used to your weekly limit"
-        }
-        return ""
-    }
-    function kindDetailText(kind) {
-        const parts = [kindCountText(kind)]
-        const refills = kindRefillText(kind)
-        if (refills.length) parts.push(refills)
-        const returned = kindReturnText(kind)
-        if (returned.length) parts.push(returned)
-        if (kind.expires_at) {
-            const expiry = backend.resetTimeLabel(kind.expires_at)
-            if (expiry.length) parts.push("Expires " + expiry)
-        }
-        return parts.join(" · ")
-    }
+    readonly property string resetKindLines: kindContent.lines
+    readonly property string resetKindDetails: kindContent.details
     readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
     readonly property bool managingReset: resetState.managing === true
     readonly property string usageUrl: name === "Claude" ? "https://claude.ai/settings/usage" : name === "Codex" ? "https://chatgpt.com/codex/settings/usage" : ""

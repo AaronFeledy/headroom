@@ -88,6 +88,46 @@ bool writeReceipt(const QString &path, const QJsonObject &receipt) {
     const auto bytes = QJsonDocument(receipt).toJson(QJsonDocument::Compact);
     return file.write(bytes) == bytes.size() && file.commit();
 }
+
+// Feed one provider row's meters and validated kinds into policy facts. The
+// card uses this for any row, including read-only multi-account rows.
+void appendResetBuckets(const QVariantList &buckets, ResetPolicy::Facts &facts) {
+    for (const auto &entry : buckets) {
+        const auto meter = entry.toMap();
+        ResetPolicy::Bucket bucket;
+        bucket.id = meter.value("id").toString();
+        bucket.label = meter.value("label").toString();
+        bool valid = false;
+        const double used = meter.value("utilization").toDouble(&valid);
+        if (valid && std::isfinite(used)) bucket.utilization = used;
+        if (!bucket.id.isEmpty()) facts.buckets.append(bucket);
+    }
+}
+
+void appendResetKinds(const QVariant &kindsValue, ResetPolicy::Facts &facts) {
+    if (kindsValue.metaType().id() != QMetaType::QVariantList) return;
+    facts.kindsKnown = true;
+    for (const auto &entry : kindsValue.toList()) {
+        const auto kind = entry.toMap();
+        ResetPolicy::Kind parsed;
+        parsed.id = kind.value("id").toString();
+        parsed.label = kind.value("label").toString();
+        parsed.availableCount = kind.value("available_count").toLongLong();
+        parsed.usableNow = kind.value("usable_now").toBool();
+        parsed.refills = kind.value("refills").toStringList();
+        parsed.givesBackWeekly = kind.value("gives_back_weekly").toBool();
+        parsed.expiresAt = kind.value("expires_at").toString();
+        // A malformed or absent grant already normalized to null at the API
+        // boundary, so only a real map marks a spendable grant.
+        if (kind.value("next").metaType().id() == QMetaType::QVariantMap) {
+            const auto next = kind.value("next").toMap();
+            parsed.hasNext = true;
+            parsed.nextLabel = next.value("label").toString();
+            parsed.nextExpiresAt = next.value("expires_at").toString();
+        }
+        facts.kinds.append(parsed);
+    }
+}
 }
 
 QVariantMap Controller::resetReading(const QString &name) const {
@@ -137,18 +177,7 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
             const auto current = value.toMap();
             if (current.value("provider_name").toString() != provider) continue;
             facts.readingAvailable = current.value("is_success").toBool();
-            if (facts.readingAvailable) {
-                for (const auto &entry : current.value("buckets").toList()) {
-                    const auto meter = entry.toMap();
-                    ResetPolicy::Bucket bucket;
-                    bucket.id = meter.value("id").toString();
-                    bucket.label = meter.value("label").toString();
-                    bool valid = false;
-                    const double used = meter.value("utilization").toDouble(&valid);
-                    if (valid && std::isfinite(used)) bucket.utilization = used;
-                    if (!bucket.id.isEmpty()) facts.buckets.append(bucket);
-                }
-            }
+            if (facts.readingAvailable) appendResetBuckets(current.value("buckets").toList(), facts);
             break;
         }
     }
@@ -160,22 +189,7 @@ ResetPolicy::Facts Controller::resetFacts(const QString &provider) const {
     if (reading.value("usable_now").metaType().id() == QMetaType::Bool) facts.usableNow = reading.value("usable_now").toBool();
     // The additive kind breakdown is already validated by the usage parser.
     // Only a real array counts as a known list; null or absent stays legacy.
-    const auto kindsValue = reading.value("kinds");
-    if (provider == "Claude" && kindsValue.metaType().id() == QMetaType::QVariantList) {
-        facts.kindsKnown = true;
-        for (const auto &entry : kindsValue.toList()) {
-            const auto kind = entry.toMap();
-            ResetPolicy::Kind parsed;
-            parsed.id = kind.value("id").toString();
-            parsed.label = kind.value("label").toString();
-            parsed.availableCount = kind.value("available_count").toLongLong();
-            parsed.usableNow = kind.value("usable_now").toBool();
-            parsed.refills = kind.value("refills").toStringList();
-            parsed.givesBackWeekly = kind.value("gives_back_weekly").toBool();
-            parsed.expiresAt = kind.value("expires_at").toString();
-            facts.kinds.append(parsed);
-        }
-    }
+    if (provider == "Claude") appendResetKinds(reading.value("kinds"), facts);
     facts.accountBound = validFingerprint(reading.value("account_fingerprint").toString());
     const QString window = canonicalWindow(reading);
     facts.window = windowState(window);
@@ -273,7 +287,8 @@ QVariantMap Controller::resetAction() const {
             {"countText", ResetPolicy::kindCountText(kind)}, {"title", ResetPolicy::kindTitle(kind)},
             {"refillText", ResetPolicy::kindRefillText(facts, kind)},
             {"triggerText", ResetPolicy::kindTriggerText(facts, kind)},
-            {"returnText", ResetPolicy::kindReturnText(facts, kind)}});
+            {"returnText", ResetPolicy::kindReturnText(facts, kind)},
+            {"nextText", ResetPolicy::kindNextText(kind, Usage::resetTimeLabel(kind.nextExpiresAt))}});
     }
     const auto selected = ResetPolicy::findKind(facts, facts.selectedKind);
     return {{"provider", m_resetProvider}, {"busy", m_resetBusy}, {"message", m_resetMessage}, {"automatic", armed},
@@ -290,7 +305,30 @@ QVariantMap Controller::resetAction() const {
         {"selectedKindTitle", selected ? ResetPolicy::kindTitle(*selected) : QString()},
         {"selectedKindCount", selected ? ResetPolicy::kindCountText(*selected) : QString()},
         {"selectedKindTrigger", selected ? ResetPolicy::kindTriggerText(facts, *selected) : QString()},
+        {"useNowGrant", selected ? ResetPolicy::kindUseNowText(*selected, Usage::resetTimeLabel(selected->nextExpiresAt)) : QString()},
         {"windowEndsAt", armed ? m_autoResetWindow : canonicalWindow(resetReading(m_resetProvider))}};
+}
+
+QVariantMap Controller::resetKindContent(const QString &name) const {
+    // The card serves any provider row by name, including read-only
+    // multi-account rows that have no reset action. Wording still comes from
+    // the policy; only this row's own meters and kinds feed it.
+    ResetPolicy::Facts facts;
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        if (row.value("provider_name").toString() != name || !row.value("is_success").toBool()) continue;
+        appendResetBuckets(row.value("buckets").toList(), facts);
+        appendResetKinds(row.value("rate_limit_reset_credits").toMap().value("kinds"), facts);
+        break;
+    }
+    QStringList counts, details;
+    const QString separator = QStringLiteral(" %1 ").arg(QChar(0x00B7));
+    for (const auto &kind : facts.kinds) {
+        counts.append(ResetPolicy::kindCountText(kind));
+        details.append(ResetPolicy::kindDetailText(facts, kind, Usage::resetTimeLabel(kind.expiresAt)));
+    }
+    return {{"countText", counts.join(separator)}, {"lines", counts.join(QChar('\n'))},
+        {"details", details.join(QChar('\n'))}};
 }
 
 bool Controller::prepareReset(const QString &provider) {

@@ -32,6 +32,12 @@ struct Kind {
     QStringList refills;
     bool givesBackWeekly = false;
     QString expiresAt; // empty when the server reported no expiry
+    // The specific grant a redemption would spend right now, when the server
+    // reports one. nextLabel is Anthropic's own wording and may be empty;
+    // nextExpiresAt is empty when that grant has no expiry.
+    bool hasNext = false;
+    QString nextLabel;
+    QString nextExpiresAt;
 };
 // One meter in the provider reading, used for labels and trigger ownership.
 struct Bucket {
@@ -111,6 +117,12 @@ QString kindTitle(const Kind &kind);
 QString kindRefillText(const Facts &facts, const Kind &kind);
 QString kindTriggerText(const Facts &facts, const Kind &kind);
 QString kindReturnText(const Facts &facts, const Kind &kind);
+// The single implementation of kind wording for both the card and the
+// options dialog. expiryLabel is the already-localized reset time for the
+// relevant timestamp; an empty label omits the expiry clause.
+QString kindDetailText(const Facts &facts, const Kind &kind, const QString &expiryLabel);
+QString kindNextText(const Kind &kind, const QString &expiryLabel);
+QString kindUseNowText(const Kind &kind, const QString &expiryLabel);
 
 QString phaseName(Phase phase);
 QString reasonText(Reason reason, Provider provider);

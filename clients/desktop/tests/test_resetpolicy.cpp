@@ -265,6 +265,33 @@ private slots:
         QCOMPARE(kindReturnText(facts, facts.kinds[1]), QString("Returns what Fable used to your weekly limit"));
         QVERIFY(kindReturnText(facts, facts.kinds[0]).isEmpty());
     }
+    void kindGrantWordingIsComposedOnce() {
+        const Facts facts = kinded(baseline(Provider::Claude, 100));
+        Kind weekly = facts.kinds[0];
+        const QString expires = QStringLiteral("Thu, Dec 10 at 4:00 PM");
+        // The tooltip keeps its existing detail text, expiry included.
+        QCOMPARE(kindDetailText(facts, weekly, QString()),
+            QString("1 weekly reset · Refills Weekly and Fable"));
+        QCOMPARE(kindDetailText(facts, weekly, expires),
+            QString("1 weekly reset · Refills Weekly and Fable · Expires Thu, Dec 10 at 4:00 PM"));
+        // Without a grant there is no wording to show.
+        QVERIFY(kindNextText(weekly, expires).isEmpty());
+        QVERIFY(kindUseNowText(weekly, expires).isEmpty());
+        weekly.hasNext = true;
+        weekly.nextLabel = QStringLiteral("One full limit reset (November 2026)");
+        const QString quoted = QString(QChar(0x201C)) + weekly.nextLabel + QChar(0x201D);
+        QCOMPARE(kindNextText(weekly, expires),
+            QStringLiteral("Next: %1, expires %2").arg(quoted, expires));
+        QCOMPARE(kindUseNowText(weekly, expires),
+            QStringLiteral("Uses %1, which expires %2.").arg(quoted, expires));
+        // An empty label falls back to our name for the kind; no expiry drops
+        // the clause entirely.
+        weekly.nextLabel.clear();
+        QCOMPARE(kindNextText(weekly, QString()), QString("Next: one weekly reset"));
+        QCOMPARE(kindUseNowText(weekly, QString()), QString("Uses one weekly reset."));
+        QCOMPARE(kindUseNowText(weekly, expires),
+            QString("Uses one weekly reset, which expires Thu, Dec 10 at 4:00 PM."));
+    }
     void kindTriggerBucketsRespectNarrowerOwnership() {
         Facts facts = kinded(baseline(Provider::Claude, 100));
         QCOMPARE(triggerBuckets(facts, "weekly"), (QStringList{"weekly"}));

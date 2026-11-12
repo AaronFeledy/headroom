@@ -898,6 +898,53 @@ private slots:
             QCOMPARE(credits["available_count"].toLongLong(), qint64(3));
         }
     }
+    void resetKindContentServesAnyProviderRow() {
+        QTemporaryDir dir;
+        const QJsonArray kinds{
+            TestUsage::claudeResetKind("weekly", "weekly reset", 1, true, {"weekly", "weekly_fable"}, false,
+                "2026-12-10T22:00:00Z"),
+            TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)};
+        ControllerFixture controller(dir.filePath("settings.json"), TestUsage::snapshotWithClaudeKinds(40, 60, kinds));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        const auto content = controller.resetKindContent("Claude");
+        QCOMPARE(content["countText"].toString(), QString("1 weekly reset · 2 Fable resets"));
+        QCOMPARE(content["lines"].toString(), QString("1 weekly reset\n2 Fable resets"));
+        QVERIFY(content["details"].toString().contains("Refills Weekly and Fable"));
+        QVERIFY(content["details"].toString().contains("Returns what Fable used to your weekly limit"));
+        QVERIFY(content["details"].toString().contains("Expires "));
+        // The options map carries grant wording only for a kind that has one.
+        auto granted = kinds;
+        auto first = granted[0].toObject();
+        first["next"] = QJsonObject{{"label", "One full limit reset (November 2026)"},
+            {"expires_at", "2026-12-10T22:00:00Z"}};
+        granted[0] = first;
+        controller.replaceSnapshot(TestUsage::snapshotWithClaudeKinds(40, 60, granted));
+        QVERIFY(controller.prepareReset("Claude"));
+        auto action = controller.resetAction();
+        const auto weekly = action["kinds"].toList().first().toMap();
+        QVERIFY(weekly["nextText"].toString().startsWith("Next: "));
+        QVERIFY(weekly["nextText"].toString().contains("One full limit reset (November 2026)"));
+        QVERIFY(action["useNowGrant"].toString().isEmpty());
+        QVERIFY(controller.selectResetKind("weekly"));
+        action = controller.resetAction();
+        QVERIFY(action["useNowGrant"].toString().startsWith("Uses "));
+        QVERIFY(action["useNowGrant"].toString().contains("One full limit reset (November 2026)"));
+        controller.cancelResetConfirmation();
+        // A multi-account row serves its own reading, though it has no action.
+        QTemporaryDir workDir;
+        auto rows = QJsonDocument::fromJson(TestUsage::snapshotWithClaudeKinds(40, 60, kinds)).array();
+        auto work = rows[0].toObject();
+        work["provider_name"] = "Claude (Work)";
+        work["provider_type"] = "Claude";
+        work["account"] = QJsonObject{{"id", "work"}, {"label", "Work"}};
+        rows[0] = work;
+        ControllerFixture multi(workDir.filePath("settings.json"), QJsonDocument(rows).toJson());
+        QTRY_COMPARE(multi.providers().size(), 4);
+        const auto row = multi.resetKindContent("Claude (Work)");
+        QCOMPARE(row["countText"].toString(), QString("1 weekly reset · 2 Fable resets"));
+        QCOMPARE(row["lines"].toString(), QString("1 weekly reset\n2 Fable resets"));
+        QVERIFY(row["details"].toString().contains("Refills Weekly and Fable"));
+    }
     void malformedMeters() {
         auto list = QJsonDocument::fromJson(TestUsage::snapshot()).array();
         auto p = list[0].toObject(); auto buckets = p["buckets"].toArray(); auto b = buckets[0].toObject();

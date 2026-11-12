@@ -75,6 +75,9 @@ public:
     Q_INVOKABLE virtual void requestRefresh();
     Q_INVOKABLE QString readingAgeLabel(qint64 observedAt) const;
     QVariantMap resetAction() const;
+    // Display-ready kind text for one provider row, including read-only rows
+    // with no reset action. Composed only by the reset policy.
+    Q_INVOKABLE QVariantMap resetKindContent(const QString &name) const;
     // DO NOT test this button, endpoint, or any code that could trigger a reset.
     // A reset is valuable and irreversible; the skip-only tests are intentional.
     Q_INVOKABLE bool prepareReset(const QString &provider);
