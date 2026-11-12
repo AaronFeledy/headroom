@@ -272,10 +272,11 @@ bool SshTransport::allowsRequest(const QByteArray &method, const QString &path)
 
 bool SshTransport::allowsBody(const QByteArray &method, const QString &path)
 {
-    return !(method == "GET"
-        || (method == "POST" && path == QStringLiteral("/api/v1/usage/refresh"))
-        || (method == "DELETE" && (path == QStringLiteral("/api/v1/providers/codex/reset/automatic")
-            || path == QStringLiteral("/api/v1/providers/claude/reset/automatic"))));
+    if (method == "GET") return false;
+    if (method == "POST" && path == QStringLiteral("/api/v1/usage/refresh")) return false;
+    if (method == "DELETE" && (path == QStringLiteral("/api/v1/providers/codex/reset/automatic")
+        || path == QStringLiteral("/api/v1/providers/claude/reset/automatic"))) return false;
+    return true;
 }
 
 QStringList SshTransport::arguments(const QUrl &address)

@@ -123,29 +123,45 @@ void Notifications::observeAutomaticReset(const QString &provider, const QVarian
             : QStringLiteral("An automatic reset was used (%1).").arg(kind);
         severity = 0;
     } else if (type == "completed") {
-        const QString answer = outcome == "already_redeemed" ? QStringLiteral("the reset was already redeemed")
-            : outcome == "nothing_to_reset" ? QStringLiteral("there was no usage to reset")
-            : outcome == "no_credit" ? QStringLiteral("no banked reset was available")
-            : outcome == "unavailable" ? QStringLiteral("the reset was not applied")
-            : outcome.isEmpty() ? QStringLiteral("the provider gave no answer")
-            : QStringLiteral("the provider answered %1").arg(outcome);
+        QString answer;
+        if (outcome == "already_redeemed")
+            answer = QStringLiteral("the reset was already redeemed");
+        else if (outcome == "nothing_to_reset")
+            answer = QStringLiteral("there was no usage to reset");
+        else if (outcome == "no_credit")
+            answer = QStringLiteral("no banked reset was available");
+        else if (outcome == "unavailable")
+            answer = QStringLiteral("the reset was not applied");
+        else if (outcome.isEmpty())
+            answer = QStringLiteral("the provider gave no answer");
+        else
+            answer = QStringLiteral("the provider answered %1").arg(outcome);
         message = QStringLiteral("An automatic reset was requested, but %1.").arg(answer);
-    } else if (type == "failed" && reason == "outcome_unknown") {
-        message = QStringLiteral("The automatic reset result is unknown. Check the provider.");
-        severity = 2;
     } else if (type == "failed") {
-        message = reason == "refused" ? QStringLiteral("The automatic reset could not be requested because the provider refused. No reset was used.")
-            : reason == "state_unavailable" ? QStringLiteral("The automatic reset could not be requested because the server state was unavailable. No reset was used.")
-            : QStringLiteral("The automatic reset could not be requested. No reset was used.");
+        if (reason == "outcome_unknown")
+            message = QStringLiteral("The automatic reset result is unknown. Check the provider.");
+        else if (reason == "refused")
+            message = QStringLiteral("The automatic reset could not be requested because the provider refused. No reset was used.");
+        else if (reason == "state_unavailable")
+            message = QStringLiteral("The automatic reset could not be requested because the server state was unavailable. No reset was used.");
+        else
+            message = QStringLiteral("The automatic reset could not be requested. No reset was used.");
         severity = 2;
     } else if (type == "canceled") {
-        message = reason == "window_ended" ? QStringLiteral("Automatic reset canceled because the weekly window ended.")
-            : reason == "identity_changed" ? QStringLiteral("Automatic reset canceled because the account or weekly window changed.")
-            : reason == "kind_unavailable" ? QStringLiteral("Automatic reset canceled because that banked reset is no longer available.")
-            : reason == "no_trigger" ? QStringLiteral("Automatic reset canceled because it no longer applies to a usage meter.")
-            : reason == "below_floor" ? QStringLiteral("Automatic reset canceled because weekly usage is below 90%.")
-            : reason == "no_credits" ? QStringLiteral("Automatic reset canceled because no banked resets are available.")
-            : QStringLiteral("Automatic reset canceled. No reset was requested.");
+        if (reason == "window_ended")
+            message = QStringLiteral("Automatic reset canceled because the weekly window ended.");
+        else if (reason == "identity_changed")
+            message = QStringLiteral("Automatic reset canceled because the account or weekly window changed.");
+        else if (reason == "kind_unavailable")
+            message = QStringLiteral("Automatic reset canceled because that banked reset is no longer available.");
+        else if (reason == "no_trigger")
+            message = QStringLiteral("Automatic reset canceled because it no longer applies to a usage meter.");
+        else if (reason == "below_floor")
+            message = QStringLiteral("Automatic reset canceled because weekly usage is below 90%.");
+        else if (reason == "no_credits")
+            message = QStringLiteral("Automatic reset canceled because no banked resets are available.");
+        else
+            message = QStringLiteral("Automatic reset canceled. No reset was requested.");
     } else {
         return;
     }

@@ -197,7 +197,9 @@ void Controller::verifyRemote(bool upgrade) {
         const QString error = m_settingsService.save(updated);
         if (!error.isEmpty()) { fail(QStringLiteral("The verified server certificate could not be saved."), QStringLiteral("settings")); return; }
         m_url = m_settingsService.value().url;
-        cancelResetRequest(); cancelAutomationRequest(); m_notificationCenter.resetAutomaticResetBaseline();
+        cancelResetRequest();
+        cancelAutomationRequest();
+        m_notificationCenter.resetAutomaticResetBaseline();
         invalidateConnection(); m_network.clearConnectionCache(); syncConnection();
         log(QStringLiteral("Connection"), upgrade ? QStringLiteral("Connection upgraded to HTTPS.")
             : rotation ? QStringLiteral("The server certificate changed and was verified with your access token.")
@@ -495,7 +497,17 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (connectionChanged) { m_proofAttempted = false; m_nextUpgradeAttempt = 0; invalidateConnection(); }
     m_network.clearConnectionCache();
     m_waitingForUsageRetry = false;
-    if (connectionChanged) { m_providers.clear(); m_maskedProviders.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); m_notificationCenter.resetBankedResetBaseline(); m_notificationCenter.resetUsageBaseline(); m_notificationCenter.resetAutomaticResetBaseline(); cancelAutomationRequest(); }
+    if (connectionChanged) {
+        m_providers.clear();
+        m_maskedProviders.clear();
+        m_lastGood = 0;
+        m_warningStates.clear();
+        m_concerns.clear();
+        m_notificationCenter.resetBankedResetBaseline();
+        m_notificationCenter.resetUsageBaseline();
+        m_notificationCenter.resetAutomaticResetBaseline();
+        cancelAutomationRequest();
+    }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
     syncConnection();
