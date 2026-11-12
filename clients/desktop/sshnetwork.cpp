@@ -25,25 +25,6 @@ bool containsUnsafe(const QString &value)
     });
 }
 
-// An explicit provider refresh is the only POST that carries no body.
-bool bodilessRequest(const QByteArray &method, const QString &path)
-{
-    return method == "GET" || (method == "POST" && path == QStringLiteral("/api/v1/usage/refresh"));
-}
-
-bool allowed(const QByteArray &method, const QString &path)
-{
-    if (method == "GET") return path == QStringLiteral("/api/v1/usage") || path == QStringLiteral("/api/v1/health");
-    if (method == "PUT") return path == QStringLiteral("/api/v1/providers/cursor/credentials")
-        || path == QStringLiteral("/api/v1/providers/grok/credentials");
-    // DO NOT test the reset endpoint or any code that could trigger a valuable banked reset.
-    // This prohibition also covers Claude forwarding, even with fixtures or fakes.
-    if (method == "POST") return path == QStringLiteral("/api/v1/providers/codex/reset")
-        || path == QStringLiteral("/api/v1/providers/claude/reset")
-        || path == QStringLiteral("/api/v1/usage/refresh");
-    return false;
-}
-
 bool hasExactUniqueKeys(const QByteArray &json, const QSet<QString> &expected)
 {
     QSet<QString> seen;
@@ -90,20 +71,21 @@ public:
 
         const QByteArray method = operation == QNetworkAccessManager::GetOperation ? QByteArrayLiteral("GET")
             : operation == QNetworkAccessManager::PutOperation ? QByteArrayLiteral("PUT")
-            : operation == QNetworkAccessManager::PostOperation ? QByteArrayLiteral("POST") : QByteArray();
+            : operation == QNetworkAccessManager::PostOperation ? QByteArrayLiteral("POST")
+            : operation == QNetworkAccessManager::DeleteOperation ? QByteArrayLiteral("DELETE") : QByteArray();
         const QString path = request.url().path(QUrl::FullyDecoded);
         const bool resetRequest = method == QByteArrayLiteral("POST")
             && (path == QStringLiteral("/api/v1/providers/codex/reset")
                 || path == QStringLiteral("/api/v1/providers/claude/reset"));
         QUrl address;
         if (!SshTransport::parseAddress(request.url().adjusted(QUrl::RemovePath).toString(QUrl::FullyEncoded), &address)
-            || !allowed(method, path)) {
+            || !SshTransport::allowsRequest(method, path)) {
             QTimer::singleShot(0, this, [this] { fail(QNetworkReply::ProtocolInvalidOperationError); });
             return;
         }
         QByteArray body;
         if (outgoingData) body = outgoingData->read(maximumBodyBytes + 1);
-        if ((bodilessRequest(method, path) && !body.isEmpty()) || body.size() > maximumBodyBytes) {
+        if ((!SshTransport::allowsBody(method, path) && !body.isEmpty()) || body.size() > maximumBodyBytes) {
             body.fill('\0');
             QTimer::singleShot(0, this, [this] { fail(QNetworkReply::ContentOperationNotPermittedError); });
             return;
@@ -269,6 +251,31 @@ bool SshTransport::parseAddress(const QString &address, QUrl *normalized, QStrin
     if (normalized) *normalized = clean;
     if (error) error->clear();
     return true;
+}
+
+bool SshTransport::allowsRequest(const QByteArray &method, const QString &path)
+{
+    if (method == "GET") return path == QStringLiteral("/api/v1/usage") || path == QStringLiteral("/api/v1/health");
+    if (method == "PUT") return path == QStringLiteral("/api/v1/providers/cursor/credentials")
+        || path == QStringLiteral("/api/v1/providers/grok/credentials")
+        || path == QStringLiteral("/api/v1/providers/codex/reset/automatic")
+        || path == QStringLiteral("/api/v1/providers/claude/reset/automatic");
+    // DO NOT test the reset endpoint or any code that could trigger a valuable banked reset.
+    // This prohibition also covers Claude forwarding, even with fixtures or fakes.
+    if (method == "POST") return path == QStringLiteral("/api/v1/providers/codex/reset")
+        || path == QStringLiteral("/api/v1/providers/claude/reset")
+        || path == QStringLiteral("/api/v1/usage/refresh");
+    if (method == "DELETE") return path == QStringLiteral("/api/v1/providers/codex/reset/automatic")
+        || path == QStringLiteral("/api/v1/providers/claude/reset/automatic");
+    return false;
+}
+
+bool SshTransport::allowsBody(const QByteArray &method, const QString &path)
+{
+    return !(method == "GET"
+        || (method == "POST" && path == QStringLiteral("/api/v1/usage/refresh"))
+        || (method == "DELETE" && (path == QStringLiteral("/api/v1/providers/codex/reset/automatic")
+            || path == QStringLiteral("/api/v1/providers/claude/reset/automatic"))));
 }
 
 QStringList SshTransport::arguments(const QUrl &address)
