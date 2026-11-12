@@ -1291,7 +1291,9 @@ private slots:
         const QString captureDir = requested.isEmpty() ? dir.path() : requested;
         QVERIFY(QDir().mkpath(captureDir));
         for (int width : {460, 1000}) {
-            window->resize(width, 1000); QTest::qWait(100);
+            QSignalSpy frame(window, &QQuickWindow::frameSwapped);
+            window->resize(width, 1000); window->requestUpdate();
+            QVERIFY(frame.wait(2000));
             QVERIFY(window->grabWindow().save(QDir(captureDir).filePath(
                 QString("headroom-claude-automatic-arm-%1.png").arg(width))));
         }

@@ -743,8 +743,8 @@ private slots:
         QCOMPARE(first["refills"].toStringList(), (QStringList{"weekly", "weekly_fable"}));
         QCOMPARE(first["gives_back_weekly"].toBool(), false);
         QCOMPARE(first["expires_at"].toString(), QString("2026-12-10T22:00:00Z"));
-        QVERIFY(!first.contains("extra"));
         const auto second = kinds[1].toMap();
+        QVERIFY(!second.contains("extra"));
         QVERIFY(second["expires_at"].isNull());
         QCOMPARE(second["gives_back_weekly"].toBool(), true);
         auto absentGivesBack = TestUsage::claudeResetKind("session", "5-hour reset", 1, true, {"session"});
