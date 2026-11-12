@@ -509,7 +509,8 @@ bool Controller::scheduleReset() {
     const ServerConnection transport = resetTransport();
     QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
         : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
-    m_resetConfirmation.clear();
+    // Sending the arm request keeps the open dialog bound: a failed or
+    // aborted request must not lock it until it is closed and reopened.
     m_resetMessage = "Setting the automatic reset…";
     emit changed();
     auto reply = network->put(request, body);
