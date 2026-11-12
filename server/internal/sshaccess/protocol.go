@@ -167,6 +167,12 @@ func allowedRequest(request requestFrame) bool {
 	// button, endpoint, or code that may trigger it. Its skipped test is intentional.
 	case "POST /api/v1/providers/codex/reset", "POST /api/v1/providers/claude/reset":
 		return true
+	// Automatic reset state carries no provider request and is bounded like the
+	// manual route. DELETE must not carry a body.
+	case "PUT /api/v1/providers/codex/reset/automatic", "PUT /api/v1/providers/claude/reset/automatic":
+		return true
+	case "DELETE /api/v1/providers/codex/reset/automatic", "DELETE /api/v1/providers/claude/reset/automatic":
+		return len(request.Body) == 0
 	default:
 		return false
 	}
