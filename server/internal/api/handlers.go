@@ -141,6 +141,9 @@ func (h *handler) providerReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
 		return
 	}
+	// A manual reset replaces any armed automatic authorization. A cancel
+	// failure never blocks the manual reset; this is a preference.
+	h.automation.CancelManualReset(resetCtx, provider)
 	result := h.reset.Execute(resetCtx, provider, ResetRequest{
 		RequestID:          strings.ToLower(request.RequestID),
 		AccountFingerprint: request.AccountFingerprint,

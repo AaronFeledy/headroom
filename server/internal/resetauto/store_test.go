@@ -138,13 +138,13 @@ func Test_Store_cancel_is_idempotent_and_keeps_the_last_event(t *testing.T) {
 	}
 
 	// When
-	canceled, err := store.CancelUser(context.Background(), ProviderCodex)
+	canceled, err := store.Cancel(context.Background(), ProviderCodex, ReasonUser)
 
 	// Then
 	if err != nil || canceled.Armed() || canceled.LastEvent == nil || canceled.LastEvent.Reason == nil || *canceled.LastEvent.Reason != ReasonUser {
 		t.Fatalf("canceled = %+v, error=%v", canceled, err)
 	}
-	again, err := store.CancelUser(context.Background(), ProviderCodex)
+	again, err := store.Cancel(context.Background(), ProviderCodex, ReasonUser)
 	if err != nil || again.LastEvent == nil || *again.LastEvent.Reason != ReasonUser {
 		t.Fatalf("repeated cancel = %+v, error=%v", again, err)
 	}
@@ -287,5 +287,37 @@ func Test_Store_expired_authorization_does_not_block_a_new_arm(t *testing.T) {
 	}
 	if err := store.BeginFire(context.Background(), ProviderCodex, first, ""); !errors.Is(err, ErrStaleAuthorization) {
 		t.Fatalf("expired authorization fired: %v", err)
+	}
+}
+
+func Test_Store_manual_reset_cancel_records_only_when_armed(t *testing.T) {
+	// Given
+	store := newTestStore(t)
+
+	// When nothing is armed, cancel is a no-op that writes no state.
+	record, err := store.Cancel(context.Background(), ProviderClaude, ReasonManualReset)
+
+	// Then
+	if err != nil || record.Armed() || record.LastEvent != nil {
+		t.Fatalf("cancel with nothing armed = %+v, error=%v", record, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(store.dir, stateFileName)); !os.IsNotExist(statErr) {
+		t.Fatalf("manual reset cancel wrote state without an authorization: %v", statErr)
+	}
+
+	// Given an armed authorization, the manual reset records the new reason.
+	if _, err := store.Arm(context.Background(), ProviderClaude, testArmRequest()); err != nil {
+		t.Fatal(err)
+	}
+
+	// When
+	canceled, err := store.Cancel(context.Background(), ProviderClaude, ReasonManualReset)
+
+	// Then
+	if err != nil || canceled.Armed() {
+		t.Fatalf("canceled = %+v, error=%v", canceled, err)
+	}
+	if canceled.LastEvent == nil || canceled.LastEvent.Event != "canceled" || canceled.LastEvent.Reason == nil || *canceled.LastEvent.Reason != ReasonManualReset {
+		t.Fatalf("manual reset event = %+v", canceled.LastEvent)
 	}
 }

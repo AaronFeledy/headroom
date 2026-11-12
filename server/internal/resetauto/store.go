@@ -111,10 +111,10 @@ func (s *Store) Arm(ctx context.Context, provider string, request ArmRequest) (R
 	return record, nil
 }
 
-// CancelUser cancels whatever is armed and records user cancellation. It is
+// Cancel cancels whatever is armed and records the caller's reason. It is
 // idempotent: when nothing is armed it returns the existing record unchanged.
-func (s *Store) CancelUser(ctx context.Context, provider string) (Record, error) {
-	return s.cancel(ctx, provider, ReasonUser, nil)
+func (s *Store) Cancel(ctx context.Context, provider, reason string) (Record, error) {
+	return s.cancel(ctx, provider, reason, nil)
 }
 
 // CancelIfEvaluation cancels only the authorization the evaluator observed.

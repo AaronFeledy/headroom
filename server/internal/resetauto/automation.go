@@ -16,6 +16,9 @@ import (
 const (
 	// ReasonUser reports an explicit cancellation by the owner.
 	ReasonUser = "user"
+	// ReasonManualReset reports that an explicit manual reset replaced the
+	// automatic authorization.
+	ReasonManualReset = "manual_reset"
 
 	// Failure reason codes reported when a fired spend does not complete cleanly.
 	ReasonOutcomeUnknown   = "outcome_unknown"
@@ -173,11 +176,27 @@ func (a *Automation) Cancel(ctx context.Context, provider string) (*usage.ResetA
 	if a == nil || !a.store.Available() {
 		return nil, ErrStateUnavailable
 	}
-	record, err := a.store.CancelUser(ctx, provider)
+	record, err := a.store.Cancel(ctx, provider, ReasonUser)
 	if err != nil {
 		return nil, err
 	}
 	return Project(record, a.now().UTC()), nil
+}
+
+// CancelManualReset applies the preference that pressing the manual reset
+// button replaces an armed automatic authorization. Failure is logged and the
+// manual reset continues: this is a preference, not a spend guard.
+func (a *Automation) CancelManualReset(ctx context.Context, provider string) {
+	if a == nil {
+		return
+	}
+	if !a.store.Available() {
+		a.log("automatic reset cancel unavailable", provider, ErrStateUnavailable)
+		return
+	}
+	if _, err := a.store.Cancel(ctx, provider, ReasonManualReset); err != nil {
+		a.log("automatic reset cancel failed", provider, err)
+	}
 }
 
 // State reports the stored authorization. The bool is false when automation is
