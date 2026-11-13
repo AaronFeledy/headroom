@@ -87,6 +87,13 @@ ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
 allowance produces one `weekly` bucket; an absent five-hour window does not
 produce a `session` bucket. A reported window with zero usage remains visible.
 
+Claude meters follow the windows returned by Anthropic in the same way: a plan
+with no five-hour limit reports `weekly` and any `weekly_*` meters without a
+`session` bucket. Claude's `subtitle` is the plan name Anthropic's profile
+reports for the current sign-in, for example `Ultra`. The server reads that
+profile only alongside banked-reset status; without a reported plan name, the
+subtitle is the plan saved in the credentials file.
+
 Successful ChatGPT (`Codex`) usage entries include read-only
 `rate_limit_reset_credits` metadata when the upstream response reports a valid
 banked-reset count. It contains `available_count` and a nullable, opaque
@@ -308,8 +315,8 @@ weekly window changes, a saved kind is unavailable, no saved kind applies, the
 Codex weekly floor is no longer met, or no credits remain. At a full percent
 meter it fires the first applicable saved kind that is usable now, preferring
 kinds whose `refills` name that meter (fewer names first) and putting weekly
-give-backs last. The synthesized session copy of a weekly window is never
-treated as a session limit. Firing disarms and records `requested` under the
+give-backs last. Only a real session window is treated as a session limit.
+Firing disarms and records `requested` under the
 lock before spending; the spend uses the same single cross-provider gate,
 eligibility check, consume call, and delayed refresh as a manual reset. The
 authorization is gone whatever happens next, so nothing is ever retried.
