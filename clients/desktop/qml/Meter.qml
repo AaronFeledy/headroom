@@ -14,8 +14,6 @@ ColumnLayout {
     property var notificationViewport: null
     property bool presentingNotifications: false
     property color accent: Theme.purple
-    property Component footerAccessory: null
-    property bool footerAccessoryVisible: false
     property var concern: { meter.clock; return backend.concern(providerName, bucket) }
     property bool warning: concern.severity > 0
     property color usageColor: concern.color || Theme.purple
@@ -142,7 +140,7 @@ ColumnLayout {
     GridLayout {
         id: meterFooter
         Layout.fillWidth: true
-        // Keep countdowns or status beside pace when the complete footer fits, including accessories.
+        // Keep countdowns or status beside pace when the complete footer fits.
         readonly property bool inlineReset: !meter.statusOnly && (resetLabel.visible || statusLabel.visible)
             && width >= Math.ceil(paceLabel.implicitWidth) + Math.ceil(resetDetails.implicitWidth) + columnSpacing
         columns: inlineReset ? 2 : 1
@@ -160,69 +158,45 @@ ColumnLayout {
             ToolTip.visible: paceHover.hovered
             ToolTip.text: meter.stale ? meter.usageDetails : meter.concern.detail
         }
-        Item {
-            id: resetDetailsHost
+        RowLayout {
+            id: resetDetails
+            objectName: "meterResetDetails_" + meter.providerName + "_" + meter.bucket.id
             Layout.fillWidth: !meterFooter.inlineReset
             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-            implicitWidth: resetDetails.implicitWidth
-            implicitHeight: resetDetails.implicitHeight
-            RowLayout {
-                id: resetDetails
-                objectName: "meterResetDetails_" + meter.providerName + "_" + meter.bucket.id
-                anchors.fill: parent
-                spacing: 8
-                Text {
-                    id: resetLabel
-                    objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
-                    visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
-                    text: {
-                        meter.clock
-                        if (!meter.stale) return backend.countdown(meter.bucket.resets_at || "")
-                        // Historical reading: name the scheduled time without implying the allowance has refilled.
-                        const when = backend.resetTimeLabel(meter.bucket.resets_at || "")
-                        if (!when) return "No scheduled reset"
-                        return (new Date(meter.bucket.resets_at).getTime() > Date.now() ? "Resets " : "Reset was due ") + when
-                    }
-                    color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
-                    HoverHandler { id: resetHover }
-                    MeterToolTip {
-                        visible: resetHover.hovered && meter.billingDetails.length > 0
-                        text: meter.billingDetails
-                    }
+            spacing: 8
+            Text {
+                id: resetLabel
+                objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
+                visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
+                text: {
+                    meter.clock
+                    if (!meter.stale) return backend.countdown(meter.bucket.resets_at || "")
+                    // Historical reading: name the scheduled time without implying the allowance has refilled.
+                    const when = backend.resetTimeLabel(meter.bucket.resets_at || "")
+                    if (!when) return "No scheduled reset"
+                    return (new Date(meter.bucket.resets_at).getTime() > Date.now() ? "Resets " : "Reset was due ") + when
                 }
-                Text {
-                    id: statusLabel
-                    visible: !!meter.bucket.status_text && !!meter.bucket.status_text.trim()
-                    objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
-                    textFormat: Text.PlainText
-                    text: meter.bucket.status_text || ""
-                    Accessible.description: meter.billingDetails
-                    HoverHandler { id: statusHover }
-                    MeterToolTip {
-                        objectName: "meterBillingTooltip_" + meter.providerName + "_" + meter.bucket.id
-                        visible: statusHover.hovered && meter.billingDetails.length > 0
-                        text: meter.billingDetails
-                    }
-                    color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
-                }
-                Item {
-                    visible: meter.footerAccessoryVisible
-                    implicitWidth: accessoryOverlay.implicitWidth
-                    implicitHeight: accessoryOverlay.implicitHeight
-                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                HoverHandler { id: resetHover }
+                MeterToolTip {
+                    visible: resetHover.hovered && meter.billingDetails.length > 0
+                    text: meter.billingDetails
                 }
             }
-            // Only the visible slot above participates in layout. Keep the
-            // accessory loaded here so its transient delta can float at zero.
-            Loader {
-                id: accessoryOverlay
-                sourceComponent: meter.footerAccessory
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                // An accessory that asks for it is told how wide the meter is,
-                // so it can lay itself out without extending past the meter.
-                onLoaded: if (item && item.availableWidth !== undefined)
-                    item.availableWidth = Qt.binding(() => meterFooter.width)
+            Text {
+                id: statusLabel
+                visible: !!meter.bucket.status_text && !!meter.bucket.status_text.trim()
+                objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
+                textFormat: Text.PlainText
+                text: meter.bucket.status_text || ""
+                Accessible.description: meter.billingDetails
+                HoverHandler { id: statusHover }
+                MeterToolTip {
+                    objectName: "meterBillingTooltip_" + meter.providerName + "_" + meter.bucket.id
+                    visible: statusHover.hovered && meter.billingDetails.length > 0
+                    text: meter.billingDetails
+                }
+                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
             }
         }
     }

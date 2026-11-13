@@ -361,8 +361,7 @@ QVariantMap Controller::resetKindContent(const QString &name) const {
         counts.append(ResetPolicy::kindCountText(kind));
         details.append(ResetPolicy::kindDetailText(facts, kind, Usage::resetTimeLabel(kind.expiresAt)));
     }
-    return {{"countText", counts.join(separator)}, {"lines", counts.join(QChar('\n'))},
-        {"details", details.join(QChar('\n'))}};
+    return {{"countText", counts.join(separator)}, {"details", details.join(QChar('\n'))}};
 }
 
 bool Controller::prepareReset(const QString &provider) {

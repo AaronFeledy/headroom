@@ -519,7 +519,7 @@ automatic authorization but leaves **Use now** disabled until one kind is named;
 choosing a kind limits the automatic authorization to that kind. A chosen kind
 that leaves the reading is cleared, never swapped for another kind. The redeem
 request carries the chosen kind only for a reading that lists kinds. ChatGPT
-keeps the total-count label and its existing request.
+has no kind breakdown and keeps its existing request.
 For either provider, **Options…** appears at 90% usage when an account-bound
 banked reset is available. An active automatic choice or pending request keeps
 its management controls available. The options separate **Use now** from

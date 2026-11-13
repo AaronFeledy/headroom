@@ -957,6 +957,13 @@ private slots:
         QTRY_COMPARE(window->property("filter").toString(), "All providers");
         auto delta = [&]() { return findItem(window->contentItem(), "bankedResetDelta_Codex"); };
         auto counter = [&]() { return findItem(window->contentItem(), "bankedResets_Codex"); };
+        auto card = [&]() { return findItem(window->contentItem(), "providerCard_Codex"); };
+        // The count sits in the header, so its delta must rise inside its own
+        // card rather than over the previous provider or past the scroll view.
+        auto deltaInsideCard = [&]() {
+            const QRectF bounds = delta()->mapRectToItem(card(), QRectF(QPointF(), delta()->size()));
+            return QRectF(QPointF(), card()->size()).contains(bounds);
+        };
         QTRY_VERIFY(delta() && delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), "+1");
         QCOMPARE(counter()->property("text").toString(), "4 resets");
@@ -971,6 +978,7 @@ private slots:
         }
         QTRY_VERIFY(!delta()->property("running").toBool());
         QCOMPARE(delta()->opacity(), 0.0);
+        QVERIFY(deltaInsideCard());
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 4, reset));
         QTest::qWait(100); QVERIFY(!delta()->property("running").toBool());
         window->hide(); window->show(); window->requestActivate();
@@ -989,11 +997,16 @@ private slots:
         QVERIFY(delta()->isVisible());
         QTRY_VERIFY(!delta()->property("running").toBool());
         QVERIFY(!counter()->isVisible());
+        QVERIFY(deltaInsideCard());
+        // At zero the header's reset slot takes no width and adds no spacing.
+        auto header = findItem(window->contentItem(), "providerHeader_Codex"); QVERIFY(header);
+        auto identity = findItem(window->contentItem(), "providerIdentityGroup_Codex"); QVERIFY(identity);
+        QTRY_COMPARE(header->size(), identity->size());
         auto countdown = [&]() { return findItem(window->contentItem(), "meterReset_Codex_weekly"); };
         auto details = [&]() { return findItem(window->contentItem(), "meterResetDetails_Codex_weekly"); };
         QVERIFY(countdown()); QVERIFY(details());
-        // Zero must have exactly the same footer layout as no counter at all,
-        // including no accessory spacing and no change to inline/wrapped layout.
+        // Zero must leave the meter footer exactly as it is with no counter at
+        // all, with no change to inline/wrapped layout.
         QTRY_COMPARE(details()->implicitWidth(), std::ceil(countdown()->implicitWidth()));
         const auto zeroCountdown = QRectF(countdown()->mapToScene(QPointF()), countdown()->size());
         if (!capture.isEmpty())
@@ -1019,7 +1032,6 @@ private slots:
         QTRY_VERIFY(delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), QString::fromUtf8("−1"));
         QTRY_VERIFY(!delta()->property("running").toBool());
-        auto card = [&]() { return findItem(window->contentItem(), "providerCard_Codex"); };
         QVERIFY(card());
         const auto zeroHeaderSize = card()->size();
         codex.remove("rate_limit_reset_credits"); providers[1] = codex;
@@ -1224,7 +1236,7 @@ private slots:
         auto header = findItem(window->contentItem(), "providerHeader_Claude"); QVERIFY(header);
         auto control = findItem(window->contentItem(), "bankedResetControl_Claude"); QVERIFY(control);
         auto leftEdge = [&](QQuickItem *item) { return item->mapToItem(window->contentItem(), QPointF(0, 0)).x(); };
-        QTRY_VERIFY2(!label()->property("truncated").toBool(), "the kind breakdown is elided");
+        QTRY_VERIFY2(!label()->property("truncated").toBool(), "the reset count is elided");
         QTRY_VERIFY(leftEdge(label()) >= leftEdge(card));
         QTRY_VERIFY(qAbs(control->mapToItem(card, QPointF(control->width(), 0)).x() - (card->width() - 18)) < 1);
         QTRY_VERIFY(control->mapToItem(card, QPointF()).y() < header->mapToItem(card, QPointF(header->width(), header->height())).y());

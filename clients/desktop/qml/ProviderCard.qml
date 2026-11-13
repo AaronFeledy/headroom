@@ -37,7 +37,7 @@ Rectangle {
     property bool hasResetCount: countsResets && !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count >= 0
     property bool hasBankedResets: hasResetCount && resetCredits.available_count > 0
-    // The server's additive kind breakdown is shown when it is a real list;
+    // The server's additive kind breakdown describes the count when it is a real list;
     // null, absent, or an empty list keeps the legacy total-count text.
     readonly property var resetKinds: (resetCredits && resetCredits.kinds) || []
     readonly property bool hasKindBreakdown: hasBankedResets && resetKinds.length > 0
@@ -84,7 +84,7 @@ Rectangle {
                     visible: card.hasBankedResets
                     textFormat: Text.PlainText
                     readonly property string detailText: card.resetKindDetails
-                    text: card.hasResetCount ? resetCredits.available_count + (resetCredits.available_count === 1 ? " reset" : " resets") : ""
+                    text: card.hasResetCount ? card.resetCredits.available_count + (card.resetCredits.available_count === 1 ? " reset" : " resets") : ""
                     color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
                     font.pixelSize: 11; elide: Text.ElideRight
                     horizontalAlignment: Text.AlignRight
@@ -108,8 +108,9 @@ Rectangle {
                     ToolTip.text: {
                         const lines = []
                         if (card.resetProvider) lines.push("Open " + card.displayName + " usage and reset controls")
-                        if (card.resetCountText.length) lines.push(card.resetCountText)
+                        // Kind details already start with each kind's count.
                         if (card.resetKindDetails.length) lines.push(card.resetKindDetails)
+                        else if (card.resetCountText.length) lines.push(card.resetCountText)
                         return lines.join("\n")
                     }
                 }
@@ -125,14 +126,19 @@ Rectangle {
                     objectName: "bankedResetDelta_" + card.name
                     property real delta: 0
                     property real rise: 0
+                    property real riseLimit: 0
                     readonly property bool running: floatAway.running
                     function play() {
                         const event = backend.notifications.presented.find(event => event.target === "bankedResets_" + card.name)
                         if (!event || !event.delta) return
                         delta = event.delta
+                        // The count sits in the header with little room above it, so
+                        // start on the count and rise no further than the card's top.
+                        rise = 0
+                        riseLimit = Math.min(32, Math.max(0, parent.mapToItem(card, 0, y).y))
                         floatAway.restart()
                     }
-                    anchors.right: parent.right; anchors.bottom: parent.top; anchors.bottomMargin: 2
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     text: delta > 0 ? "+" + delta : "−" + Math.abs(delta)
                     textFormat: Text.PlainText; color: delta > 0 ? Theme.green : Theme.orange
                     font.pixelSize: 24; font.weight: Font.Bold
@@ -147,7 +153,7 @@ Rectangle {
                     }
                     ParallelAnimation {
                         id: floatAway
-                        NumberAnimation { target: resetDelta; property: "rise"; from: 0; to: Theme.reducedMotion ? 0 : 32; duration: Theme.reducedMotion ? 0 : 1100; easing.type: Easing.OutCubic }
+                        NumberAnimation { target: resetDelta; property: "rise"; from: 0; to: Theme.reducedMotion ? 0 : resetDelta.riseLimit; duration: Theme.reducedMotion ? 0 : 1100; easing.type: Easing.OutCubic }
                         SequentialAnimation {
                             NumberAnimation { target: resetDelta; property: "opacity"; from: 0; to: 1; duration: 80 }
                             PauseAnimation { duration: 250 }
@@ -182,7 +188,14 @@ Rectangle {
                 implicitHeight: 22; implicitWidth: contentItem.implicitWidth + 12
                 padding: 4; font.pixelSize: 10
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                Accessible.name: card.resetState.phase === "armed" ? "Automatic reset at limit options" : card.resetState.phase === "paused" ? "Automatic reset paused options" : "Reset options"
+                Accessible.name: {
+                    switch (card.resetState.phase) {
+                    case "armed": return "Automatic reset at limit options"
+                    case "paused": return "Automatic reset paused options"
+                    case "submitting": case "reconciling": return text
+                    default: return "Reset options"
+                    }
+                }
                 Accessible.description: card.resetState.openReason || ""
                 ToolTip.visible: hovered && !enabled && ToolTip.text.length > 0
                 ToolTip.text: card.resetState.openReason || ""
@@ -279,57 +292,52 @@ Rectangle {
                 Layout.minimumWidth: 0
                 Layout.alignment: Qt.AlignTop
                 columns: card.stacked ? 2 : 1
-                columnSpacing: 8; rowSpacing: 6
-            RowLayout {
-                id: providerHeader
-                objectName: "providerHeader_" + card.name
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                Layout.alignment: Qt.AlignTop
-                spacing: 10
-                activeFocusOnTab: true
-                Accessible.description: card.pinned ? "Current tray meter" : ""
-                Rectangle {
-                    width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
-                    Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.providerType) >= 0 }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 1
-                    Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
-                    Item {
-                        Layout.fillWidth: true
-                        implicitHeight: headerMetadata.implicitHeight
-                        GridLayout {
-                            id: headerMetadata
-                            width: parent.width
-                            columns: 1
-                            Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                        }
+                // A zero-size slot still receives spacing, so drop it with the control.
+                columnSpacing: resetSlot.shown ? 8 : 0; rowSpacing: resetSlot.shown ? 6 : 0
+                RowLayout {
+                    id: providerHeader
+                    objectName: "providerHeader_" + card.name
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 10
+                    activeFocusOnTab: true
+                    Accessible.description: card.pinned ? "Current tray meter" : ""
+                    Rectangle {
+                        width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
+                        Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.providerType) >= 0 }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 1
+                        Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
+                        Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                    }
+                    ContextMenu.menu: orderMenu
+                    Menu {
+                        id: orderMenu; objectName: "providerMenu_" + card.name
+                        palette.window: Theme.surface; palette.windowText: Theme.foreground
+                        palette.light: Theme.selection; palette.midlight: Theme.selection
+                        palette.mid: Theme.selection; palette.dark: Theme.comment
+                        separatorsCollapsible: true
+                        onClosed: card.Window.window.restoreEscapeFocus()
+                        MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
                     }
                 }
-                ContextMenu.menu: orderMenu
-                Menu {
-                    id: orderMenu; objectName: "providerMenu_" + card.name
-                    palette.window: Theme.surface; palette.windowText: Theme.foreground
-                    palette.light: Theme.selection; palette.midlight: Theme.selection
-                    palette.mid: Theme.selection; palette.dark: Theme.comment
-                    separatorsCollapsible: true
-                    onClosed: card.Window.window.restoreEscapeFocus()
-                    MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
+                Item {
+                    id: resetSlot
+                    // Keep the loader alive at zero so its notification delta can float.
+                    // An empty slot stays on the right so that delta remains inside the card.
+                    readonly property bool shown: card.hasBankedResets || card.managingReset
+                    Layout.alignment: card.stacked || !shown ? Qt.AlignRight | Qt.AlignVCenter : Qt.AlignLeft | Qt.AlignTop
+                    implicitWidth: shown ? resetControl.implicitWidth : 0
+                    implicitHeight: shown ? resetControl.implicitHeight : 0
+                    Loader {
+                        id: resetControl
+                        objectName: "bankedResetControl_" + card.name
+                        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                        sourceComponent: bankedResetsControl
+                    }
                 }
-            }
-            Item {
-                // Keep the loader alive at zero so its notification delta can float.
-                Layout.alignment: card.stacked ? Qt.AlignRight | Qt.AlignVCenter : Qt.AlignLeft | Qt.AlignTop
-                implicitWidth: card.hasBankedResets || card.managingReset ? resetControl.implicitWidth : 0
-                implicitHeight: card.hasBankedResets || card.managingReset ? resetControl.implicitHeight : 0
-                Loader {
-                    id: resetControl
-                    objectName: "bankedResetControl_" + card.name
-                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                    sourceComponent: bankedResetsControl
-                }
-            }
             }
             ColumnLayout {
                 id: staleNotice
