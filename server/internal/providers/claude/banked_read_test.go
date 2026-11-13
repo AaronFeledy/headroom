@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,6 +94,127 @@ func Test_BankedMetadata_one_usage_request_carries_status(t *testing.T) {
 	}
 	if usageCalls.Load() != 4 {
 		t.Fatalf("usage GETs=%d, want 4", usageCalls.Load())
+	}
+}
+
+func Test_BankedMetadata_profile_plan_name_sets_subtitle(t *testing.T) {
+	// Given credentials that only know the subscription tier and a profile that
+	// reports the plan name.
+	path := writeClaudeCredentials(t, credentialFixture{Access: "fixture-access", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t), Subscription: "max"})
+	var usageCalls, profileCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Error("only read-only GETs are permitted")
+			w.WriteHeader(405)
+			return
+		}
+		switch r.URL.Path {
+		case "/usage":
+			if usageCalls.Add(1) == 1 {
+				writeResponse(t, w, fixtureUsageWithStatus)
+				return
+			}
+			writeResponse(t, w, fixtureUsageOnly)
+		case "/api/oauth/profile":
+			profileCalls.Add(1)
+			writeResponse(t, w, `{"account":{"uuid":"22222222-2222-2222-2222-222222222222"},"organization":{"uuid":"11111111-1111-1111-1111-111111111111","plan_display_name":"Ultra"}}`)
+		default:
+			t.Errorf("unexpected read path: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	c := New(Options{CredentialsPath: path, HomeDir: t.TempDir(), HTTPClient: server.Client(), APIBaseURL: server.URL, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token"})
+	// When
+	first, err := c.Fetch(context.Background())
+	// Then the profile plan name replaces the credentials-file label.
+	if err != nil || first.Error != nil {
+		t.Fatalf("fetch failed: %v %v", err, first.Error)
+	}
+	assertUsageSuccess(t, first, usageExpectation{subtitle: "Ultra", current: 96, weekly: 50})
+	if profileCalls.Load() != 1 {
+		t.Fatalf("profile GETs=%d, want 1", profileCalls.Load())
+	}
+	// When a later poll returns no status block for the same token.
+	second, err := c.Fetch(context.Background())
+	// Then the cached plan label still applies, without another profile read.
+	if err != nil || second.Error != nil {
+		t.Fatalf("second fetch failed: %v %v", err, second.Error)
+	}
+	assertUsageSuccess(t, second, usageExpectation{subtitle: "Ultra", current: 96, weekly: 50})
+	if profileCalls.Load() != 1 {
+		t.Fatalf("profile GETs=%d, want 1", profileCalls.Load())
+	}
+}
+
+func Test_BankedMetadata_profile_without_plan_name_keeps_credential_label(t *testing.T) {
+	// Given a profile that reports no plan name.
+	path := writeClaudeCredentials(t, credentialFixture{Access: "fixture-access", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t), Subscription: "max"})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Error("only read-only GETs are permitted")
+			w.WriteHeader(405)
+			return
+		}
+		switch r.URL.Path {
+		case "/usage":
+			writeResponse(t, w, fixtureUsageWithStatus)
+		case "/api/oauth/profile":
+			writeResponse(t, w, `{"account":{"uuid":"22222222-2222-2222-2222-222222222222"},"organization":{"uuid":"11111111-1111-1111-1111-111111111111"}}`)
+		default:
+			t.Errorf("unexpected read path: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	c := New(Options{CredentialsPath: path, HomeDir: t.TempDir(), HTTPClient: server.Client(), APIBaseURL: server.URL, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token"})
+	// When
+	got, err := c.Fetch(context.Background())
+	// Then the credentials-file label is unchanged.
+	if err != nil || got.Error != nil {
+		t.Fatalf("fetch failed: %v %v", err, got.Error)
+	}
+	assertUsageSuccess(t, got, usageExpectation{subtitle: "Max", current: 96, weekly: 50})
+}
+
+func Test_BankedMetadata_profile_unusable_plan_name_keeps_credential_label(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		planJSON string
+	}{
+		{"whitespace", `" \t "`},
+		{"oversized", `"` + strings.Repeat("a", 65) + `"`},
+		{"control", `"Ultra\nPlan"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given a profile whose plan name cannot be used as a label.
+			path := writeClaudeCredentials(t, credentialFixture{Access: "fixture-access", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t), Subscription: "max"})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Error("only read-only GETs are permitted")
+					w.WriteHeader(405)
+					return
+				}
+				switch r.URL.Path {
+				case "/usage":
+					writeResponse(t, w, fixtureUsageWithStatus)
+				case "/api/oauth/profile":
+					writeResponse(t, w, `{"account":{"uuid":"22222222-2222-2222-2222-222222222222"},"organization":{"uuid":"11111111-1111-1111-1111-111111111111","plan_display_name":`+tc.planJSON+`}}`)
+				default:
+					t.Errorf("unexpected read path: %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer server.Close()
+			c := New(Options{CredentialsPath: path, HomeDir: t.TempDir(), HTTPClient: server.Client(), APIBaseURL: server.URL, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token"})
+			// When
+			got, err := c.Fetch(context.Background())
+			// Then the credentials-file label is unchanged.
+			if err != nil || got.Error != nil {
+				t.Fatalf("fetch failed: %v %v", err, got.Error)
+			}
+			assertUsageSuccess(t, got, usageExpectation{subtitle: "Max", current: 96, weekly: 50})
+		})
 	}
 }
 
