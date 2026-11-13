@@ -333,7 +333,7 @@ ApplicationWindow {
                             width: brandingArea.hasUpdates
                                 ? Math.max(brandTitle.implicitWidth, brandingArea.width - brandingArea.indicatorsWidth - 10)
                                 : parent.width
-                            spacing: 3
+                            spacing: 1
                             Text {
                                 id: brandTitle; objectName: "footerBrandTitle"
                                 text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground

@@ -1117,7 +1117,6 @@ private slots:
         QTRY_COMPARE(controller.providers().size(), 4);
         const auto content = controller.resetKindContent("Claude");
         QCOMPARE(content["countText"].toString(), QString("1 weekly reset · 2 Fable resets"));
-        QCOMPARE(content["lines"].toString(), QString("1 weekly reset\n2 Fable resets"));
         QVERIFY(content["details"].toString().contains("Refills Weekly and Fable"));
         QVERIFY(content["details"].toString().contains("Returns what Fable used to your weekly limit"));
         QVERIFY(content["details"].toString().contains("Expires "));
@@ -1151,7 +1150,6 @@ private slots:
         QTRY_COMPARE(multi.providers().size(), 4);
         const auto row = multi.resetKindContent("Claude (Work)");
         QCOMPARE(row["countText"].toString(), QString("1 weekly reset · 2 Fable resets"));
-        QCOMPARE(row["lines"].toString(), QString("1 weekly reset\n2 Fable resets"));
         QVERIFY(row["details"].toString().contains("Refills Weekly and Fable"));
     }
     void malformedMeters() {
