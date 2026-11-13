@@ -224,6 +224,16 @@ tag at the initiating commit and publish. Historical v1.x release records and
 tags remain, but their binary assets were retired after v2.0.0. Never publish a
 tag or release during local validation.
 
+The `Release` resolver derives the next tag and the release notes from
+Conventional Commit headers on `main` since the previous tag, via
+`mathieudutour/github-tag-action`: `feat` bumps minor; `fix`, `perf`, and
+`revert` bump patch; a `BREAKING CHANGE:` note bumps major; any other type
+falls back to the patch default. Squash-merge PRs with a
+`type(scope): summary (#PR)` subject, using an existing scope such as `desktop`,
+`server`, `claude`, or `manager`, and a short prose body instead of the
+branch's commit list. Never write `BREAKING CHANGE` in a body unless the release
+is intentionally major.
+
 The published v2.0.0 updater predates the repository rename and rejects the old
 GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
 users to rerun a current external installer once; builds after v2.0.0 use the
