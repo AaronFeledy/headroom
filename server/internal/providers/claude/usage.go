@@ -68,9 +68,6 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 	sessionFound := false
 	weeklyFound := false
 	sessionActive := false
-	// The weekly-family fallback below copies a weekly window into the session
-	// slot for old clients. Automatic reset evaluation must never treat that
-	// copy as a five-hour limit.
 	sessionFromFiveHour := false
 	weeklyActive := false
 	scoped := make([]usage.Bucket, 0, len(response.Limits))
@@ -124,45 +121,25 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 		sessionFound = true
 		sessionFromFiveHour = true
 	}
-	// Backward compat: promote the first weekly-family window into the session
-	// slot when no session/five_hour window exists. Track it to avoid emitting a
-	// duplicate model bucket below.
-	var sessionFallbackWindow *usageBucketResponse
-	if !sessionFound {
-		fallbacks := []*usageBucketResponse{
-			response.SevenDay,
-			response.SevenDayOAuthApps,
-			response.SevenDaySonnet,
-			response.SevenDayOpus,
-		}
-		for _, window := range fallbacks {
+	if !weeklyFound {
+		for _, window := range []*usageBucketResponse{response.SevenDay, response.SevenDayOAuthApps} {
 			if window == nil || window.Utilization == nil {
 				continue
 			}
-			bucket, err := window.toBucket("session", secondaryLabel)
+			bucket, err := window.toBucket("weekly", secondaryLabel)
 			if err != nil {
-				return usage.UsageData{}, fmt.Errorf("session fallback: %w", err)
+				return usage.UsageData{}, fmt.Errorf("weekly: %w", err)
 			}
-			session = bucket
-			sessionFound = true
-			sessionFallbackWindow = window
+			weekly = bucket
+			weeklyFound = true
 			break
 		}
 	}
-	if !sessionFound {
-		return usage.UsageData{}, fmt.Errorf("missing session data")
-	}
-	if !weeklyFound && response.SevenDay != nil && response.SevenDay.Utilization != nil {
-		bucket, err := response.SevenDay.toBucket("weekly", secondaryLabel)
-		if err != nil {
-			return usage.UsageData{}, fmt.Errorf("seven_day: %w", err)
-		}
-		weekly = bucket
-		weeklyFound = true
-	}
 
 	buckets := make([]usage.Bucket, 0, 2+len(scoped)+2)
-	buckets = append(buckets, session)
+	if sessionFound {
+		buckets = append(buckets, session)
+	}
 	if weeklyFound {
 		buckets = append(buckets, weekly)
 	}
@@ -176,7 +153,7 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 		{id: "weekly_opus", label: "Opus", window: response.SevenDayOpus},
 	}
 	for _, candidate := range legacy {
-		if candidate.window == nil || candidate.window.Utilization == nil || candidate.window == sessionFallbackWindow || containsBucket(buckets, candidate.id) {
+		if candidate.window == nil || candidate.window.Utilization == nil || containsBucket(buckets, candidate.id) {
 			continue
 		}
 		bucket, err := candidate.window.toBucket(candidate.id, candidate.label)
@@ -188,6 +165,9 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 
 	if extra, ok := response.ExtraUsage.toBucket(); ok {
 		buckets = append(buckets, extra)
+	}
+	if len(buckets) == 0 {
+		return usage.UsageData{}, fmt.Errorf("no usage windows in response")
 	}
 
 	base := usage.UsageData{ProviderName: providerName, Subtitle: subscription, SessionFromFiveHour: sessionFromFiveHour}

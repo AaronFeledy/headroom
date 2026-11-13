@@ -2,7 +2,6 @@ package claude
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -120,16 +119,38 @@ func Test_parseUsageResponse_CLD7_slugifies_scoped_model_name(t *testing.T) {
 	assertBuckets(t, got.Buckets, []bucketExpectation{{"session", "Current Session", 10}, {"weekly_claude_3_5_sonnet", "Claude 3.5 Sonnet", 20}})
 }
 
-func Test_parseUsageResponse_CLD8_returns_error_without_session(t *testing.T) {
+func Test_parseUsageResponse_CLD8_accepts_limits_without_session(t *testing.T) {
 	// Given
 	body := []byte(`{"limits":[{"kind":"weekly_all","percent":20},{"kind":"weekly_scoped","percent":30,"scope":{"model":{"display_name":"Fable"}}}]}`)
 
 	// When
-	_, err := parseUsageResponse(body, nil)
+	got, err := parseUsageResponse(body, nil)
 
 	// Then
-	if err == nil || !strings.Contains(err.Error(), "missing session data") {
-		t.Fatalf("parseUsageResponse error = %v, want missing session data", err)
+	if err != nil {
+		t.Fatalf("parseUsageResponse returned error: %v", err)
+	}
+	assertBuckets(t, got.Buckets, []bucketExpectation{{"weekly", "Weekly", 20}, {"weekly_fable", "Fable", 30}})
+	if got.SessionFromFiveHour {
+		t.Fatal("weekly-only limits reported as a five-hour session")
+	}
+}
+
+func Test_parseUsageResponse_Ultra_weekly_only_shape_omits_session(t *testing.T) {
+	// Given the real weekly-only shape: no session entry, one active weekly and
+	// one inactive scoped Fable weekly.
+	body := []byte(`{"five_hour":null,"seven_day":{"utilization":41,"resets_at":"2026-11-13T00:00:00Z"},"seven_day_oauth_apps":null,"seven_day_opus":null,"seven_day_sonnet":null,"extra_usage":{"is_enabled":false,"monthly_limit":0,"used_credits":0,"utilization":null},"limits":[{"kind":"weekly_all","group":"weekly","percent":41,"resets_at":"2026-11-13T00:00:00Z","scope":null,"is_active":true},{"kind":"weekly_scoped","group":"weekly","percent":17,"resets_at":"2026-11-13T00:00:00Z","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":false}]}`)
+
+	// When
+	got, err := parseUsageResponse(body, nil)
+
+	// Then
+	if err != nil {
+		t.Fatalf("parseUsageResponse returned error: %v", err)
+	}
+	assertBuckets(t, got.Buckets, []bucketExpectation{{"weekly", "Weekly", 41}, {"weekly_fable", "Fable", 17}})
+	if got.SessionFromFiveHour {
+		t.Fatal("session window reported for a weekly-only response")
 	}
 }
 
@@ -137,14 +158,15 @@ func Test_parseUsageResponse_selects_primary_window_and_clamps_utilization(t *te
 	tests := []struct {
 		name, body, wantLabel   string
 		wantCurrent, wantWeekly float64
+		wantIDs                 []string
 		wantErr                 bool
 	}{
-		{name: "normal five hour and seven day windows", body: `{"five_hour":{"utilization":42.5},"seven_day":{"utilization":71}}`, wantCurrent: 42.5, wantWeekly: 71, wantLabel: "Current Session"},
-		{name: "null five hour falls back to seven day", body: `{"five_hour":null,"seven_day":{"utilization":71}}`, wantCurrent: 71, wantWeekly: 71, wantLabel: "Weekly"},
-		{name: "null five hour and seven day falls back to oauth apps window", body: `{"five_hour":null,"seven_day":null,"seven_day_oauth_apps":{"utilization":55}}`, wantCurrent: 55, wantWeekly: 0, wantLabel: "Weekly"},
+		{name: "normal five hour and seven day windows", body: `{"five_hour":{"utilization":42.5},"seven_day":{"utilization":71}}`, wantCurrent: 42.5, wantWeekly: 71, wantLabel: "Current Session", wantIDs: []string{"session", "weekly"}},
+		{name: "null five hour reports only the weekly window", body: `{"five_hour":null,"seven_day":{"utilization":71}}`, wantCurrent: 71, wantWeekly: 71, wantLabel: "Weekly", wantIDs: []string{"weekly"}},
+		{name: "null five hour and seven day uses oauth apps for weekly", body: `{"five_hour":null,"seven_day":null,"seven_day_oauth_apps":{"utilization":55}}`, wantCurrent: 55, wantWeekly: 55, wantLabel: "Weekly", wantIDs: []string{"weekly"}},
 		{name: "all windows null returns error", body: `{"five_hour":null,"seven_day":null,"seven_day_oauth_apps":null,"seven_day_sonnet":null,"seven_day_opus":null}`, wantErr: true},
-		{name: "utilization above range clamps to maximum", body: `{"five_hour":{"utilization":150}}`, wantCurrent: 100, wantLabel: "Current Session"},
-		{name: "utilization below range clamps to minimum", body: `{"five_hour":{"utilization":-5}}`, wantCurrent: 0, wantLabel: "Current Session"},
+		{name: "utilization above range clamps to maximum", body: `{"five_hour":{"utilization":150}}`, wantCurrent: 100, wantLabel: "Current Session", wantIDs: []string{"session"}},
+		{name: "utilization below range clamps to minimum", body: `{"five_hour":{"utilization":-5}}`, wantCurrent: 0, wantLabel: "Current Session", wantIDs: []string{"session"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,6 +188,15 @@ func Test_parseUsageResponse_selects_primary_window_and_clamps_utilization(t *te
 			}
 			if got.PrimaryLabel != tt.wantLabel {
 				t.Fatalf("PrimaryLabel = %q, want %q", got.PrimaryLabel, tt.wantLabel)
+			}
+			if tt.wantIDs != nil {
+				ids := make([]string, 0, len(got.Buckets))
+				for _, bucket := range got.Buckets {
+					ids = append(ids, bucket.ID)
+				}
+				if !reflect.DeepEqual(ids, tt.wantIDs) {
+					t.Fatalf("bucket ids = %v, want %v", ids, tt.wantIDs)
+				}
 			}
 		})
 	}

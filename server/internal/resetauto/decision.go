@@ -166,8 +166,8 @@ func finite(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-// realMeters returns the reading's meters in reading order, excluding the
-// synthesized session copy of a weekly window.
+// realMeters returns the reading's meters in reading order, excluding a
+// session meter that is not a real five-hour window.
 func realMeters(data usage.UsageData) []usage.Bucket {
 	out := make([]usage.Bucket, 0, len(data.Buckets))
 	for _, bucket := range data.Buckets {

@@ -220,6 +220,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		if statusErr == nil {
 			authExpired = false
 			c.attachResetCredits(ctx, creds, &data, bank)
+			c.applyPlanSubtitle(ctx, creds, &data)
 			failure = data.FetchFailure
 			// A canceled bank attachment has no trustworthy reset binding.
 			// Let the poller retain last-good display data as a failed fetch so
@@ -256,6 +257,18 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		return errorUsageData(statusErr.message()), nil
 	}
 	return errorUsageData("Authentication failed. Will retry."), nil
+}
+
+func (c *Client) applyPlanSubtitle(ctx context.Context, creds *credentials, data *usage.UsageData) {
+	if lockResetMutex(ctx, &c.bankMu) != nil {
+		return
+	}
+	defer c.bankMu.Unlock()
+	if c.bank.token != creds.accessToken || c.bank.planName == "" {
+		return
+	}
+	plan := c.bank.planName
+	data.Subtitle = &plan
 }
 
 func (c *Client) currentCredentials(ctx context.Context) (*credentials, error) {

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
@@ -21,6 +23,7 @@ type bankCache struct {
 	attemptedAt  time.Time
 	goodAt       time.Time
 	accountID    string
+	planName     string
 	profileNext  time.Time
 	profileDelay time.Duration
 }
@@ -116,15 +119,32 @@ func (c *Client) bankAccount(ctx context.Context, token string) (string, error) 
 			UUID string `json:"uuid"`
 		} `json:"account"`
 		Organization struct {
-			UUID string `json:"uuid"`
+			UUID            string `json:"uuid"`
+			PlanDisplayName string `json:"plan_display_name"`
 		} `json:"organization"`
 	}
 	if json.Unmarshal(body, &profile) != nil || !uuidPattern.MatchString(profile.Account.UUID) || !uuidPattern.MatchString(profile.Organization.UUID) {
 		return "", errResetUnavailable
 	}
+	c.bank.planName = cleanPlanName(profile.Organization.PlanDisplayName)
 	c.bank.accountID = strings.ToLower(profile.Organization.UUID + "/" + profile.Account.UUID)
 	failed = false
 	return c.bank.accountID, nil
+}
+
+// cleanPlanName returns the profile-reported plan label, or an empty string
+// when it is missing, oversized, or contains control characters.
+func cleanPlanName(value string) string {
+	name := strings.TrimSpace(value)
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		return ""
+	}
+	for _, character := range name {
+		if unicode.IsControl(character) {
+			return ""
+		}
+	}
+	return name
 }
 
 func accountFingerprint(accountID string) *string {
