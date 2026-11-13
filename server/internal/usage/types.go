@@ -128,8 +128,8 @@ type UsageData struct {
 	// the poller cache. Nil means the row has no automation support.
 	ResetAutomation *ResetAutomationState `json:"reset_automation"`
 	// SessionFromFiveHour is internal-only. It is true only when the session
-	// meter came from a real five-hour window, so a weekly copy in the same slot
-	// is never mistaken for a session limit.
+	// meter came from a real five-hour window; automatic reset evaluation
+	// ignores any other session meter.
 	SessionFromFiveHour bool `json:"-"`
 	// ProviderAccountID binds sensitive provider actions to the account whose
 	// usage was checked. It is internal-only and must never enter API JSON.
