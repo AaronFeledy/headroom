@@ -384,12 +384,13 @@ private slots:
         QTemporaryDir dir; QVERIFY(dir.isValid());
         const QString configPath = dir.filePath("config.yaml");
         QFile config(configPath); QVERIFY(config.open(QIODevice::WriteOnly | QIODevice::Text));
-        QVERIFY(config.write("providers:\n  claude: {enabled: false}\n  codex: {enabled: false}\n  cursor: {enabled: false}\n  grok: {enabled: false}\n") > 0);
+        QVERIFY(config.write("providers:\n  claude: {enabled: false}\n  codex: {enabled: false}\n  cursor: {enabled: false}\n  grok: {enabled: false}\n  opencodego: {enabled: false}\n") > 0);
         config.close();
         ScopedEnvironment environment;
         environment.set("USAGE_CONFIG", configPath.toUtf8());
         for (const auto name : {"USAGE_PROVIDER_CLAUDE_ENABLED", "USAGE_PROVIDER_CODEX_ENABLED",
-                                "USAGE_PROVIDER_CURSOR_ENABLED", "USAGE_PROVIDER_GROK_ENABLED"})
+                                "USAGE_PROVIDER_CURSOR_ENABLED", "USAGE_PROVIDER_GROK_ENABLED",
+                                "USAGE_PROVIDER_OPENCODEGO_ENABLED"})
             environment.set(name, "false");
         auto configured = options(unusedPort(), binary);
         configured.probeTimeoutMs = 8000; configured.readinessProbeTimeoutMs = 1000;

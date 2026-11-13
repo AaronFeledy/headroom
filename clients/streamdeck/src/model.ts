@@ -1,6 +1,6 @@
 import { pacing, statusOnly, warningColors, warningLevel, type WarningState } from "./pacing.js";
 
-export const providers = { Claude: "Claude", Codex: "ChatGPT", Cursor: "Cursor", Grok: "Grok" } as const;
+export const providers = { Claude: "Claude", Codex: "ChatGPT", Cursor: "Cursor", Grok: "Grok", OpenCodeGo: "OpenCode Go" } as const;
 export type ProviderID = keyof typeof providers;
 export type Settings = { provider?: string; account?: string; bucket?: string; display?: string; cliPath?: string };
 export type Bucket = { id: string; label: string; utilization: number; resets_at: string | null; starts_at?: unknown; status_text?: unknown; measurement?: unknown };

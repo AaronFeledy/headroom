@@ -9,6 +9,24 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
 )
 
+func Test_buildPoller_registers_all_default_providers(t *testing.T) {
+	// Given
+	cfg := config.Defaults()
+
+	// When
+	_, _, _, _, _, names, err := buildPoller(cfg, discardLogger())
+
+	// Then
+	if err != nil {
+		t.Fatalf("buildPoller: %v", err)
+	}
+	sort.Strings(names)
+	want := []string{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+}
+
 func Test_buildPoller_registers_claude_accounts(t *testing.T) {
 	// Given
 	workPath := filepath.Join(t.TempDir(), "work.json")

@@ -138,6 +138,88 @@ private slots:
             QVERIFY(!Usage::parse(bad, providers)); QCOMPARE(providers, original);
         }
     }
+    void openCodeGoSnapshotParsesWithDisplayNameAndBuckets() {
+        const QByteArray row = QByteArrayLiteral(R"({"provider_name":"OpenCodeGo","provider_type":"OpenCodeGo","account":null,
+ "primary_label":"5-Hour","secondary_label":"Weekly","show_secondary":true,"subtitle":null,
+ "current":{"utilization":42,"resets_at":"2026-11-13T12:00:00Z"},
+ "weekly":{"utilization":61,"resets_at":"2026-11-16T00:00:00Z"},
+ "buckets":[
+  {"id":"session","label":"5-Hour","utilization":42,"resets_at":"2026-11-13T12:00:00Z","status_text":null,"starts_at":null,"detail_text":null,"measurement":"percent"},
+  {"id":"weekly","label":"Weekly","utilization":61,"resets_at":"2026-11-16T00:00:00Z","status_text":null,"starts_at":null,"detail_text":null,"measurement":"percent"},
+  {"id":"monthly","label":"Monthly","utilization":18,"resets_at":"2026-12-01T00:00:00Z","status_text":null,"starts_at":null,"detail_text":null,"measurement":"percent"}],
+ "error":null,"needs_reauth":false,"is_success":true,"rate_limit_reset_credits":null,
+ "auth":{"state":"signed_in","source":{"kind":"cli","name":"OpenCode"},"sign_in_command":null,"sign_in_url":null,"accepts_browser_credentials":false,"checked":[]},
+ "usage_details":null,"reset_automation":null})");
+        QVariantList providers;
+        QVERIFY(Usage::parse("[" + row + "]", providers));
+        QCOMPARE(providers.size(), 1);
+        const auto parsed = providers.first().toMap();
+        QCOMPARE(parsed["provider_name"].toString(), QString("OpenCodeGo"));
+        QCOMPARE(parsed["provider_type"].toString(), QString("OpenCodeGo"));
+        QCOMPARE(parsed["display_name"].toString(), QString("OpenCode Go"));
+        QCOMPARE(Usage::displayName("OpenCodeGo"), QString("OpenCode Go"));
+        QCOMPARE(Usage::displayName("opencodego"), QString("OpenCode Go"));
+        QCOMPARE(Usage::displayName("Codex"), QString("ChatGPT"));
+        const auto buckets = parsed["buckets"].toList();
+        QCOMPARE(buckets.size(), 3);
+        const QStringList ids{"session", "weekly", "monthly"};
+        for (int i = 0; i < buckets.size(); ++i) {
+            const auto bucket = buckets[i].toMap();
+            QCOMPARE(bucket["id"].toString(), ids.at(i));
+            QCOMPARE(bucket["measurement"].toString(), QString("percent"));
+            QVERIFY(bucket["starts_at"].isNull());
+            QVERIFY(Usage::isPercent(bucket));
+        }
+        QCOMPARE(buckets[0].toMap()["label"].toString(), QString("5-Hour"));
+        QCOMPARE(buckets[2].toMap()["label"].toString(), QString("Monthly"));
+        QCOMPARE(buckets[2].toMap()["utilization"].toDouble(), 18.0);
+        QCOMPARE(parsed["auth"].toMap()["state"].toString(), QString("signed_in"));
+        QCOMPARE(parsed["auth"].toMap()["source"].toMap()["kind"].toString(), QString("cli"));
+        QCOMPARE(parsed["auth"].toMap()["accepts_browser_credentials"].toBool(), false);
+        QVERIFY(parsed["rate_limit_reset_credits"].isNull());
+    }
+    void defaultOrderPlacesOpenCodeGoAfterGrok() {
+        auto data = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        data.prepend(QJsonObject{{"provider_name", "OpenCodeGo"}, {"is_success", true},
+            {"error", QJsonValue::Null}, {"needs_reauth", false}, {"buckets", QJsonArray{}}});
+        QVariantList providers;
+        QVERIFY(Usage::parse(QJsonDocument(data).toJson(), providers));
+        QStringList names;
+        for (const auto &provider : providers) names << provider.toMap()["provider_name"].toString();
+        QCOMPARE(names, (QStringList{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}));
+    }
+    void openCodeGoPeriods() {
+        const auto reset = QDateTime::fromString("2026-12-01T00:00:00Z", Qt::ISODate);
+        QVariantMap session{{"id", "session"}, {"label", "5-Hour"}, {"utilization", 42},
+            {"resets_at", reset.toString(Qt::ISODate)}};
+        auto window = Usage::period("OpenCodeGo", session);
+        QCOMPARE(window["seconds"].toLongLong(), 5LL * 3600);
+        QCOMPARE(window["step"].toLongLong(), 3600LL);
+        QCOMPARE(window["unit"].toString(), QString("Hour"));
+        QCOMPARE(window["label"].toString(), QString("5-hour window"));
+        QCOMPARE(Usage::notches("OpenCodeGo", session).size(), 4);
+
+        QVariantMap weekly{{"id", "weekly"}, {"label", "Weekly"}, {"utilization", 61},
+            {"resets_at", reset.toString(Qt::ISODate)}};
+        window = Usage::period("OpenCodeGo", weekly);
+        QCOMPARE(window["seconds"].toLongLong(), 7LL * 86400);
+        QCOMPARE(window["step"].toLongLong(), 86400LL);
+        QCOMPARE(window["unit"].toString(), QString("Day"));
+        QCOMPARE(Usage::notches("OpenCodeGo", weekly).size(), 6);
+
+        QVariantMap monthly{{"id", "monthly"}, {"label", "Monthly"}, {"utilization", 18},
+            {"resets_at", reset.toString(Qt::ISODate)}};
+        window = Usage::period("OpenCodeGo", monthly);
+        const int days = reset.addMonths(-1).daysTo(reset);
+        QCOMPARE(window["seconds"].toLongLong(), qint64(days) * 86400);
+        QCOMPARE(window["step"].toLongLong(), 7LL * 86400);
+        QCOMPARE(window["unit"].toString(), QString("Week"));
+        QCOMPARE(window["label"].toString(), QString("calendar-month window"));
+        QCOMPARE(Usage::notches("OpenCodeGo", monthly).size(), (days - 1) / 7);
+        const auto start = reset.addMonths(-1);
+        const auto halfway = start.addSecs(start.secsTo(reset) / 2);
+        QCOMPARE(Usage::pacing("OpenCodeGo", monthly, halfway)["expected"].toDouble(), 50.0);
+    }
     void sharedWarningHysteresisContract_data() {
         QTest::addColumn<double>("used");
         QTest::addColumn<bool>("hasPacing");
@@ -250,7 +332,7 @@ private slots:
         if (pin) controller.setPrimary("Claude (Work)");
         else controller.moveProvider("Claude (Work)", "Claude", false);
         SettingsService moved(path, false);
-        QCOMPARE(moved.value().order, (QStringList{"Claude:work", "Claude", "Claude:absent", "Codex", "Cursor", "Grok"}));
+        QCOMPARE(moved.value().order, (QStringList{"Claude:work", "Claude", "Claude:absent", "Codex", "Cursor", "Grok", "OpenCodeGo"}));
         QCOMPARE(moved.value().primary, "Claude:work");
         QCOMPARE(controller.primary(), "Claude (Work)");
         QFile saved(path); QVERIFY(saved.open(QIODevice::ReadOnly));

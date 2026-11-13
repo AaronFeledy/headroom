@@ -17,25 +17,28 @@ export function statusOnly(bucket: Bucket): boolean {
     typeof bucket.status_text === "string" && bucket.status_text.length > 0 && !bucket.status_text.includes(" / ");
 }
 
+// UTC calendar subtraction clamps March 31 to February 28/29, just like Qt.
+function calendarMonthSeconds(reset: number): number {
+  const end = new Date(reset), prior = new Date(reset);
+  prior.setUTCDate(1);
+  prior.setUTCMonth(prior.getUTCMonth() - 1);
+  const lastDay = new Date(reset);
+  lastDay.setUTCDate(0);
+  prior.setUTCDate(Math.min(end.getUTCDate(), lastDay.getUTCDate()));
+  return Math.trunc((reset - prior.getTime()) / 1000);
+}
+
 export function windowSeconds(provider: string, bucket: Bucket): number {
   const name = provider.toLowerCase(), id = bucket.id.toLowerCase();
   const reset = timestamp(bucket.resets_at), start = timestamp(bucket.starts_at);
   const reported = Math.trunc((reset - start) / 1000);
   if (reported > 0 && reported <= 366 * DAY) return reported;
-  const known = ["claude", "codex", "cursor", "grok"].includes(name);
+  const known = ["claude", "codex", "cursor", "grok", "opencodego"].includes(name);
   if (known && (id === "weekly" || id.startsWith("weekly_"))) return 7 * DAY;
-  if (["claude", "codex"].includes(name) && id === "session") return /weekly/i.test(bucket.label) ? 7 * DAY : 5 * 3600;
+  if (["claude", "codex", "opencodego"].includes(name) && id === "session") return /weekly/i.test(bucket.label) ? 7 * DAY : 5 * 3600;
   if (name === "cursor" && ["session", "plan", "auto", "api", "on_demand"].includes(id)) return 30 * DAY;
-  if (name === "grok" && ["session", "credits", "plan", "on_demand"].includes(id) && Number.isFinite(reset)) {
-    // UTC calendar subtraction clamps March 31 to February 28/29, just like Qt.
-    const end = new Date(reset), prior = new Date(reset);
-    prior.setUTCDate(1);
-    prior.setUTCMonth(prior.getUTCMonth() - 1);
-    const lastDay = new Date(reset);
-    lastDay.setUTCDate(0);
-    prior.setUTCDate(Math.min(end.getUTCDate(), lastDay.getUTCDate()));
-    return Math.trunc((reset - prior.getTime()) / 1000);
-  }
+  if (name === "grok" && ["session", "credits", "plan", "on_demand"].includes(id) && Number.isFinite(reset)) return calendarMonthSeconds(reset);
+  if (name === "opencodego" && id === "monthly" && Number.isFinite(reset)) return calendarMonthSeconds(reset);
   return 0;
 }
 

@@ -15,6 +15,7 @@ const (
 	BucketCredits  = "credits"
 	BucketExtra    = "extra"
 	BucketOnDemand = "on_demand"
+	BucketMonthly  = "monthly"
 )
 
 // FromBuckets is the preferred provider exit path: set provider name and

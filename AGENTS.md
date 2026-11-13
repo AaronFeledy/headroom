@@ -3,8 +3,9 @@
 ## Project overview
 
 Headroom is a shared Qt Quick tray app for Windows, macOS, and Linux plus a Go usage API
-server. It monitors Claude, ChatGPT, Cursor, and Grok usage. The compatible API
-and configuration name for ChatGPT remains `Codex`.
+server. It monitors Claude, ChatGPT, Cursor, Grok, and OpenCode Go usage. The
+compatible API and configuration name for ChatGPT remains `Codex`; OpenCode Go
+is `OpenCodeGo` in the API and `opencodego` in configuration.
 
 The canonical repository is `https://github.com/AaronFeledy/headroom`, with the
 default checkout name `headroom`. The former repository URL redirects there.
@@ -95,6 +96,29 @@ are detected, never decrypted), then credentials pushed by a desktop or the API
 (memory only). WSL servers also check the Windows side. Discovery does not depend
 on a loopback bind.
 
+OpenCode Go reads the OpenCode CLI's own credential store read-only. Stable
+1.x CLIs keep keys only in `auth.json`; their database creates a `credential`
+table but never uses it. V2 imports `auth.json` once, records migration
+`20260805200742_import_legacy_credentials` in the `migration` table, then keeps
+keys only in that table and signs out by deleting the row. Both generations can
+share one data directory. The table counts only when that marker exists, and
+`auth.json` counts only without the marker or when written after it, so a V2
+sign-out never revives an imported key. When both offer an OpenCode Go key, the
+newer write wins (the row's `time_updated` against the file's modification
+time, ties to the table); never fall back to the other because the winner is
+invalid or expired. Table rows are chosen as the CLI chooses them: `opencode-go`
+before `opencode`, then `active DESC, time_created DESC, id DESC`, so legacy rows
+with a NULL flag stay eligible. Never filter on `active = 1`; two active rows
+for one integration are refused rather than guessed, and OAuth `expires: 0`
+means no expiry. Credentials are reread on every poll, without a cache. Never
+write, refresh, or rotate that store. Each poll makes one
+`GET https://opencode.ai/zen/go/v1/usage`; the bearer token must never follow a
+redirect to another origin. Reported percentages are already 0-100 and are never
+scaled. Its `session` (`5-Hour`), `weekly`, and `monthly` meters carry no
+reported window start, so clients assume five hours, seven days, and the calendar
+month ending at the reset. It has no browser-credential push, credential route,
+SSH forward, usage details, or resets; do not add them without an explicit task.
+
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider
 key `Codex`, and snake_case API fields. Default server config locations are
@@ -108,7 +132,8 @@ stays on the previous path. Use the canonical Headroom repository URL for public
 acquisition and user-facing links
 while accepting the former repository's exact release URLs where updater
 compatibility requires it.
-Headroom displays `Codex` as ChatGPT. On first normal Windows launch it may import
+Headroom displays `Codex` as ChatGPT and `OpenCodeGo` as OpenCode Go. On first
+normal Windows launch it may import
 `%APPDATA%\ClaudeUsageWidget\settings.json`; the retained WinForms project is not
 the default packaged UI.
 
@@ -121,7 +146,7 @@ from it. Cursor keeps `needs_reauth` true while signed out or expired so older
 desktops still forward browser sign-ins. Providers exit
 through `usage.FromBuckets` / `WithBuckets`, which normalize order, remove
 duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
-`credits`, `weekly`, `weekly_<slug>`, `extra`, and `on_demand`. Cursor Grok Bot
+`credits`, `weekly`, `weekly_<slug>`, `monthly`, `extra`, and `on_demand`. Cursor Grok Bot
 is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
 Additive `usage_details` and nullable bucket `measurement` are defined in

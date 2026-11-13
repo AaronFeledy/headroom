@@ -177,7 +177,9 @@ bool Usage::isPercent(const QVariantMap &bucket) {
 }
 
 QString Usage::displayName(const QString &provider) {
-    return provider.compare("Codex", Qt::CaseInsensitive) == 0 ? QString("ChatGPT") : provider;
+    if (provider.compare("Codex", Qt::CaseInsensitive) == 0) return QString("ChatGPT");
+    if (provider.compare("OpenCodeGo", Qt::CaseInsensitive) == 0) return QString("OpenCode Go");
+    return provider;
 }
 
 QString Usage::providerType(const QVariantMap &provider) {
@@ -374,7 +376,7 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
         p["display_name"] = displayName(name);
         result.append(p.toVariantMap());
     }
-    const QStringList order {"claude", "codex", "cursor", "grok"};
+    const QStringList order {"claude", "codex", "cursor", "grok", "opencodego"};
     std::stable_sort(result.begin(), result.end(), [&](const QVariant &a, const QVariant &b) {
         auto rank = [&](const QVariant &v) {
             const auto row = v.toMap();
@@ -417,12 +419,12 @@ QString Usage::resetTimeLabel(const QString &timestamp, const QDateTime &now, co
 
 QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
     const QString name = provider.toLower(), id = bucket["id"].toString().toLower();
-    const bool knownProvider = QStringList{"claude", "codex", "cursor", "grok"}.contains(name);
+    const bool knownProvider = QStringList{"claude", "codex", "cursor", "grok", "opencodego"}.contains(name);
     qint64 duration = 0, step = 0;
     QString window, unit;
     if (knownProvider && (id == "weekly" || id.startsWith("weekly_"))) {
         duration = 7 * 86400; step = 86400; window = "7-day window"; unit = "Day";
-    } else if ((name == "claude" || name == "codex") && id == "session") {
+    } else if ((name == "claude" || name == "codex" || name == "opencodego") && id == "session") {
         const bool weeklyFallback = bucket["label"].toString().contains("weekly", Qt::CaseInsensitive);
         duration = weeklyFallback ? 7 * 86400 : 5 * 3600;
         step = weeklyFallback ? 86400 : 3600;
@@ -430,10 +432,11 @@ QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
         unit = weeklyFallback ? "Day" : "Hour";
     } else if (name == "cursor" && QStringList{"session", "plan", "auto", "api", "on_demand"}.contains(id)) {
         duration = 30 * 86400; step = 7 * 86400; window = "30-day billing estimate"; unit = "Week";
-    } else if (name == "grok" && QStringList{"session", "credits", "plan", "on_demand"}.contains(id)) {
+    } else if ((name == "grok" && QStringList{"session", "credits", "plan", "on_demand"}.contains(id))
+        || (name == "opencodego" && id == "monthly")) {
         const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
         if (reset.isValid()) duration = reset.addMonths(-1).secsTo(reset);
-        step = 7 * 86400; window = "calendar-month billing estimate"; unit = "Week";
+        step = 7 * 86400; window = name == "opencodego" ? "calendar-month window" : "calendar-month billing estimate"; unit = "Week";
     }
     const auto start = QDateTime::fromString(bucket["starts_at"].toString(), Qt::ISODateWithMs).toUTC();
     const auto end = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();

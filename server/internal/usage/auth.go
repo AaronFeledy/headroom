@@ -27,7 +27,7 @@ func NewAuth(provider, state string, source *AuthSource) Auth {
 	if state == "signed_in" {
 		return a
 	}
-	commands := map[string]string{"Cursor": "cursor-agent login", "Claude": "claude auth login", "Codex": "codex login", "Grok": "grok login"}
+	commands := map[string]string{"Cursor": "cursor-agent login", "Claude": "claude auth login", "Codex": "codex login", "Grok": "grok login", "OpenCodeGo": "opencode auth login"}
 	if state == "signed_out" || (source != nil && source.Kind == "cli") {
 		if command, ok := commands[provider]; ok {
 			a.SignInCommand = &command

@@ -286,7 +286,8 @@ Drag a provider panel onto another panel. Drop in the upper half to insert
 before it, or the lower half to insert after it. A line marks the insertion point.
 Rows read top to bottom. The first provider always supplies the tray meter and its card has a subtle glow; the full order
 is saved across restarts and polls. Right-click a provider icon or title to move a provider
-directly to the top. Orders are local to each client. A provider without usable
+directly to the top. Orders are local to each client, and the default order is
+Claude, ChatGPT, Cursor, Grok, then OpenCode Go. A provider without usable
 data produces an unknown tray meter instead of silently switching providers.
 
 On managed Windows installations, the stable launcher owns the tray icon with a
@@ -487,11 +488,12 @@ away. Dates in another year include the year; times follow the system's 12- or
 
 The API can expose a validated `starts_at` with `resets_at`; a reported period
 takes precedence over a duration estimate. Without it, the legacy pacing
-conventions estimate five hours for Claude/ChatGPT sessions, seven days for
-weekly buckets (including model-specific and Grok Bot buckets), 30 days for
-legacy Cursor billing pools, and the previous calendar month for legacy Grok
-credit buckets. Grok's primary weekly allowance uses the weekly window, not a
-monetary ledger's billing period. Estimates are not provider-guaranteed forecasts.
+conventions estimate five hours for Claude/ChatGPT/OpenCode Go sessions, seven
+days for weekly buckets (including model-specific and Grok Bot buckets), 30 days
+for legacy Cursor billing pools, and the previous calendar month for legacy Grok
+credit buckets and OpenCode Go's monthly meter. Grok's primary weekly allowance
+uses the weekly window, not a monetary ledger's billing period. Estimates are
+not provider-guaranteed forecasts.
 A Claude weekly fallback labeled “Weekly” uses seven days even in a session slot.
 Meters with no reset, unknown duration, a reset outside the expected window, or
 an expired window show “Pace unavailable.” Status-only billing rows have no
@@ -609,7 +611,9 @@ use the same palette. Muted text and surface shades are adapted for readability.
 
 The server's `Codex` provider is displayed as **ChatGPT** throughout Headroom.
 Its API identifier and saved ordering key remain `Codex`, preserving existing
-connections, pacing calculations, and provider preferences.
+connections, pacing calculations, and provider preferences. The server's
+`OpenCodeGo` provider is displayed as **OpenCode Go**; its API identifier and
+saved ordering key remain `OpenCodeGo`.
 
 ## Period divisions and parity
 
@@ -618,9 +622,9 @@ and seven-day boundaries in monthly windows. Monthly meters leave a shorter
 final segment after day 28 when needed. Hover a notch to see its boundary.
 The notches and pacing marker use the same period calculation, preferring a
 validated reported start/end. Legacy Cursor monthly meters use a 30-day billing
-estimate; legacy Grok monthly meters use a calendar-month estimate. Weekly
-allowances retain weekly divisions independently of monetary ledger periods.
-Unknown periods have no time notches.
+estimate; legacy Grok and OpenCode Go monthly meters use a calendar-month
+estimate. Weekly allowances retain weekly divisions independently of monetary
+ledger periods. Unknown periods have no time notches.
 
 See the [desktop parity audit](../../docs/desktop-parity.md) for restored features,
 remaining omissions, and intentional differences.

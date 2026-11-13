@@ -20,6 +20,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/codex"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/grok"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/opencodego"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/resetauto"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/server"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/sshaccess"
@@ -275,6 +276,8 @@ func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir
 		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, BrowserCredentials: &providerCfg.BrowserCredentials}), nil
 	case "grok":
 		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath})
+	case "opencodego":
+		return opencodego.NewProvider(opencodego.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q: %w", name, config.ErrInvalidConfig)
 	}

@@ -1,11 +1,11 @@
 # Headroom
 
-**Know how much AI usage you have left, without checking four dashboards.**
+**Know how much AI usage you have left, without checking five dashboards.**
 
-Headroom brings Claude, ChatGPT, Cursor, and Grok usage into one tray app for
-Windows, macOS, and Linux. See your remaining allowance, when limits reset, and
-whether you're on pace to run out. Prefer the terminal? The same installation
-includes a live CLI dashboard.
+Headroom brings Claude, ChatGPT, Cursor, Grok, and OpenCode Go usage into one
+tray app for Windows, macOS, and Linux. See your remaining allowance, when limits
+reset, and whether you're on pace to run out. Prefer the terminal? The same
+installation includes a live CLI dashboard.
 
 [![Build](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/headroom)](https://github.com/AaronFeledy/headroom/releases/latest)
@@ -80,12 +80,14 @@ If you reinstall while Headroom is open, quit and reopen it afterward.
 | ChatGPT | Codex CLI credentials, with an OpenCode fallback |
 | Cursor | cursor-agent, the Cursor app, or supported browser sign-ins |
 | Grok | Grok CLI credentials, with a browser sign-in fallback |
+| OpenCode Go | OpenCode CLI credentials |
 
 Windows desktop packages can share supported Cursor and Grok browser sign-ins
 with the server. Control this with **Share browser sign-ins with the server** in
 Settings. The [provider guide](server/README.md#configuration) covers credential
-locations, WSL discovery, and disabling providers you don't use. ChatGPT is named
-`Codex` in server configuration and the API.
+locations, WSL discovery, and disabling providers you don't use. In server
+configuration and the API, ChatGPT is named `Codex` and OpenCode Go is named
+`OpenCodeGo`.
 
 Click the tray icon to see your meters. Drag your main provider to the top to use
 it for the tray meter, and enable **Start Headroom when I sign in** in Settings

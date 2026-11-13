@@ -286,6 +286,7 @@ func disabledProviderEnv() []string {
 		"USAGE_PROVIDER_CODEX_ENABLED=false",
 		"USAGE_PROVIDER_CURSOR_ENABLED=false",
 		"USAGE_PROVIDER_GROK_ENABLED=false",
+		"USAGE_PROVIDER_OPENCODEGO_ENABLED=false",
 	}
 }
 

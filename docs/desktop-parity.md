@@ -8,9 +8,9 @@ and rollback implementation; differences below are intentional unless stated.
 
 | Area | Headroom behavior |
 | --- | --- |
-| Provider data | Preserves all API buckets, labels, subtitles, status text, reset times, provider errors, and authentication guidance; `Codex` is displayed as ChatGPT |
+| Provider data | Preserves all API buckets, labels, subtitles, status text, reset times, provider errors, and authentication guidance; `Codex` is displayed as ChatGPT and `OpenCodeGo` as OpenCode Go |
 | Provider order | Saves the complete order; drag and drop or move a provider to the top; the first provider controls the tray meter |
-| Pacing | Uses five-hour, weekly, Cursor 30-day, and Grok calendar-month estimates when reset data permits; dashboard, tray, attention count, and notifications share one warning state |
+| Pacing | Uses five-hour, weekly, Cursor 30-day, and Grok and OpenCode Go calendar-month estimates when reset data permits; dashboard, tray, attention count, and notifications share one warning state |
 | Warning transitions | Applies pace pressure, capacity guards, hysteresis, and session-local baselines; alerts only on upward Warning or Critical transitions |
 | Polling | Retains last good data on failure, distinguishes setup/auth/network/provider states, backs off to five minutes or the configured interval, and lets manual Refresh bypass the delay |
 | Local mode | Probes `127.0.0.1:7823` without secrets; attaches without saved auth, or starts the adjacent bundle with a private, verified TLS session; owns and stops only its child |

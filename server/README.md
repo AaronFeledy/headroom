@@ -322,8 +322,8 @@ eligibility check, consume call, and delayed refresh as a manual reset. The
 authorization is gone whatever happens next, so nothing is ever retried.
 
 Each usage entry includes additive `provider_type` (`Claude`, `Codex`, `Cursor`,
-or `Grok`) and `account` (`null`, or `{"id", "label"}` for an extra Claude
-account). Each usage entry also includes an always-present `auth` object: `state`
+`Grok`, or `OpenCodeGo`) and `account` (`null`, or `{"id", "label"}` for an extra
+Claude account). Each usage entry also includes an always-present `auth` object: `state`
 (`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,
 nullable `sign_in_command` and `sign_in_url`, `accepts_browser_credentials`, and
 an array `checked` (up to 12 `{kind, name, status}` entries). Only Cursor accepts
@@ -523,7 +523,7 @@ Environment variables:
 - `USAGE_POLL_INTERVAL` - Go duration.
 - `USAGE_SSH_ACCESS` - boolean enabling the Linux/WSL SSH socket.
 - `USAGE_PROVIDER_<NAME>_ENABLED` - boolean provider toggle, for example `USAGE_PROVIDER_CODEX_ENABLED=true`.
-- `USAGE_PROVIDER_<NAME>_CREDENTIALS_PATH` - provider credential path, for example `USAGE_PROVIDER_GROK_CREDENTIALS_PATH=/var/lib/usage-server/grok-auth.json`.
+- `USAGE_PROVIDER_<NAME>_CREDENTIALS_PATH` - provider credential path, for example `USAGE_PROVIDER_GROK_CREDENTIALS_PATH=/var/lib/usage-server/grok-auth.json` or `USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=/var/lib/usage-server/opencode-go.json`.
 - `USAGE_PROVIDER_CURSOR_BROWSER_CREDENTIALS` - boolean; defaults to true.
 
 YAML keys:
@@ -556,11 +556,17 @@ providers:
   grok:
     enabled: true
     credentials_path: ~/.grok/auth.json
+  opencodego:
+    enabled: true
+    credentials_path: ""
 ```
 
-All four providers are enabled by default; Claude defaults to
+All five providers are enabled by default; Claude defaults to
 `~/.claude/.credentials.json`, and the others discover credentials automatically
-when no path is set. Disable unwanted providers with `enabled: false` or
+when no path is set. For OpenCode Go, `credentials_path` may point at either the
+OpenCode SQLite database or an `auth.json`-format file; an empty path uses
+discovery.
+Disable unwanted providers with `enabled: false` or
 `USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
 retained while Headroom displays it as ChatGPT.
 
@@ -657,6 +663,37 @@ primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json`
 or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback
 when CLI weekly data is unavailable.
 
+OpenCode Go reads the OpenCode CLI's own credential store and never writes,
+refreshes, or rotates it. The data directory is `$XDG_DATA_HOME/opencode` when
+`XDG_DATA_HOME` is an absolute path, otherwise `~/.local/share/opencode`. Its
+SQLite database is `$OPENCODE_DB` (an absolute path, or a filename relative to
+that directory; `:memory:` disables it) and defaults to `opencode.db`.
+
+Stable 1.x CLIs keep keys in `auth.json` (an `opencode-go` entry with
+`"type":"api"`). OpenCode V2 imports that file once, records the
+`20260805200742_import_legacy_credentials` migration, and from then on keeps keys
+only in the database's `credential` table; signing out deletes the row. Both
+generations can share one data directory, so the provider reads the table only
+when the database carries that migration, and reads `auth.json` only when there
+is no such migration or the file was written after it. A V2 sign-out therefore
+never brings back a key that was imported earlier. When both offer an OpenCode Go
+key, the newer write wins: the row's `time_updated` against the file's
+modification time, with ties going to the table. A winner that is invalid or
+expired is reported as such rather than replaced by the other key. Rows are
+selected the way the CLI selects them: `opencode-go` before `opencode`, then
+`active DESC, time_created DESC, id DESC`, so legacy rows without an active flag
+are still eligible. Two active rows for the chosen integration are reported as
+ambiguous. An OAuth `expires` of `0` means the issuer reported no lifetime, so
+the access token never expires. Credentials are reread on every poll. Live SQLite
+databases, including WAL sidecars, are read read-only or through a private
+disposable snapshot. On Windows the provider also checks WSL homes; on WSL it
+checks Windows profiles. Cross-kernel source names include `(Windows)` or
+`(WSL)`. An explicit `providers.opencodego.credentials_path` replaces discovery
+and accepts either kind, told apart by the SQLite file header; an explicit
+database is read without the migration check. For a service or container, point
+it at a small file holding only the key, as shown in the
+[systemd sample](#raspberry-pi-systemd-sample).
+
 ## HTTPS identity and verification
 
 TLS-enabled standalone servers accept both HTTP and HTTPS on the same port;
@@ -715,6 +752,9 @@ providers:
   grok:
     enabled: true
     credentials_path: /var/lib/claude-usage-widget/.grok/auth.json
+  opencodego:
+    enabled: true
+    credentials_path: /var/lib/claude-usage-widget/opencode-go.json
 ```
 
 `/etc/claude-usage-widget/usage-server.env`:
@@ -761,7 +801,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now claude-usage-widget-server
 ```
 
-Copy provider credential files with owner `usagewidget` and mode `600`.
+Copy provider credential files with owner `usagewidget` and mode `600`. For
+OpenCode Go, don't copy the OpenCode database: it holds every session the CLI
+has recorded and can grow to many gigabytes, and copying a live database file by
+file can produce an inconsistent copy. Instead, create
+`/var/lib/claude-usage-widget/opencode-go.json` containing only your OpenCode Go
+API key:
+
+```json
+{"opencode-go": {"type": "api", "key": "replace-with-your-opencode-go-key"}}
+```
 
 ## Docker
 
@@ -775,4 +824,4 @@ docker run --rm -p 7823:7823 \
   headroom-usage-server --listen-addr 0.0.0.0:7823
 ```
 
-Add read-only credential mounts as needed. All providers, including Grok, are enabled by default, so Grok only needs its credential file made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs).
+Add read-only credential mounts as needed. All five providers are enabled by default, so Grok and OpenCode Go only need their credential files made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs). For OpenCode Go, mount a file containing only its key, in the format shown in the systemd sample, rather than the OpenCode database, and set `-e USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=...` to the mount path.

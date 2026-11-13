@@ -65,6 +65,21 @@ private slots:
             QCOMPARE(TrayVisual::icon(model).pixmap(64, 64).toImage(), plain);
         }
     }
+    void openCodeGoUsesDisplayNamePacingAndIcon() {
+        auto session = meter("session", 42);
+        session["label"] = "5-Hour";
+        const auto model = TrayVisual::build(ready(), {provider("OpenCodeGo", {session})}, "OpenCodeGo", assess, now);
+        QCOMPARE(model.kind, TrayVisual::Kind::Usage);
+        QCOMPARE(model.providerType, QString("opencodego"));
+        QCOMPARE(model.used, 42);
+        QCOMPARE(model.expected, 50);
+        QVERIFY(model.tooltip.startsWith("OpenCode Go · 42% used"));
+        QVERIFY(!QIcon(":/provider-icons/opencodego.svg").isNull());
+        auto unbranded = model;
+        unbranded.providerType = "unbranded";
+        unbranded.provider = "Unbranded";
+        QVERIFY(TrayVisual::icon(model).pixmap(64, 64).toImage() != TrayVisual::icon(unbranded).pixmap(64, 64).toImage());
+    }
     void usesSharedLevelsForBothIndicators() {
         const auto model = TrayVisual::build(ready(), {provider("Codex", {meter("session", 12), meter("weekly", 8, 86400)})}, "Codex", assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Usage);

@@ -50,11 +50,11 @@ def run(server_path, qt_probe=None):
         root = Path(temporary)
         config = root / "server.yaml"
         config.write_text("providers:\n" + "".join(
-            f"  {provider}: {{enabled: false}}\n" for provider in ("claude", "codex", "cursor", "grok")))
+            f"  {provider}: {{enabled: false}}\n" for provider in ("claude", "codex", "cursor", "grok", "opencodego")))
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(("USAGE_", "CLAUDE_", "CODEX_", "CURSOR_", "GROK_"))}
         environment["USAGE_AUTH_TOKEN"] = "synthetic-backend-token-kept-on-server"
-        for provider in ("CLAUDE", "CODEX", "CURSOR", "GROK"):
+        for provider in ("CLAUDE", "CODEX", "CURSOR", "GROK", "OPENCODEGO"):
             environment[f"USAGE_PROVIDER_{provider}_ENABLED"] = "false"
         backend = daemon = None
         with (root / "server.log").open("wb") as server_log, (root / "sshd.log").open("wb") as ssh_log:

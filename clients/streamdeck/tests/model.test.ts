@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { decodeUsage, keyView, resetLabel, settings, type Provider, type Snapshot } from "../src/model.js";
+import { decodeUsage, keyView, providers, resetLabel, settings, type Provider, type Snapshot } from "../src/model.js";
 import { renderKey } from "../src/render.js";
 
 export const provider: Provider = {
@@ -23,6 +23,19 @@ test("Cursor auto is a real meter, distinct from first available", () => {
   const p = { ...provider, provider_name: "Cursor", buckets: [
     { ...provider.buckets[0], id: "plan" }, { ...provider.buckets[1], id: "auto" }] };
   assert.equal(keyView({ status: "ready", providers: [p] }, { provider: "Cursor", bucket: "auto" }).value, "68%");
+});
+test("OpenCode Go keys use the OpenCodeGo identifier, display name and stable meters", () => {
+  const p = { ...provider, provider_name: "OpenCodeGo", provider_type: "OpenCodeGo", buckets: [
+    { ...provider.buckets[0], id: "session", label: "5-Hour" },
+    { ...provider.buckets[1], id: "weekly", utilization: 40, resets_at: null },
+    { ...provider.buckets[1], id: "monthly", label: "Monthly", utilization: 55, resets_at: null }] };
+  const ready: Snapshot = { status: "ready", providers: [p] };
+  assert.equal(providers.OpenCodeGo, "OpenCode Go");
+  assert.equal(settings({ provider: "OpenCodeGo" }).provider, "OpenCodeGo");
+  assert.equal(keyView(ready, { provider: "OpenCodeGo" }, now).provider, "OpenCode Go");
+  assert.equal(keyView(ready, { provider: "OpenCodeGo" }, now).label, "5-Hour");
+  assert.equal(keyView(ready, { provider: "OpenCodeGo", bucket: "monthly" }, now).value, "55%");
+  assert.equal(keyView(ready, { provider: "Codex" }, now).value, "Disabled");
 });
 test("unavailable, signed-out and retrying states never show cached usage", () => {
   for (const status of ["offline", "missing", "invalid"] as const) {

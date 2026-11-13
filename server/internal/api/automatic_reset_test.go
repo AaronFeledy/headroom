@@ -88,10 +88,11 @@ func Test_resetAutomationProvider_only_default_rows_carry_state(t *testing.T) {
 		{ProviderName: "Codex"},
 		{ProviderName: "Cursor"},
 		{ProviderName: "Grok"},
+		{ProviderName: "OpenCodeGo"},
 	}
 
 	// When and Then
-	want := []string{"claude", "", "codex", "", ""}
+	want := []string{"claude", "", "codex", "", "", ""}
 	for index, row := range rows {
 		if got := resetAutomationProvider(row); got != want[index] {
 			t.Fatalf("%s provider = %q, want %q", row.ProviderName, got, want[index])

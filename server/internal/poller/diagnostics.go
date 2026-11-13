@@ -48,7 +48,7 @@ func (s *providerState) logAttempt(ctx context.Context, entry Entry, failure *us
 	}
 	provider := "Other"
 	switch s.providerType {
-	case "Claude", "Codex", "Cursor", "Grok":
+	case "Claude", "Codex", "Cursor", "Grok", "OpenCodeGo":
 		provider = s.providerType
 	}
 	outcome := "ok"

@@ -279,11 +279,11 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 	id, name := strings.ToLower(bucket.ID), strings.ToLower(provider)
 	var duration time.Duration
 
-	knownProvider := contains([]string{"claude", "codex", "cursor", "grok"}, name)
+	knownProvider := contains([]string{"claude", "codex", "cursor", "grok", "opencodego"}, name)
 	switch {
 	case knownProvider && (id == "weekly" || strings.HasPrefix(id, "weekly_")):
 		duration = 7 * 24 * time.Hour
-	case (name == "claude" || name == "codex") && id == "session":
+	case contains([]string{"claude", "codex", "opencodego"}, name) && id == "session":
 		if strings.Contains(strings.ToLower(bucket.Label), "weekly") {
 			duration = 7 * 24 * time.Hour
 		} else {
@@ -291,7 +291,8 @@ func pacing(provider string, bucket Bucket, now time.Time) pace {
 		}
 	case name == "cursor" && contains([]string{"session", "plan", "auto", "api", "on_demand"}, id):
 		duration = 30 * 24 * time.Hour
-	case name == "grok" && contains([]string{"session", "credits", "plan", "on_demand"}, id):
+	case name == "grok" && contains([]string{"session", "credits", "plan", "on_demand"}, id),
+		name == "opencodego" && id == "monthly":
 		start := previousMonth(*bucket.ResetsAt)
 		duration = bucket.ResetsAt.Sub(start)
 	}

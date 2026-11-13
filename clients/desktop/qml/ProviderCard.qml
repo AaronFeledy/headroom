@@ -305,7 +305,7 @@ Rectangle {
                     Accessible.description: card.pinned ? "Current tray meter" : ""
                     Rectangle {
                         width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
-                        Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.providerType) >= 0 }
+                        Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"].indexOf(card.providerType) >= 0 }
                     }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 1

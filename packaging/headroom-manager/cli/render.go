@@ -26,6 +26,8 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		name := provider.ProviderName
 		if strings.EqualFold(name, "Codex") {
 			name = "ChatGPT"
+		} else if strings.EqualFold(name, "OpenCodeGo") {
+			name = "OpenCode Go"
 		}
 		fmt.Fprintf(&output, "\n%s", terminalText(name))
 		if provider.Subtitle != nil && strings.TrimSpace(*provider.Subtitle) != "" {

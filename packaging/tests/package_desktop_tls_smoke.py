@@ -28,12 +28,12 @@ def main() -> None:
         root = Path(temporary)
         config = root / "server.yaml"
         config.write_text("providers:\n" + "".join(f"  {name}: {{enabled: false}}\n"
-                          for name in ("claude", "codex", "cursor", "grok")), encoding="utf-8")
+                          for name in ("claude", "codex", "cursor", "grok", "opencodego")), encoding="utf-8")
         environment["USAGE_CONFIG"] = str(config)
         environment["XDG_CONFIG_HOME"] = str(root)
         if sys.platform == "win32":
             environment["APPDATA"] = str(root)
-        for provider in ("CLAUDE", "CODEX", "CURSOR", "GROK"):
+        for provider in ("CLAUDE", "CODEX", "CURSOR", "GROK", "OPENCODEGO"):
             environment[f"USAGE_PROVIDER_{provider}_ENABLED"] = "false"
         result = root / "tls.json"
         subprocess.run([str(desktop), "--config", str(root / "settings.json"),

@@ -302,3 +302,31 @@ func TestWarningHysteresisMatchesDesktopThresholds(t *testing.T) {
 		t.Fatalf("paced hysteresis level = %d", got)
 	}
 }
+
+func TestOpenCodeGoDisplayNameAndJSONPassThrough(t *testing.T) {
+	body := []byte(`[{"provider_name":"OpenCodeGo","provider_type":"OpenCodeGo","error":null,"is_success":true,"needs_reauth":false,"buckets":[{"id":"session","label":"5-Hour","utilization":40,"resets_at":"2026-09-11T14:30:00Z","measurement":"percent"},{"id":"weekly","label":"Weekly","utilization":20,"resets_at":"2026-09-15T00:00:00Z","measurement":"percent"},{"id":"monthly","label":"Monthly","utilization":10,"resets_at":"2026-09-30T00:00:00Z","measurement":"percent"}]}]`)
+	t.Run("text", func(t *testing.T) {
+		options, stdout, _ := baseOptions(body)
+		if err := Run(context.Background(), options); err != nil {
+			t.Fatal(err)
+		}
+		for _, wanted := range []string{"OpenCode Go", "5-Hour", "Weekly", "Monthly"} {
+			if !strings.Contains(stdout.String(), wanted) {
+				t.Fatalf("output omitted %q:\n%s", wanted, stdout.String())
+			}
+		}
+		if strings.Contains(stdout.String(), "OpenCodeGo") {
+			t.Fatalf("output kept the API name:\n%s", stdout.String())
+		}
+	})
+	t.Run("json", func(t *testing.T) {
+		options, stdout, _ := baseOptions(body)
+		options.Args = []string{"--json"}
+		if err := Run(context.Background(), options); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(bytes.TrimSpace(stdout.Bytes()), body) {
+			t.Fatalf("JSON bytes changed: %s", stdout)
+		}
+	})
+}

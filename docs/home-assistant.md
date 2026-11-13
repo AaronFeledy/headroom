@@ -20,11 +20,12 @@ claude_usage_widget_auth: Bearer replace-with-a-long-random-token
 ## REST Sensors
 
 The server endpoint is `GET /api/v1/usage`. It returns one array entry per
-enabled provider, sorted by provider name. With all four providers enabled, the
-order is `Claude`, `Codex`, `Cursor`, then `Grok`. Extra Claude account rows such
-as `Claude (Work)` are appended after these, so adding an account does not shift
-existing indexes. `Codex` is the compatible API name for the provider Headroom
-displays as ChatGPT, so existing sensor names and indexes do not change.
+enabled provider, sorted by provider name. With all five providers enabled, the
+order is `Claude`, `Codex`, `Cursor`, `Grok`, then `OpenCodeGo`. Extra Claude
+account rows such as `Claude (Work)` are appended after these, so adding an
+account does not shift existing indexes. `Codex` is the compatible API name for
+the provider Headroom displays as ChatGPT, and `OpenCodeGo` is the API name for
+OpenCode Go; it sorts last, so existing sensor names and indexes do not change.
 
 The additive `auth` object describes sign-in state, source, and recovery hints;
 existing sensor fields and plain HTTP keep working. Current servers can also
@@ -143,6 +144,32 @@ sensor:
       - error
       - needs_reauth
       - is_success
+
+  - platform: rest
+    name: "OpenCode Go Usage Current"
+    unique_id: claude_usage_widget_opencodego_current
+    resource: "http://usage-server.local:7823/api/v1/usage"
+    scan_interval: 60
+    headers:
+      Authorization: !secret claude_usage_widget_auth
+    value_template: "{{ value_json[4].current.utilization | round(1) }}"
+    unit_of_measurement: "%"
+    json_attributes_path: "$[4]"
+    json_attributes:
+      - provider_name
+      - primary_label
+      - secondary_label
+      - show_secondary
+      - subtitle
+      - primary_status_text
+      - secondary_status_text
+      - reauth_command
+      - current
+      - weekly
+      - buckets
+      - error
+      - needs_reauth
+      - is_success
 ```
 
 If you enable only some providers, adjust the array indexes to match the returned `/api/v1/usage` order. To avoid index dependence, you can also create one REST sensor per provider endpoint, such as `/api/v1/usage/Claude` or `/api/v1/usage/Claude%20(Work)`; the JSON paths then start at `value_json.current.utilization` instead of `value_json[0].current.utilization`.
@@ -210,7 +237,7 @@ can read it; the API never arms or redeems it from a sensor request, other
 provider rows and extra Claude accounts report `null`, and an ended window is
 never reported as armed.
 
-`buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.
+`buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; OpenCode Go `monthly`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.
 
 
 Usage buckets also expose optional `starts_at` and `detail_text` fields (explicit
