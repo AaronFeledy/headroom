@@ -387,7 +387,7 @@ void Controller::recordProviderDiagnostics(const QVariantList &providers) {
         const auto provider = value.toMap();
         const QString name = provider["provider_name"].toString();
         const QString type = Usage::providerType(provider);
-        if (!QStringList{"Claude", "Codex", "Cursor", "Grok"}.contains(type)) continue;
+        if (!QStringList{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}.contains(type)) continue;
         const auto status = provider["fetch_status"].toMap();
         const QString fetched = safeTime(status["fetched_at"]);
         if (fetched.isEmpty() || m_diagnosticAttempts.value(name) == fetched) continue;

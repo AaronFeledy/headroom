@@ -2,8 +2,8 @@
 
 Two Stream Deck actions for Windows and macOS:
 
-- **Usage Meter** shows Claude, ChatGPT, Cursor, or Grok usage as a ring around
-  the provider logo, with a white pace marker and warning colors.
+- **Usage Meter** shows Claude, ChatGPT, Cursor, Grok, or OpenCode Go usage as a
+  ring around the provider logo, with a white pace marker and warning colors.
   Press the key to open Headroom for exact percentages and reset times.
 - **Open Headroom** opens the desktop app without displaying a meter.
 
@@ -36,9 +36,10 @@ Avoid versioned internal executables, which updates replace.
 
 **First available** selects the provider's first usage meter. Choosing a
 specific meter never falls back to another meter if it disappears. Available
-meters vary by provider and plan. **Custom meter** accepts IDs such as
-`weekly_sonnet` or `weekly_grok_bot` returned by Headroom.
-The UI displays ChatGPT; its API identifier remains `Codex`.
+meters vary by provider and plan; **Monthly** selects OpenCode Go's
+calendar-month meter. **Custom meter** accepts IDs such as `weekly_sonnet` or
+`weekly_grok_bot` returned by Headroom. The UI displays ChatGPT and OpenCode Go;
+their API identifiers remain `Codex` and `OpenCodeGo`.
 
 ## Connection and privacy
 
@@ -93,8 +94,9 @@ an alert. Recovery below Critical stops the alert. Both animations stop when
 the key is hidden, its settings change, or data becomes unavailable.
 
 Pacing follows the desktop's provider-reported windows and its session, weekly,
-Cursor billing, and Grok calendar-month estimates. Unknown, expired, or invalid
-windows do not get a tick. Status-only on-demand buckets do not become 0% meters.
+Cursor billing, Grok calendar-month, and OpenCode Go monthly estimates. Unknown,
+expired, or invalid windows do not get a tick. Status-only on-demand buckets do
+not become 0% meters.
 
 Colors match the tray: Normal (purple), Watch (yellow), Warning (orange), and
 Critical (red). The same thresholds account for near-exhausted limits and prevent

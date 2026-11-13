@@ -266,7 +266,7 @@ ApplicationWindow {
                                 loops: AnimatedImage.Infinite; finishBehavior: AnimatedImage.FinishAtInitialFrame
                             }
                             Text { text: window.state.status === "ready" ? "No providers enabled" : window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing your local server" : "Connecting to your server") : "Connect your usage server"; color: Theme.foreground; font.pixelSize: 24; font.weight: Font.Medium; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : window.state.status === "connecting" || window.state.status === "offline" ? window.state.message : "Bring Claude, ChatGPT, Cursor, and Grok into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : window.state.status === "connecting" || window.state.status === "offline" ? window.state.message : "Bring Claude, ChatGPT, Cursor, Grok, and OpenCode Go into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             ActionButton { text: window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing…" : "Connecting…") : window.state.status === "offline" ? "Connection settings →" : "Connect your backend →"; accent: true; Layout.alignment: Qt.AlignHCenter; onClicked: settings.open() }
                         }
                     }

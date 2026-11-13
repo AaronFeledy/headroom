@@ -93,7 +93,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="headroom-packaged-server-") as root:
         config = os.path.join(root, "config.yaml")
         with open(config, "w", encoding="utf-8") as output:
-            output.write("providers:\n  claude: {enabled: false}\n  codex: {enabled: false}\n  cursor: {enabled: false}\n  grok: {enabled: false}\n")
+            output.write("providers:\n  claude: {enabled: false}\n  codex: {enabled: false}\n  cursor: {enabled: false}\n  grok: {enabled: false}\n  opencodego: {enabled: false}\n")
         environment = dict(os.environ)
         for key in list(environment):
             if key.startswith("USAGE_") or key.startswith("CLAUDE_") or key.startswith("CODEX_") or key.startswith("CURSOR_") or key.startswith("GROK_"):
@@ -105,6 +105,7 @@ def main():
             "USAGE_PROVIDER_CODEX_ENABLED": "false",
             "USAGE_PROVIDER_CURSOR_ENABLED": "false",
             "USAGE_PROVIDER_GROK_ENABLED": "false",
+            "USAGE_PROVIDER_OPENCODEGO_ENABLED": "false",
             "HOME": root,
         })
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0

@@ -43,20 +43,28 @@ private slots:
             QVERIFY(service.saveOrder({name, "Claude", "Codex"}, name).isEmpty());
             SettingsService reopened(service.path(), false);
             QCOMPARE(reopened.value().primary, name);
-            QCOMPARE(reopened.value().order, (QStringList{name, "Claude", "Codex", "Cursor", "Grok"}));
+            QCOMPARE(reopened.value().order, (QStringList{name, "Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}));
         }
     }
     void extraProviderOrderIsBoundedAndSanitized() {
         const QStringList values{"Claude (Work)", "claude (work)", "cLaUdE", "Bad\nName", "Codex", "Bad\x7fName"};
         QCOMPARE(SettingsService::normalizeOrder(values, "Grok"),
-            (QStringList{"Claude (Work)", "Claude", "Codex", "Cursor", "Grok"}));
+            (QStringList{"Claude (Work)", "Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}));
         QStringList many;
         for (int i = 0; i < 34; ++i) many.append(QString("Account %1").arg(i));
         const auto normalized = SettingsService::normalizeOrder(many, "Claude");
-        QCOMPARE(normalized.size(), 36);
+        QCOMPARE(normalized.size(), 37);
         QCOMPARE(normalized[31], "Account 31");
-        QCOMPARE(normalized.mid(32), (QStringList{"Claude", "Codex", "Cursor", "Grok"}));
+        QCOMPARE(normalized.mid(32), (QStringList{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"}));
         QCOMPARE(SettingsService::normalizeProvider(QString(81, 'x')), "Claude");
+    }
+    void savedFourProviderOrderGainsOpenCodeGoLast() {
+        // Existing orders from before OpenCode Go keep their choices and gain
+        // the new known provider at the end instead of dropping it.
+        QCOMPARE(SettingsService::normalizeOrder({"Grok", "Claude", "Codex", "Cursor"}, "Claude"),
+            (QStringList{"Grok", "Claude", "Codex", "Cursor", "OpenCodeGo"}));
+        QCOMPARE(SettingsService::normalizeProvider("opencodego"), QString("OpenCodeGo"));
+        QCOMPARE(SettingsService::normalizeProvider("OPENCODEGO"), QString("OpenCodeGo"));
     }
     void certificateAndBrowserSharingPersistence() {
         QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);
@@ -291,7 +299,7 @@ private slots:
         QCOMPARE(service.value().token, QString("fixture-token"));
         QCOMPARE(service.value().interval, 120);
         QCOMPARE(service.value().notifications, false);
-        QCOMPARE(service.value().order, QStringList({"Codex", "Cursor", "Claude", "Grok"}));
+        QCOMPARE(service.value().order, QStringList({"Codex", "Cursor", "Claude", "Grok", "OpenCodeGo"}));
         QCOMPARE(service.value().startup, true);
         QCOMPARE(service.value().startupMigrationPending, true);
         QCOMPARE(readFile(legacy), original);

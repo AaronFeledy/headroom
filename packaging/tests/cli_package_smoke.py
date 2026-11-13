@@ -62,7 +62,7 @@ def main():
             assert "listen-addr" in subprocess.check_output([str(legacy), "--help"], env=env, text=True, timeout=20, stderr=subprocess.STDOUT)
         config = root / "server.yaml"
         config.write_text("providers:\n" + "".join(f"  {name}:\n    enabled: false\n"
-            for name in ("claude", "codex", "cursor", "grok")))
+            for name in ("claude", "codex", "cursor", "grok", "opencodego")))
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]

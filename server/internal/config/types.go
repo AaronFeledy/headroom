@@ -53,10 +53,11 @@ func Defaults() Config {
 		TLS:          "auto",
 		PollInterval: 60 * time.Second,
 		Providers: map[string]ProviderConfig{
-			"claude": {Enabled: true, CredentialsPath: "~/.claude/.credentials.json"},
-			"codex":  {Enabled: true},
-			"cursor": {Enabled: true, BrowserCredentials: true},
-			"grok":   {Enabled: true},
+			"claude":     {Enabled: true, CredentialsPath: "~/.claude/.credentials.json"},
+			"codex":      {Enabled: true},
+			"cursor":     {Enabled: true, BrowserCredentials: true},
+			"grok":       {Enabled: true},
+			"opencodego": {Enabled: true},
 		},
 	}
 }

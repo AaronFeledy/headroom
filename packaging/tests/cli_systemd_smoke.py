@@ -53,7 +53,7 @@ def main():
         runtime = root / state["version_path"] / "bin/headroom"
         immutable_manager = runtime.with_name("headroom-package")
         config = directory / "server.yaml"
-        config.write_text("providers:\n" + "".join(f"  {name}:\n    enabled: false\n" for name in ("claude", "codex", "cursor", "grok")))
+        config.write_text("providers:\n" + "".join(f"  {name}:\n    enabled: false\n" for name in ("claude", "codex", "cursor", "grok", "opencodego")))
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
@@ -63,7 +63,7 @@ def main():
             return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
         unit.write_text("[Unit]\nDescription=Disposable Headroom integration fixture\n[Service]\nType=exec\n"
             + f"WorkingDirectory={directory}\n"
-            + "Environment=USAGE_PROVIDER_CLAUDE_ENABLED=false USAGE_PROVIDER_CODEX_ENABLED=false USAGE_PROVIDER_CURSOR_ENABLED=false USAGE_PROVIDER_GROK_ENABLED=false\n"
+            + "Environment=USAGE_PROVIDER_CLAUDE_ENABLED=false USAGE_PROVIDER_CODEX_ENABLED=false USAGE_PROVIDER_CURSOR_ENABLED=false USAGE_PROVIDER_GROK_ENABLED=false USAGE_PROVIDER_OPENCODEGO_ENABLED=false\n"
             + f"ExecStart={quote(entry)} serve --config {quote(config)} --listen-addr 127.0.0.1:{port} --auth-token \"\" --ssh-access=false\n"
             + "Restart=on-failure\nRestartSec=1\nTimeoutStopSec=10\nUMask=0077\n")
         watch = None

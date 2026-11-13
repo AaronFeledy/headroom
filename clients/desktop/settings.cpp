@@ -198,7 +198,7 @@ QString SettingsService::defaultLegacyPath()
 QString SettingsService::normalizeProvider(const QString &provider)
 {
     const QString candidate = provider.trimmed();
-    for (const QString &known : {QString("Claude"), QString("Codex"), QString("Cursor"), QString("Grok")})
+    for (const QString &known : {QString("Claude"), QString("Codex"), QString("Cursor"), QString("Grok"), QString("OpenCodeGo")})
         if (candidate.compare(known, Qt::CaseInsensitive) == 0) return known;
     const auto points = candidate.toUcs4();
     if (!points.isEmpty() && points.size() <= 80
@@ -210,7 +210,7 @@ QString SettingsService::normalizeProvider(const QString &provider)
 
 QStringList SettingsService::normalizeOrder(const QStringList &values, const QString &legacyPrimary)
 {
-    const QStringList defaults{"Claude", "Codex", "Cursor", "Grok"};
+    const QStringList defaults{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"};
     QStringList result;
     int extras = 0;
     for (const auto &value : values) {

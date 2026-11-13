@@ -10,7 +10,7 @@ import (
 
 func Test_Auth_JSON_frozen_keys_order_nullability_for_all_providers(t *testing.T) {
 	// Given
-	for _, provider := range []string{"Claude", "Codex", "Cursor", "Grok"} {
+	for _, provider := range []string{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"} {
 		t.Run(provider, func(t *testing.T) {
 			data := usage.FromBuckets(provider, nil)
 			data.Auth = usage.NewAuth(provider, "signed_in", &usage.AuthSource{Kind: "cli", Name: provider})

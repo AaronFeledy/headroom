@@ -3,7 +3,7 @@
   "UUID": "com.aaronfeledy.headroom",
   "Name": "Headroom",
   "Author": "Aaron Feledy",
-  "Description": "See Claude, ChatGPT, Cursor, and Grok usage on your keys and open Headroom.",
+  "Description": "See Claude, ChatGPT, Cursor, Grok, and OpenCode Go usage on your keys and open Headroom.",
   "Version": "0.0.0.0",
   "SDKVersion": 3,
   "CodePath": "bin/plugin.js",

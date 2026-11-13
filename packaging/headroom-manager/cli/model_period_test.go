@@ -36,3 +36,26 @@ func TestPacingIgnoresInvalidOptionalPeriodStart(t *testing.T) {
 		}
 	}
 }
+
+func TestPacingUsesOpenCodeGoWindows(t *testing.T) {
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name   string
+		bucket Bucket
+		want   time.Duration
+	}{
+		{"session", Bucket{ID: "session", Label: "5-Hour", Utilization: 50,
+			ResetsAt: timePointer(now.Add(2*time.Hour + 30*time.Minute))}, 5 * time.Hour},
+		{"weekly", Bucket{ID: "weekly", Label: "Weekly", Utilization: 50,
+			ResetsAt: timePointer(now.Add(84 * time.Hour))}, 7 * 24 * time.Hour},
+		{"monthly", Bucket{ID: "monthly", Label: "Monthly", Utilization: 50,
+			ResetsAt: timePointer(time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC))}, 28 * 24 * time.Hour},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := pacing("OpenCodeGo", test.bucket, now)
+			if !got.available || got.duration != test.want || math.Abs(got.expected-50) > 1e-9 {
+				t.Fatalf("pacing = %+v, want midpoint of %s window", got, test.want)
+			}
+		})
+	}
+}

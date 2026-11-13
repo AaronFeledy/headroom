@@ -128,6 +128,7 @@ func Test_Poller_sortEntries_places_account_rows_after_defaults(t *testing.T) {
 		&accountProvider{name: "Claude (Work)", providerType: "Claude", account: &usage.Account{ID: "work", Label: "Work"}, responses: []providerResult{{}}},
 		&sequenceProvider{name: "Codex", responses: []providerResult{{}}},
 		&sequenceProvider{name: "Cursor", responses: []providerResult{{}}},
+		&sequenceProvider{name: "OpenCodeGo", responses: []providerResult{{}}},
 	} {
 		if err := poller.Register(p, true); err != nil {
 			t.Fatal(err)
@@ -157,7 +158,7 @@ func Test_Poller_sortEntries_places_account_rows_after_defaults(t *testing.T) {
 	}
 
 	// Then
-	want := []string{"Claude", "Codex", "Cursor", "Grok", "Claude (Work)"}
+	want := []string{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo", "Claude (Work)"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("order = %v, want %v", names, want)
 	}

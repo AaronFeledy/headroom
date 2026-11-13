@@ -41,6 +41,17 @@ test("provider and reported windows agree with the desktop, including leap years
     assert.equal(windowSeconds("Cursor", { ...reported, starts_at: start }), 30 * DAY);
   }
 });
+test("OpenCode Go session, weekly and monthly windows follow the assumed durations", () => {
+  assert.equal(windowSeconds("OpenCodeGo", { ...bucket(30), label: "5-Hour" }), 5 * 3600);
+  assert.equal(windowSeconds("OpenCodeGo", { ...bucket(30, 7 * DAY, "weekly") }), 7 * DAY);
+  for (const [reset, days] of [["2024-03-31T12:00:00Z", 31], ["2025-03-01T12:00:00Z", 28],
+    ["2024-03-01T12:00:00Z", 29], ["2026-01-31T12:00:00Z", 31]] as const) {
+    assert.equal(windowSeconds("OpenCodeGo", { ...bucket(30), id: "monthly", label: "Monthly", resets_at: reset }), days * DAY);
+  }
+  const monthly = { id: "monthly", label: "Monthly", utilization: 50, starts_at: null,
+    resets_at: new Date(now + 15.5 * DAY * 1000).toISOString() };
+  assert.equal(pacing("OpenCodeGo", monthly, now).expected, 50);
+});
 test("missing, expired, impossible and status-only windows never invent pace", () => {
   for (const b of [
     { ...bucket(30), resets_at: null }, { ...bucket(30), resets_at: new Date(now).toISOString() },

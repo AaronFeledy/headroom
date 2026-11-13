@@ -24,7 +24,7 @@ await build({ entryPoints: ["src/plugin.ts"], outfile: path.join(out, "bin/plugi
 await cp("../../LICENSE", path.join(out, "LICENSE"));
 await mkdir(path.join(out, "imgs"), { recursive: true });
 await mkdir(path.join(out, "imgs/providers"), { recursive: true });
-for (const provider of ["claude", "codex", "cursor", "grok"]) {
+for (const provider of ["claude", "codex", "cursor", "grok", "opencodego"]) {
   await cp("../shared/provider-icons/" + provider + ".png", path.join(out, "imgs/providers", provider + ".png"));
 }
 await cp("../shared/provider-icons/README.md", path.join(out, "PROVIDER-MARKS.md"));

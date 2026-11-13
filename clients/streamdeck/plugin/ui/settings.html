@@ -14,6 +14,7 @@
       <select id="provider">
         <option value="Claude">Claude</option><option value="Codex">ChatGPT</option>
         <option value="Cursor">Cursor</option><option value="Grok">Grok</option>
+        <option value="OpenCodeGo">OpenCode Go</option>
       </select>
       <label for="account">Account ID</label>
       <input id="account" type="text" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{0,31}" spellcheck="false" placeholder="Default account">
@@ -21,7 +22,8 @@
       <label for="bucket">Meter</label>
       <select id="bucket">
         <option value="first">First available</option><option value="session">Session</option>
-        <option value="weekly">Weekly</option><option value="plan">Plan</option>
+        <option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+        <option value="plan">Plan</option>
         <option value="auto">Auto</option><option value="api">API</option>
         <option value="credits">Credits</option><option value="extra">Extra usage</option>
         <option value="on_demand">On demand</option><option value="weekly_grok_bot">Weekly Grok Bot</option>
