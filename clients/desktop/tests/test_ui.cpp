@@ -113,7 +113,7 @@ private slots:
         QCOMPARE(icon->property("source").toUrl(), QUrl("qrc:/provider-icons/claude.svg"));
         auto count = findItem(window->contentItem(), "bankedResets_Claude (Work)"); QVERIFY(count);
         QVERIFY(count->isVisible());
-        QCOMPARE(count->property("text").toString(), "2 banked resets");
+        QCOMPARE(count->property("text").toString(), "2 resets");
         QVERIFY(!count->activeFocusOnTab());
         QVERIFY(!count->property("font").value<QFont>().underline());
         QQmlExpression role(qmlContext(count), count, "Accessible.role");
@@ -146,7 +146,7 @@ private slots:
                 TestUsage::claudeResetKind("fable", "Fable reset", 2, true, {"weekly_fable"}, true)}}};
         controller.replaceSnapshot(QJsonDocument(QJsonArray{withKinds, samples[1]}).toJson());
         auto kindCount = findItem(window->contentItem(), "bankedResets_Claude (Work)"); QVERIFY(kindCount);
-        QTRY_COMPARE(kindCount->property("text").toString(), QString("1 weekly reset · 2 Fable resets"));
+        QTRY_COMPARE(kindCount->property("text").toString(), QString("3 resets"));
         auto kindButton = findItem(window->contentItem(), "useBankedReset_Claude (Work)"); QVERIFY(kindButton);
         QVERIFY(!kindButton->isVisible());
         QVERIFY(!kindCount->activeFocusOnTab());
@@ -295,6 +295,9 @@ private slots:
         QTRY_VERIFY(!panel->property("opened").toBool());
         QTRY_COMPARE(window->activeFocusItem()->objectName(), QString("escapeFocus"));
         auto header = findItem(window->contentItem(), "providerHeader_Cursor"); QVERIFY(header);
+        auto cursorGlow = findItem(window->contentItem(), "trayMeterGlow_Cursor_0"); QVERIFY(cursorGlow);
+        auto claudeGlow = findItem(window->contentItem(), "trayMeterGlow_Claude_0"); QVERIFY(claudeGlow);
+        QTRY_VERIFY(!cursorGlow->isVisible());
         header->forceActiveFocus();
         QTest::keyClick(window, Qt::Key_Menu);
         // Offscreen has no native keyboard event translator; deliver the
@@ -308,6 +311,10 @@ private slots:
         QTRY_VERIFY(providerMenu->property("opened").toBool());
         QTest::keyClick(window, Qt::Key_Down); QTest::keyClick(window, Qt::Key_Return);
         QTRY_COMPARE(controller.primary(), QString("Cursor"));
+        QTRY_VERIFY(findItem(window->contentItem(), "trayMeterGlow_Cursor_0"));
+        QTRY_VERIFY(findItem(window->contentItem(), "trayMeterGlow_Cursor_0")->isVisible());
+        QTRY_VERIFY(findItem(window->contentItem(), "trayMeterGlow_Claude_0"));
+        QTRY_VERIFY(!findItem(window->contentItem(), "trayMeterGlow_Claude_0")->isVisible());
         QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, QPoint(5, 80));
         QTRY_VERIFY(dashboardMenu->property("opened").toBool());
         QCOMPARE(dashboardMenu->property("separatorsCollapsible").toBool(), true);
@@ -952,7 +959,7 @@ private slots:
         auto counter = [&]() { return findItem(window->contentItem(), "bankedResets_Codex"); };
         QTRY_VERIFY(delta() && delta()->property("running").toBool());
         QCOMPARE(delta()->property("text").toString(), "+1");
-        QCOMPARE(counter()->property("text").toString(), "4 banked resets");
+        QCOMPARE(counter()->property("text").toString(), "4 resets");
         QCOMPARE(controller.notifications()->unreadCount(), 0);
         QTRY_VERIFY(delta()->property("rise").toDouble() > 5);
         auto scroll = findItem(window->contentItem(), "meterScroll"); QVERIFY(scroll);
@@ -1052,7 +1059,7 @@ private slots:
         };
         auto label = resetLabel(); QVERIFY(label);
         QTRY_VERIFY(label->isVisible());
-        QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+        QCOMPARE(label->property("text").toString(), QString("3 resets"));
         const QColor muted = label->property("color").value<QColor>();
         QVERIFY(muted != QColor("#ff5555"));
         QVERIFY(window->grabWindow().save(capture("headroom-banked-resets.png")));
@@ -1074,7 +1081,7 @@ private slots:
 
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 1, halfWeekReset));
         label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
-        QCOMPARE(label->property("text").toString(), QString("1 banked reset"));
+        QCOMPARE(label->property("text").toString(), QString("1 reset"));
         QCOMPARE(label->property("color").value<QColor>(), muted);
 
         for (const auto &[weekly, severity] : QList<QPair<int, int>>{{56, 1}, {68, 2}, {80, 3}, {73, 3}, {68, 2}}) {
@@ -1083,7 +1090,7 @@ private slots:
             QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "weekly"}})["severity"].toInt(), severity);
             const QColor expected = severity == 3 ? QColor("#ff5555") : muted;
             QTRY_COMPARE(label->property("color").value<QColor>(), expected);
-            QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+            QCOMPARE(label->property("text").toString(), QString("3 resets"));
             if (severity == 3 && weekly == 80)
                 QVERIFY(window->grabWindow().save(capture("headroom-banked-resets-critical.png")));
         }
@@ -1129,7 +1136,7 @@ private slots:
         auto label = [&] { return findItem(window->contentItem(), "bankedResets_Claude"); };
         auto button = [&] { return findItem(window->contentItem(), "useBankedReset_Claude"); };
         QVERIFY(label()); QTRY_VERIFY(label()->isVisible());
-        QCOMPARE(label()->property("text").toString(), "3 banked resets");
+        QCOMPARE(label()->property("text").toString(), "3 resets");
         QVERIFY(button()); QTRY_VERIFY(button()->isVisible());
         const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         const QString captureDir = requested.isEmpty() ? dir.path() : requested;
@@ -1163,7 +1170,7 @@ private slots:
         controller.replaceSnapshot(TestUsage::snapshotWithClaude(100, 100, 3, true, "invalid"));
         QTRY_VERIFY(!button()->isVisible());
         controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, 60, 1, true));
-        QTRY_COMPARE(label()->property("text").toString(), "1 banked reset");
+        QTRY_COMPARE(label()->property("text").toString(), "1 reset");
         auto noWeekly = QJsonDocument::fromJson(TestUsage::snapshotWithClaude(95, 60, 3, false)).array();
         auto claude = noWeekly[0].toObject();
         claude["buckets"] = QJsonArray{claude["buckets"].toArray().first()}; noWeekly[0] = claude;
@@ -1212,31 +1219,31 @@ private slots:
         auto label = [&] { return findItem(window->contentItem(), "bankedResets_Claude"); };
         QVERIFY(label());
         QTRY_VERIFY(label()->isVisible());
-        // At the compact width the weekly meter cannot hold the breakdown beside
-        // the options button, so each kind takes its own line. It stays readable
-        // in full and inside the meter instead of spilling out of the card.
-        auto footer = [&] { return findItem(window->contentItem(), "meterResetDetails_Claude_weekly"); };
-        QVERIFY(footer());
+        // The control shares the header at narrow widths and sits below it at wide widths.
+        auto card = findItem(window->contentItem(), "providerCard_Claude"); QVERIFY(card);
+        auto header = findItem(window->contentItem(), "providerHeader_Claude"); QVERIFY(header);
+        auto control = findItem(window->contentItem(), "bankedResetControl_Claude"); QVERIFY(control);
         auto leftEdge = [&](QQuickItem *item) { return item->mapToItem(window->contentItem(), QPointF(0, 0)).x(); };
-        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset\n2 Fable resets"));
         QTRY_VERIFY2(!label()->property("truncated").toBool(), "the kind breakdown is elided");
-        QTRY_VERIFY2(leftEdge(label()) >= leftEdge(footer()) - 0.5,
-            qPrintable(QString("label starts at %1, meter at %2").arg(leftEdge(label())).arg(leftEdge(footer()))));
+        QTRY_VERIFY(leftEdge(label()) >= leftEdge(card));
+        QTRY_VERIFY(qAbs(control->mapToItem(card, QPointF(control->width(), 0)).x() - (card->width() - 18)) < 1);
+        QTRY_VERIFY(control->mapToItem(card, QPointF()).y() < header->mapToItem(card, QPointF(header->width(), header->height())).y());
         const auto capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!capture.isEmpty()) {
             QDir().mkpath(capture);
             QVERIFY(window->grabWindow().save(QDir(capture).filePath("claude-reset-kinds.png")));
         }
-        // With room to spare, the breakdown returns to one line.
+        // The full kind breakdown remains available in the tooltip at both widths.
         const QSize compactSize = window->size();
         window->resize(1400, compactSize.height());
-        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset · 2 Fable resets"));
+        QTRY_COMPARE(label()->property("text").toString(), QString("3 resets"));
         QTRY_VERIFY(!label()->property("truncated").toBool());
-        QTRY_VERIFY(leftEdge(label()) >= leftEdge(footer()) - 0.5);
+        QTRY_VERIFY(leftEdge(label()) >= leftEdge(card));
+        QTRY_VERIFY(control->mapToItem(card, QPointF()).y() >= header->mapToItem(card, QPointF(0, header->height())).y());
         if (!capture.isEmpty())
             QVERIFY(window->grabWindow().save(QDir(capture).filePath("claude-reset-kinds-wide.png")));
         window->resize(compactSize);
-        QTRY_COMPARE(label()->property("text").toString(), QString("1 weekly reset\n2 Fable resets"));
+        QTRY_VERIFY(!label()->property("truncated").toBool());
         // Hover details explain each kind without adding any action.
         const QString details = label()->property("detailText").toString();
         QVERIFY(details.contains("1 weekly reset"));
@@ -1246,9 +1253,9 @@ private slots:
         QVERIFY(details.contains("Expires"));
         auto button = findItem(window->contentItem(), "useBankedReset_Claude"); QVERIFY(button);
         QVERIFY(button->isVisible());
-        // Removing the breakdown restores the exact legacy text.
+        // Removing the breakdown keeps the compact total and clears its details.
         controller.replaceSnapshot(TestUsage::snapshotWithClaude(40, 60, 3, true));
-        QTRY_COMPARE(label()->property("text").toString(), QString("3 banked resets"));
+        QTRY_COMPARE(label()->property("text").toString(), QString("3 resets"));
         QVERIFY(!label()->property("detailText").toString().contains("Refills"));
     }
     void claudeAutomaticResetCardRendersServerStateWithoutActions() {
@@ -1286,7 +1293,7 @@ private slots:
         auto button = [&] { return findItem(window->contentItem(), "useBankedReset_Claude"); };
         QVERIFY(button()); QTRY_VERIFY(button()->isVisible());
         QCOMPARE(controller.resetState("Claude").value("phase").toString(), QString("armed"));
-        QCOMPARE(button()->property("text").toString(), QString("Auto at limit…"));
+        QCOMPARE(button()->property("text").toString(), QString("Auto…"));
         const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         const QString captureDir = requested.isEmpty() ? dir.path() : requested;
         QVERIFY(QDir().mkpath(captureDir));
@@ -1352,7 +1359,7 @@ private slots:
             controller.replaceSnapshot(bound(reading.weekly, reading.count, reading.fingerprint));
             QVERIFY(button()); QTRY_COMPARE(button()->isVisible(), reading.offered);
             QTRY_COMPARE(button()->isEnabled(), reading.offered);
-            if (reading.offered) QCOMPARE(button()->property("text").toString(), QString("Reset options…"));
+            if (reading.offered) QCOMPARE(button()->property("text").toString(), QString("Options…"));
             const auto state = controller.resetState("Codex");
             QCOMPARE(state.value("visible").toBool(), reading.offered);
             QCOMPARE(state.value("enabled").toBool(), reading.offered);

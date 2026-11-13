@@ -54,9 +54,6 @@ Rectangle {
         return resetCredits.available_count === 1 ? "1 banked reset"
             : resetCredits.available_count + " banked resets"
     }
-    // The same breakdown with one kind per line, for a meter too narrow to
-    // hold it beside the options button.
-    readonly property string resetKindLines: kindContent.lines
     readonly property string resetKindDetails: kindContent.details
     readonly property var resetState: { backend.resetAction; card.provider; return backend.resetState(card.name) }
     readonly property bool managingReset: resetState.managing === true
@@ -71,26 +68,12 @@ Rectangle {
         return card.weeklyBucket ? backend.concern(card.name, card.weeklyBucket) : ({})
     }
     Component {
-        id: bankedResetsFooter
-        GridLayout {
-            id: resetFooter
-            // A meter reports its own width here. A kind breakdown is longer
-            // than a total, so it is laid out to stay inside that width: on one
-            // line when it fits beside the button, otherwise one kind per line.
-            property real availableWidth: 0
-            readonly property bool bounded: card.hasKindBreakdown && availableWidth > 0
-            readonly property real buttonSpace: resetButton.visible ? resetButton.implicitWidth + columnSpacing : 0
-            readonly property bool breakdownFits: !bounded
-                || Math.ceil(breakdownMetrics.advanceWidth) + 1 + buttonSpace <= availableWidth
-            columns: !card.weeklyBucket && !card.stacked ? 1 : 2
-            columnSpacing: 8; rowSpacing: 4
-            TextMetrics { id: breakdownMetrics; font: resetLabel.font; text: card.resetCountText }
+        id: bankedResetsControl
+        RowLayout {
+            spacing: 5
             Item {
                 // Keep the transient delta anchored even when the last reset
                 // disappears. Only positive counts have a visible/focusable label.
-                Layout.fillWidth: true
-                Layout.maximumWidth: resetFooter.bounded
-                    ? Math.max(0, resetFooter.availableWidth - resetFooter.buttonSpace) : Number.POSITIVE_INFINITY
                 implicitWidth: resetLabel.implicitWidth
                 implicitHeight: resetLabel.implicitHeight
                 Text {
@@ -101,7 +84,7 @@ Rectangle {
                     visible: card.hasBankedResets
                     textFormat: Text.PlainText
                     readonly property string detailText: card.resetKindDetails
-                    text: resetFooter.breakdownFits ? card.resetCountText : card.resetKindLines
+                    text: card.hasResetCount ? resetCredits.available_count + (resetCredits.available_count === 1 ? " reset" : " resets") : ""
                     color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
                     font.pixelSize: 11; elide: Text.ElideRight
                     horizontalAlignment: Text.AlignRight
@@ -125,6 +108,7 @@ Rectangle {
                     ToolTip.text: {
                         const lines = []
                         if (card.resetProvider) lines.push("Open " + card.displayName + " usage and reset controls")
+                        if (card.resetCountText.length) lines.push(card.resetCountText)
                         if (card.resetKindDetails.length) lines.push(card.resetKindDetails)
                         return lines.join("\n")
                     }
@@ -189,15 +173,16 @@ Rectangle {
                 text: {
                     switch (card.resetState.phase) {
                     case "submitting": return "Resetting…"
-                    case "armed": return card.name === "Claude" ? "Auto at limit…" : "Auto at 100%…"
-                    case "paused": return "Auto paused…"
+                    case "armed": return "Auto…"
+                    case "paused": return "Paused…"
                     case "reconciling": return "Waiting…"
-                    default: return "Reset options…"
+                    default: return "Options…"
                     }
                 }
-                implicitHeight: 24; implicitWidth: contentItem.implicitWidth + 16
-                padding: 6; font.pixelSize: 11
+                implicitHeight: 22; implicitWidth: contentItem.implicitWidth + 12
+                padding: 4; font.pixelSize: 10
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                Accessible.name: card.resetState.phase === "armed" ? "Automatic reset at limit options" : card.resetState.phase === "paused" ? "Automatic reset paused options" : "Reset options"
                 Accessible.description: card.resetState.openReason || ""
                 ToolTip.visible: hovered && !enabled && ToolTip.text.length > 0
                 ToolTip.text: card.resetState.openReason || ""
@@ -208,7 +193,21 @@ Rectangle {
     implicitHeight: body.implicitHeight + (card.compact ? 28 : 36)
     radius: 12
     color: Theme.surface
-    border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
+    border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : card.pinned ? Qt.alpha(card.accent, 0.55) : hover.hovered ? Theme.comment : Theme.selection
+    // Layered outlines give the selected tray meter a soft halo without an
+    // expensive blur effect or changes to the card's layout.
+    Repeater {
+        model: 4
+        Rectangle {
+            required property int index
+            objectName: "trayMeterGlow_" + card.name + "_" + index
+            anchors.fill: parent; anchors.margins: -(index + 1)
+            z: -1; radius: card.radius + index + 1
+            color: "transparent"; border.width: 1
+            border.color: Qt.alpha(card.accent, 0.12 - index * 0.025)
+            visible: card.pinned
+        }
+    }
     NotificationHighlight {
         targetKey: card.objectName
         viewport: card.notificationViewport
@@ -273,46 +272,38 @@ Rectangle {
                 && width >= identityWidth + columnSpacing + 160
             columns: inlineNotice ? 2 : 1
             columnSpacing: 14; rowSpacing: 10
-            RowLayout {
-                id: providerHeader
-                objectName: "providerHeader_" + card.name
+            GridLayout {
                 Layout.fillWidth: !identityGroup.inlineNotice
                 Layout.preferredWidth: identityGroup.inlineNotice ? identityGroup.identityWidth : -1
                 Layout.maximumWidth: identityGroup.inlineNotice ? identityGroup.identityWidth : Infinity
                 Layout.minimumWidth: 0
                 Layout.alignment: Qt.AlignTop
+                columns: card.stacked ? 2 : 1
+                columnSpacing: 8; rowSpacing: 6
+            RowLayout {
+                id: providerHeader
+                objectName: "providerHeader_" + card.name
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.alignment: Qt.AlignTop
                 spacing: 10
                 activeFocusOnTab: true
+                Accessible.description: card.pinned ? "Current tray meter" : ""
                 Rectangle {
                     width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
                     Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok"].indexOf(card.providerType) >= 0 }
                 }
                 ColumnLayout {
-                    Layout.fillWidth: true; spacing: 4
+                    Layout.fillWidth: true; spacing: 1
                     Text { textFormat: Text.PlainText; objectName: "providerLabel_" + card.name; text: card.displayName; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.foreground; font.pixelSize: 16; font.weight: Font.DemiBold }
                     Item {
                         Layout.fillWidth: true
                         implicitHeight: headerMetadata.implicitHeight
-                            + (headerCounterSlot.visible ? 4 + headerCounterSlot.implicitHeight : 0)
                         GridLayout {
                             id: headerMetadata
                             width: parent.width
-                            columns: providerHeader.width >= 260 ? 2 : 1
-                            columnSpacing: 8; rowSpacing: 4
+                            columns: 1
                             Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
-                        }
-                        Item {
-                            id: headerCounterSlot
-                            visible: (card.hasBankedResets || card.managingReset) && (!card.weeklyBucket || card.failed)
-                            implicitHeight: headerCounterOverlay.implicitHeight
-                        }
-                        Loader {
-                            id: headerCounterOverlay
-                            sourceComponent: !card.weeklyBucket || card.failed ? bankedResetsFooter : null
-                            visible: (card.hasResetCount || card.managingReset) && (!card.weeklyBucket || card.failed)
-                            anchors.top: headerMetadata.bottom; anchors.topMargin: 4
-                            width: parent.width
                         }
                     }
                 }
@@ -326,6 +317,19 @@ Rectangle {
                     onClosed: card.Window.window.restoreEscapeFocus()
                     MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
                 }
+            }
+            Item {
+                // Keep the loader alive at zero so its notification delta can float.
+                Layout.alignment: card.stacked ? Qt.AlignRight | Qt.AlignVCenter : Qt.AlignLeft | Qt.AlignTop
+                implicitWidth: card.hasBankedResets || card.managingReset ? resetControl.implicitWidth : 0
+                implicitHeight: card.hasBankedResets || card.managingReset ? resetControl.implicitHeight : 0
+                Loader {
+                    id: resetControl
+                    objectName: "bankedResetControl_" + card.name
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                    sourceComponent: bankedResetsControl
+                }
+            }
             }
             ColumnLayout {
                 id: staleNotice
@@ -373,10 +377,6 @@ Rectangle {
                             ? card.provider.last_known_pacing[modelData.id] || null : null
                         notificationViewport: card.notificationViewport
                         presentingNotifications: card.presentingNotifications
-                        // Stale readings carry no actions: banked-reset counts and
-                        // reset controls wait for a fresh reading.
-                        footerAccessory: modelData.id === "weekly" && !card.stale ? bankedResetsFooter : null
-                        footerAccessoryVisible: !card.stale && (card.hasBankedResets || card.managingReset) && modelData.id === "weekly"
                         Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
                         Layout.columnSpan: {
                             if (card.stacked && index === 0) return meters.columns

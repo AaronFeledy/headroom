@@ -50,8 +50,7 @@ manual-reset cancellations stay quiet.
 When the counter comes into view, it shows a quick signed delta rising and fading
 above it: green for additions and orange for decreases, using the actual difference
 (including changes greater than one). At zero, the counter and its spacing leave the layout;
-the final decrease still animates as an overlay. The counter falls back to the
-provider header if there is no weekly meter. Like other notifications,
+the final decrease still animates as an overlay in the provider header. Like other notifications,
 several unseen changes to the same counter retain the latest reported change, and
 acknowledged animations do not replay on subsequent openings.
 
@@ -285,7 +284,7 @@ warning colors reserved for high usage and over-pace indicators. Hovering a
 provider highlights its border while preserving contrast with the meter tracks.
 Drag a provider panel onto another panel. Drop in the upper half to insert
 before it, or the lower half to insert after it. A line marks the insertion point.
-Rows read top to bottom. The first provider always supplies the tray meter; the full order
+Rows read top to bottom. The first provider always supplies the tray meter and its card has a subtle glow; the full order
 is saved across restarts and polls. Right-click a provider icon or title to move a provider
 directly to the top. Orders are local to each client. A provider without usable
 data produces an unknown tray meter instead of silently switching providers.
@@ -504,14 +503,12 @@ Headroom uses the server's provider names, subtitles, bucket labels, variable
 meter counts, status text, and authentication errors. Live accounts may return
 different bucket layouts. Both clients retain pacing and provider ordering.
 When Claude or ChatGPT reports one or more banked usage resets, Headroom shows the available
-count at the right of its weekly meter's bottom text row. The label turns red only
+count in the provider header. The label turns red only
 while that provider's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open that provider's usage and reset controls in a browser.
 
-When Claude reports the additive `kinds` breakdown, the label names each kind
-instead of the total ("1 weekly reset · 2 Fable resets"), with one kind per line
-when the meter is too narrow to hold that beside the options button. Hovering it describes
+When Claude reports the additive `kinds` breakdown, hovering the count shows each kind and describes
 what each kind refills using the visible meter labels, any return of Fable usage
 to the weekly limit, and its expiry. When the server names the grant a kind would
 spend now, each kind row shows that grant and its expiry, and the chosen kind
@@ -523,7 +520,7 @@ choosing a kind limits the automatic authorization to that kind. A chosen kind
 that leaves the reading is cleared, never swapped for another kind. The redeem
 request carries the chosen kind only for a reading that lists kinds. ChatGPT
 keeps the total-count label and its existing request.
-For either provider, **Reset options…** appears at 90% usage when an account-bound
+For either provider, **Options…** appears at 90% usage when an account-bound
 banked reset is available. An active automatic choice or pending request keeps
 its management controls available. The options separate **Use now** from
 one-shot automatic use; unavailable choices stay visible with an explanation.
@@ -543,7 +540,7 @@ deadline. The server evaluates it after each completed ChatGPT poll and spends
 at most once at 100% weekly usage; the desktop does not poll separately while an
 authorization is armed. The authorization lives on the server, so it stays set
 until it is used, canceled, or the weekly window ends, even if Headroom is closed
-or the server restarts. **Auto at 100%…** reopens the dialog to use it now or
+or the server restarts. **Auto…** reopens the dialog to use it now or
 cancel. The server cancels it when the weekly window ends, the account changes,
 credits run out, the reading stops qualifying, or a request is already pending;
 a manual use also cancels it. A server without `reset_automation` support shows
@@ -558,7 +555,7 @@ reset's effect. A later rise to 90% can permit another explicit choice when a
 banked reset is available. Update both the desktop and server for these rules.
 
 Claude uses the same confirmation and selected Local, HTTP(S), or SSH transport.
-Its **Reset options…** button appears with an account-bound banked reset when Anthropic
+Its **Options…** button appears with an account-bound banked reset when Anthropic
 reports that it can be used now, or when session or weekly usage reaches 90%.
 **Use now** requires Anthropic's explicit `usable_now: true` for the chosen kind;
 an unknown or false value blocks immediate use with an explanation, but does not
