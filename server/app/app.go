@@ -30,12 +30,17 @@ func Run(ctx context.Context, args, env []string, logger *slog.Logger, version s
 	})
 }
 
-// RunWithReady is Run with an in-process startup acknowledgement. Ready is
+// Ready identifies the effective configuration after successful server startup.
+type Ready struct {
+	ConfigPath string
+}
+
+// RunWithReady is Run with an in-process startup acknowledgement. The callback is
 // called once after configuration, provider construction, and all listeners
 // succeed, before polling starts. Returning an error closes those listeners and
 // aborts startup. Help and SSH stdio requests never acknowledge a server start.
 func RunWithReady(ctx context.Context, args, env []string, logger *slog.Logger, version string,
-	input io.Reader, output io.Writer, ready func() error) error {
+	input io.Reader, output io.Writer, ready func(Ready) error) error {
 	return runContext(ctx, args, env, logger, desktopSessionOptions{
 		input: input, output: output, version: version, ready: ready,
 	})
@@ -120,7 +125,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	}
 	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Claude: claudeClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint, Reset: resetCore, Automation: automation})
 	defer listener.Close()
-	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
+	if err := acknowledgeReady(ctx, desktopOptions.ready, Ready{ConfigPath: cfg.ConfigPath}); err != nil {
 		return err
 	}
 	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger, TLSCertificateSHA256: fingerprint}}
@@ -162,7 +167,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	if err := prepared.publishIdentity(); err != nil {
 		return err
 	}
-	if err := acknowledgeReady(ctx, options.ready); err != nil {
+	if err := acknowledgeReady(ctx, options.ready, Ready{ConfigPath: cfg.ConfigPath}); err != nil {
 		return err
 	}
 	return runServerAndPoller(ctx, appRuntime{
@@ -180,12 +185,12 @@ func buildResetAutomation(ctx context.Context, cfg config.Config, logger *slog.L
 	return automation
 }
 
-func acknowledgeReady(ctx context.Context, ready func() error) error {
+func acknowledgeReady(ctx context.Context, ready func(Ready) error, info Ready) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if ready != nil {
-		return ready()
+		return ready(info)
 	}
 	return nil
 }

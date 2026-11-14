@@ -98,12 +98,21 @@ if you'd like it available at login. Usage pace is an estimate; the
 
 ### Multiple Claude accounts
 
-To watch more than one Claude subscription, sign in to each extra account with
-its own `CLAUDE_CONFIG_DIR`, list that directory as `config_dir` under
-`providers.claude.accounts` in the server config, and restart Headroom. Each one
-gets its own `Claude (<label>)` card that you can reorder or pin like any other.
-The [setup steps](server/README.md#multiple-claude-accounts) cover macOS, Linux,
-WSL, and Windows. Banked resets can be used only from the default Claude account.
+To watch more than one Claude subscription, add each extra account on the
+computer that runs the server:
+
+```sh
+headroom accounts add claude work --label Work
+```
+
+The command signs the account in to Claude Code with its own config directory,
+adds it to the server config, and restarts the server when your user's
+`headroom.service` runs it. Otherwise it tells you to restart: if the desktop app
+started the server, quit and reopen Headroom. Each account gets its own
+`Claude (<label>)` card that you can reorder or pin like any other. See
+[multiple Claude accounts](server/README.md#multiple-claude-accounts) for listing,
+removing, and the config format. Banked resets can be used only from the default
+Claude account.
 
 ## Use it in the terminal
 

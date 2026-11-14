@@ -9,12 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 	"time"
-
-	"golang.org/x/term"
 )
 
 type CommandFunc func(context.Context, []string) error
@@ -32,19 +29,19 @@ type LocalFetchFunc func(context.Context) (LocalSnapshot, error)
 var ErrLocalUnavailable = errors.New("local desktop is not running")
 
 type Options struct {
-	Args, Env             []string
-	Stdin                 io.Reader
-	Stdout, Stderr        io.Writer
-	Version               string
-	HTTPClient            *http.Client
-	Now                   func() time.Time
-	IsTerminal            func(io.Writer) bool
-	WatchInterval         time.Duration
-	RunSSH                SSHFunc
-	FetchLocal            LocalFetchFunc
-	Serve                 ServeFunc
-	Update, Desktop, Pair CommandFunc
-	tlsSession            *tlsSession
+	Args, Env                       []string
+	Stdin                           io.Reader
+	Stdout, Stderr                  io.Writer
+	Version                         string
+	HTTPClient                      *http.Client
+	Now                             func() time.Time
+	IsTerminal                      func(io.Writer) bool
+	WatchInterval                   time.Duration
+	RunSSH                          SSHFunc
+	FetchLocal                      LocalFetchFunc
+	Serve                           ServeFunc
+	Update, Desktop, Pair, Accounts CommandFunc
+	tlsSession                      *tlsSession
 }
 
 func Run(ctx context.Context, options Options) error {
@@ -86,6 +83,11 @@ func Run(ctx context.Context, options Options) error {
 				return errors.New("pairing is unavailable in this Headroom build")
 			}
 			return options.Pair(ctx, options.Args[1:])
+		case "accounts":
+			if options.Accounts == nil {
+				return errors.New("accounts is unavailable in this Headroom build")
+			}
+			return options.Accounts(ctx, options.Args[1:])
 		case "version":
 			if len(options.Args) != 1 {
 				return errors.New("version does not accept arguments")
@@ -100,49 +102,6 @@ func Run(ctx context.Context, options Options) error {
 		}
 	}
 	return runDashboard(ctx, options)
-}
-
-func (options Options) defaults() Options {
-	if options.tlsSession == nil {
-		options.tlsSession = &tlsSession{entries: map[string]*tlsEntry{}}
-	}
-	if options.Env == nil {
-		options.Env = os.Environ()
-	}
-	if options.Stdin == nil {
-		options.Stdin = os.Stdin
-	}
-	if options.Stdout == nil {
-		options.Stdout = os.Stdout
-	}
-	if options.Stderr == nil {
-		options.Stderr = os.Stderr
-	}
-	if options.Now == nil {
-		options.Now = time.Now
-	}
-	if options.HTTPClient == nil {
-		options.HTTPClient = &http.Client{Timeout: 12 * time.Second}
-	}
-	client := *options.HTTPClient
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("redirects are disabled") }
-	options.HTTPClient = &client
-	if options.IsTerminal == nil {
-		options.IsTerminal = func(writer io.Writer) bool {
-			file, ok := writer.(*os.File)
-			if !ok {
-				return false
-			}
-			return term.IsTerminal(int(file.Fd()))
-		}
-	}
-	if options.Version == "" {
-		options.Version = "dev"
-	}
-	if options.WatchInterval <= 0 {
-		options.WatchInterval = 30 * time.Second
-	}
-	return options
 }
 
 type dashboardFlags struct {
@@ -163,7 +122,7 @@ func runDashboard(ctx context.Context, options Options) error {
 	set.StringVar(&flags.ssh, "ssh", "", "SSH destination ([user@]host[:port])")
 	showVersion := set.Bool("version", false, "print Headroom version")
 	set.Usage = func() {
-		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update [--this-install-only [--version VERSION] | --reconcile]\n       headroom desktop\n       headroom pair windows-wsl [pairing options]\n       headroom version")
+		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update [--this-install-only [--version VERSION] | --reconcile]\n       headroom desktop\n       headroom pair windows-wsl [pairing options]\n       headroom accounts list [--config PATH]\n       headroom accounts add claude <id> [--label LABEL] [--config-dir DIR] [--config PATH]\n       headroom accounts remove claude <id> [--config PATH]\n       headroom version")
 		set.PrintDefaults()
 		fmt.Fprintln(options.Stderr, "Remote HTTP authentication: HEADROOM_AUTH_TOKEN or HEADROOM_AUTH_TOKEN_FILE")
 		fmt.Fprintln(options.Stderr, "Token files require owner-only permissions on Linux/macOS; use HEADROOM_AUTH_TOKEN on Windows.")

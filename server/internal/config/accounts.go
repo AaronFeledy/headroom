@@ -12,13 +12,13 @@ import (
 
 var accountIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
-func validateAccounts(cfg Config, goos string) error {
+func validateAccounts(cfg Config, goos, dir string) error {
 	for name, provider := range cfg.Providers {
 		if len(provider.Accounts) == 0 {
 			continue
 		}
 		if len(provider.Accounts) > 8 {
-			return fmt.Errorf("providers.claude.accounts[8]: more than 8 accounts: %w", ErrInvalidConfig)
+			return fmt.Errorf("providers.claude.accounts[8]: more than 8 accounts: %w: %w", ErrInvalidConfig, ErrTooManyAccounts)
 		}
 		seenIDs := map[string]int{}
 		for i := range provider.Accounts {
@@ -27,37 +27,37 @@ func validateAccounts(cfg Config, goos string) error {
 			}
 			id := provider.Accounts[i].ID
 			if prev, ok := seenIDs[id]; ok {
-				return fmt.Errorf("providers.%s.accounts[%d]: duplicate id %q (also accounts[%d]): %w", name, i, id, prev, ErrInvalidConfig)
+				return fmt.Errorf("providers.%s.accounts[%d]: duplicate id %q (also accounts[%d]): %w: %w", name, i, id, prev, ErrInvalidConfig, ErrDuplicateAccountID)
 			}
 			seenIDs[id] = i
 			for prev := 0; prev < i; prev++ {
 				if strings.EqualFold(provider.Accounts[prev].Label, provider.Accounts[i].Label) {
-					return fmt.Errorf("providers.%s.accounts[%d]: duplicate label %q (also accounts[%d]): %w", name, i, provider.Accounts[i].Label, prev, ErrInvalidConfig)
+					return fmt.Errorf("providers.%s.accounts[%d]: duplicate label %q (also accounts[%d]): %w: %w", name, i, provider.Accounts[i].Label, prev, ErrInvalidConfig, ErrDuplicateAccountLabel)
 				}
 			}
 		}
 	}
-	return validateAccountCredentialUniqueness(cfg, goos)
+	return validateAccountCredentialUniqueness(cfg, goos, dir)
 }
 
 func validateAccountEntry(name string, index int, provider *ProviderConfig) error {
 	prefix := fmt.Sprintf("providers.%s.accounts[%d]", name, index)
 	account := &provider.Accounts[index]
 	if !accountIDPattern.MatchString(account.ID) {
-		return fmt.Errorf("%s: id %q is invalid: %w", prefix, account.ID, ErrInvalidConfig)
+		return fmt.Errorf("%s: id %q is invalid: %w: %w", prefix, account.ID, ErrInvalidConfig, ErrInvalidAccountID)
 	}
 	if err := validateAccountLabel(prefix, account.Label); err != nil {
 		return err
 	}
 	if strings.TrimSpace(account.ConfigDir) == "" {
-		return fmt.Errorf("%s: config_dir is required: %w", prefix, ErrInvalidConfig)
+		return fmt.Errorf("%s: config_dir is required: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountDir)
 	}
 	expanded, err := expandHomePath(account.ConfigDir)
 	if err != nil {
-		return fmt.Errorf("%s: config_dir: %v: %w", prefix, err, ErrInvalidConfig)
+		return fmt.Errorf("%s: config_dir: %v: %w: %w", prefix, err, ErrInvalidConfig, ErrInvalidAccountDir)
 	}
 	if !filepath.IsAbs(filepath.Clean(expanded)) {
-		return fmt.Errorf("%s: config_dir must be absolute after ~ expansion: %w", prefix, ErrInvalidConfig)
+		return fmt.Errorf("%s: config_dir must be absolute after ~ expansion: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountDir)
 	}
 	// Keep the raw expanded spelling (trailing slash included) for Keychain and commands.
 	account.ConfigDir = expanded
@@ -66,11 +66,11 @@ func validateAccountEntry(name string, index int, provider *ProviderConfig) erro
 
 func validateAccountLabel(prefix, label string) error {
 	if label == "" || utf8.RuneCountInString(label) > 32 {
-		return fmt.Errorf("%s: label must be 1-32 characters after trim: %w", prefix, ErrInvalidConfig)
+		return fmt.Errorf("%s: label must be 1-32 characters after trim: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountLabel)
 	}
 	for _, r := range label {
 		if unicode.IsControl(r) {
-			return fmt.Errorf("%s: label must not contain control characters: %w", prefix, ErrInvalidConfig)
+			return fmt.Errorf("%s: label must not contain control characters: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountLabel)
 		}
 	}
 	return nil
@@ -99,14 +99,14 @@ type accountLocation struct {
 	source  string
 }
 
-func validateAccountCredentialUniqueness(cfg Config, goos string) error {
+func validateAccountCredentialUniqueness(cfg Config, goos, dir string) error {
 	claude := cfg.Providers["claude"]
 	if len(claude.Accounts) == 0 {
 		return nil
 	}
 	var refs []accountLocation
 	if claude.Enabled {
-		defaultFile, err := defaultClaudeCredentialsFile(claude.CredentialsPath)
+		defaultFile, err := defaultClaudeCredentialsFile(claude.CredentialsPath, dir)
 		if err != nil {
 			return err
 		}
@@ -130,7 +130,7 @@ func validateAccountCredentialUniqueness(cfg Config, goos string) error {
 	return rejectDuplicateAccountLocations(refs, goos)
 }
 
-func defaultClaudeCredentialsFile(credentialsPath string) (string, error) {
+func defaultClaudeCredentialsFile(credentialsPath, dir string) (string, error) {
 	defaultPath := strings.TrimSpace(credentialsPath)
 	if defaultPath == "" {
 		defaultPath = "~/.claude/.credentials.json"
@@ -138,6 +138,9 @@ func defaultClaudeCredentialsFile(credentialsPath string) (string, error) {
 	expanded, err := expandHomePath(defaultPath)
 	if err != nil {
 		return "", fmt.Errorf("providers.claude.credentials_path: %v: %w", err, ErrInvalidConfig)
+	}
+	if dir != "" && !filepath.IsAbs(expanded) {
+		expanded = filepath.Join(dir, expanded)
 	}
 	return filepath.Clean(expanded), nil
 }
@@ -152,7 +155,7 @@ func rejectDuplicateAccountLocations(refs []accountLocation, goos string) error 
 				continue
 			}
 			if sameAccountLocation(refs[i], refs[j], goos) {
-				return fmt.Errorf("%s: config_dir duplicates %s: %w", refs[j].source, refs[i].source, ErrInvalidConfig)
+				return fmt.Errorf("%s: config_dir duplicates %s: %w: %w", refs[j].source, refs[i].source, ErrInvalidConfig, ErrDuplicateAccountDir)
 			}
 		}
 	}

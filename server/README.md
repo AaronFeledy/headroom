@@ -543,7 +543,7 @@ providers:
   claude:
     enabled: true
     # credentials_path: ~/.claude/.credentials.json  # optional; reads only this file
-    # Optional extra Claude accounts (YAML only):
+    # Optional extra Claude accounts (YAML only; `headroom accounts add` writes these):
     # accounts:
     #   - id: work                                 # required, ^[a-z0-9][a-z0-9_-]{0,31}$
     #     label: Work                              # optional, default = id (1-32 chars)
@@ -584,53 +584,58 @@ shows.
 
 ### Multiple Claude accounts
 
-To watch more than one Claude subscription, give each extra account its own
-Claude Code config directory and list it under `providers.claude.accounts`:
+To watch more than one Claude subscription, add each extra account with the
+`headroom` CLI on the computer that runs the server, as the user that runs it.
+For a WSL server, run it inside WSL.
 
-1. Sign in to the extra account with a separate config directory:
+```sh
+headroom accounts add claude work --label Work
+headroom accounts list
+headroom accounts remove claude work
+```
 
-   ```bash
-   # macOS / Linux / WSL
-   CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
-   ```
+`add` checks the id, label, and resulting configuration first. It then runs
+`claude auth login` with `CLAUDE_CONFIG_DIR` set to the account's own Claude Code
+config directory: `~/.claude-<id>` (`%USERPROFILE%\.claude-<id>` on Windows), or
+the directory given with `--config-dir`. If that directory already has a sign-in
+Headroom can read, the login is skipped. Once the sign-in is readable, the
+account is added to the configuration the running managed `headroom serve`
+reads, or to the default config path when no managed server is running;
+`--config PATH` selects another file. If a managed server is running but its
+configuration file cannot be confirmed (for example, it is still starting),
+pass `--config`. Nothing is written when a check or the sign-in fails. The file
+is rewritten with its comments and settings kept, though spacing may be
+normalized.
 
-   ```powershell
-   # Windows PowerShell (restores the previous CLAUDE_CONFIG_DIR, including when unset)
-   $previous = $env:CLAUDE_CONFIG_DIR
-   $env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"
-   try { claude auth login } finally { $env:CLAUDE_CONFIG_DIR = $previous }
-   ```
+Configuration is read only at startup. When the current user's
+`headroom.service` runs the managed server for that file, `add` and `remove`
+restart it and wait for it to report ready. If it does not start with the
+change, the change is undone and the service is started again; a file edited
+again in the meantime is left as it is. If the restart cannot begin, for example
+while an update is running, the change stays saved and the command says how to
+restart. Without such a service the command prints the step to take: quit and
+reopen Headroom if the desktop app started the server, or restart the server the
+way you started it. `remove` deletes only the config entry and leaves the
+account's Claude Code sign-in in place.
 
-2. Add the account to `config.yaml`:
-
-   ```yaml
-   providers:
-     claude:
-       accounts:
-         - id: work
-           label: Work
-           config_dir: ~/.claude-work
-   ```
-
-3. Restart the server; configuration is read only at startup. If Headroom
-   started the server in Local mode, quit and reopen Headroom.
-
-The account appears as its own `Claude (Work)` card. If you skip step 1, the
-card says `Not signed in.` and shows the exact sign-in command for that account.
-Extra accounts never fall back to `~/.claude`, WSL, or OpenCode credentials, and
-they keep running when `providers.claude.enabled` is false.
+The account appears as its own `Claude (Work)` card. If the account is later
+signed out, the card says `Not signed in.` and shows the exact sign-in command
+for that account. Extra accounts never fall back to `~/.claude`, WSL, or OpenCode
+credentials, and they keep running when `providers.claude.enabled` is false.
 
 On macOS, an extra account is read from its Claude Code Keychain item, then from
 `<config_dir>/.credentials.json`. Claude Code names that Keychain item after the
-exact `CLAUDE_CONFIG_DIR` value it received, so set `config_dir` to the same text
-as you typed it at sign-in. A trailing-slash difference is tolerated: if the exact
-item is missing, Headroom tries adding one slash or removing trailing slashes.
-Other spellings must match. Headroom expands a leading `~` to the server user's
-home and keeps the rest as written; file access uses the cleaned path. The card's
-sign-in command uses the same spelling. The server ignores `CLAUDE_CONFIG_DIR` in
-its own environment; the default account is always Claude Code's default sign-in.
+exact `CLAUDE_CONFIG_DIR` value it received. `headroom accounts add` writes
+`config_dir` with exactly the spelling it passed to Claude Code, so the names
+match. When editing `config_dir` by hand, keep that spelling: if the exact item is
+missing, Headroom tries only adding one slash or removing trailing slashes.
+Headroom expands a leading `~` to the server user's home and keeps the rest as
+written; file access uses the cleaned path. The card's sign-in command uses the
+same spelling. The server ignores `CLAUDE_CONFIG_DIR` in its own environment; the
+default account is always Claude Code's default sign-in.
 
-Accounts are YAML-only (no env vars or CLI flags). Each entry needs a stable `id`
+Accounts live only in the YAML file (no environment variables or server flags);
+`headroom accounts` edits that file. Each entry needs a stable `id`
 (`^[a-z0-9][a-z0-9_-]{0,31}$`), an optional `label` (1–32 Unicode characters
 after trim, no control characters; defaults to `id`), a required `config_dir`
 (absolute, or starting with `~`, `~/`, or `~\`), and an optional `enabled`

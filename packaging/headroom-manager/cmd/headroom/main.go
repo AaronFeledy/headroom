@@ -46,7 +46,7 @@ func main() {
 	}
 	err := cli.Run(ctx, cli.Options{
 		Args: os.Args[1:], Env: os.Environ(), Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
-		Version: version, Serve: managedServe, Update: coordinatedUpdate, Desktop: desktopCommand, Pair: pairCommand, FetchLocal: fetchLocalDesktop,
+		Version: version, Serve: managedServe, Update: coordinatedUpdate, Desktop: desktopCommand, Pair: pairCommand, Accounts: accountsCommand, FetchLocal: fetchLocalDesktop,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "headroom:", err)
@@ -68,7 +68,10 @@ func managedServe(ctx context.Context, args, env []string, logger *slog.Logger, 
 		if record.Supervisor == "" {
 			defer contract.UnregisterManagedService(record)
 		}
-		return serverapp.RunWithReady(ctx, args, env, logger, version, stdin, stdout, func() error { return contract.MarkManagedServiceReady(record) })
+		return serverapp.RunWithReady(ctx, args, env, logger, version, stdin, stdout, func(ready serverapp.Ready) error {
+			record.ConfigPath = ready.ConfigPath
+			return contract.MarkManagedServiceReady(record)
+		})
 	}
 	for _, argument := range args {
 		if argument == "--ssh-stdio" {
@@ -98,7 +101,8 @@ func managedServe(ctx context.Context, args, env []string, logger *slog.Logger, 
 	if record.Supervisor == "" {
 		defer contract.UnregisterManagedService(record)
 	}
-	return serverapp.RunWithReady(ctx, args, env, logger, version, stdin, stdout, func() error {
+	return serverapp.RunWithReady(ctx, args, env, logger, version, stdin, stdout, func(ready serverapp.Ready) error {
+		record.ConfigPath = ready.ConfigPath
 		return contract.MarkManagedServiceReady(record)
 	})
 }

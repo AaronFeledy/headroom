@@ -40,7 +40,7 @@ func applyProvider(name string, raw rawProviderConfig, cfg *Config) error {
 			account := AccountConfig{Enabled: true}
 			if item.ID != nil {
 				if strings.IndexFunc(*item.ID, unicode.IsControl) >= 0 {
-					return fmt.Errorf("providers.%s.accounts[%d]: id must not contain control characters: %w", name, i, ErrInvalidConfig)
+					return fmt.Errorf("providers.%s.accounts[%d]: id must not contain control characters: %w: %w", name, i, ErrInvalidConfig, ErrInvalidAccountID)
 				}
 				account.ID = strings.TrimSpace(*item.ID)
 			}

@@ -2,7 +2,15 @@
 
 package contract
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
+
+// RestartSupervisedManagedService is unsupported outside Linux and WSL.
+func RestartSupervisedManagedService(context.Context, string, ManagedServiceRecord, func() error) (ManagedServiceRecord, error) {
+	return ManagedServiceRecord{}, errors.New("managed supervised service restart is supported only on Linux and WSL")
+}
 
 func managedServiceSupervisor([]string, int) (string, error) { return "", nil }
 

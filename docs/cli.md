@@ -15,6 +15,9 @@ headroom --weekly-only           # weekly meters only
 headroom --ssh usageuser@server.example
 headroom --url https://usage.example
 headroom serve --config /path/to/config.yaml
+headroom accounts add claude work --label Work
+headroom accounts list
+headroom accounts remove claude work
 headroom update
 headroom version
 ```
@@ -47,6 +50,29 @@ extra line under the banked-reset line, for example
 `automatic reset set` when no window is reported. The CLI only displays this
 state: `--json` passes the field through unchanged, and the CLI never arms,
 cancels, or redeems anything.
+
+## Extra Claude accounts
+
+`headroom accounts` adds, lists, and removes extra Claude accounts in the
+server configuration of this computer. Run it where the server runs, as the
+user that runs it; for a WSL server, run it inside WSL.
+
+```text
+headroom accounts list [--config PATH]
+headroom accounts add claude <id> [--label LABEL] [--config-dir DIR] [--config PATH]
+headroom accounts remove claude <id> [--config PATH]
+```
+
+`add` signs the account in with `claude auth login` in its own Claude Code config
+directory (`~/.claude-<id>` unless `--config-dir` is given), skipping the login
+when that directory already has a readable sign-in, then adds the account.
+Without `--config`, it edits the configuration of the running managed
+`headroom serve`, or the default config path when none is running. When your
+user's `headroom.service` runs that server, `add` and `remove` restart it, and
+undo the change if the service does not start with it; otherwise they print the
+restart step. `remove` leaves the account's Claude Code sign-in in place. See
+[multiple Claude accounts](../server/README.md#multiple-claude-accounts) for the
+configuration rules.
 
 ## Read-only details and older servers
 
@@ -187,8 +213,9 @@ legacy directory when the new one is absent and leaves a compatibility symlink.
 Existing units referencing the legacy path keep working and may be updated to
 the new path. Start the updated server with the existing unit first so migration
 completes before changing its `EnvironmentFile` path. Adjust `ExecStart` for a
-custom CLI path or config location. Do not rename the unit. The update command
-uses only the current user's fixed unit and never invokes sudo.
+custom CLI path or config location. Do not rename the unit. `headroom update`
+and `headroom accounts` use only the current user's fixed unit and never invoke
+sudo.
 
 For startup before login, enable lingering for the service account with
 `loginctl enable-linger "$USER"` (your system may require administrator approval).

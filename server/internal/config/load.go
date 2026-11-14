@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -54,37 +53,16 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	if err != nil {
 		return Config{}, err
 	}
-	env := parseEnv(opts.Env)
-	path, err := (configMigration{goos: goos, ops: ops, logger: opts.Logger}).resolve(flags, opts.Env)
+	path, err := resolvePath(opts, flags, configMigration{goos: goos, ops: ops, logger: opts.Logger})
 	if err != nil {
 		return Config{}, err
 	}
 
-	cfg := Defaults()
-	if err := applyYAML(path, &cfg); err != nil {
-		return Config{}, err
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
-	if err := applyEnv(env, &cfg); err != nil {
-		return Config{}, err
-	}
-	if err := applyFlags(flags, &cfg); err != nil {
-		return Config{}, err
-	}
-	if defaultPath, err := DefaultPath(goos, opts.Env); err == nil {
-		cfg.TLSDir = tlsDirectory(defaultPath)
-		cfg.ResetStateDir = filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
-		cfg.ResetAutomationDir = filepath.Join(filepath.Dir(defaultPath), "reset-automation")
-	}
-	if err := validateAccounts(cfg, goos); err != nil {
-		return Config{}, err
-	}
-	if err := validateTLS(cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.PollInterval <= 0 {
-		return Config{}, fmt.Errorf("poll interval must be positive: %w", ErrInvalidConfig)
-	}
-	return cfg, nil
+	return buildConfig(data, opts, buildContext{goos: goos, path: path, flags: flags})
 }
 
 func parseFlags(args []string) (flagValues, error) {
@@ -106,14 +84,7 @@ func parseFlags(args []string) (flagValues, error) {
 	return values, nil
 }
 
-func applyYAML(path string, cfg *Config) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read config %s: %w", path, err)
-	}
+func applyYAML(data []byte, path string, cfg *Config) error {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, errors.Join(ErrMalformedConfig, err))

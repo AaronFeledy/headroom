@@ -47,7 +47,7 @@ type desktopSessionOptions struct {
 	listen  func(string, string) (net.Listener, error)
 	homeDir string
 	version string
-	ready   func() error
+	ready   func(Ready) error
 }
 
 type preparedDesktopSession struct {

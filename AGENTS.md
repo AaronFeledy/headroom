@@ -53,7 +53,8 @@ before the peer is system-trusted or pinned, and never replace a pin without a
 new proof.
 
 The public `headroom` command displays usage, `headroom serve` runs the server,
-and `headroom update` updates the managed installation. Bare CLI output refreshes
+`headroom update` updates the managed installation, and `headroom accounts`
+adds, lists, and removes extra Claude accounts in the server config. Bare CLI output refreshes
 in a terminal and prints once when piped; it does not start a server or invent
 data. With no explicit transport it can read the active desktop's private
 snapshot, then fall back to localhost only when no desktop is running.
@@ -62,8 +63,9 @@ Windows/WSL pairing stages both targets before either applies; never infer it
 from hostnames, URLs, or a server's claim to be local. Cross-kernel partial
 completion must remain visible and recoverable, never reported as atomic.
 Managed `serve` receipts bind the executable, kernel process identity, owner,
-arguments, and approved server environment. Readiness is acknowledged only after
-server configuration and listener binding succeed. Linux/WSL supervision supports
+arguments, and approved server environment, and record the resolved config path
+at readiness. Readiness is acknowledged only after server configuration and
+listener binding succeed. Linux/WSL supervision supports
 only the current user's `headroom.service`; never infer an arbitrary unit name,
 control system-wide units, or invoke sudo during an update.
 
@@ -87,6 +89,24 @@ followed by SSH health checks for the exact target version. Never retry the upda
 command automatically, pass arbitrary commands/paths from the UI, weaken a
 usage-only forced key, or expose this action over HTTP. Source, capture,
 explicit-config, and system-managed desktop sessions cannot invoke it.
+
+`headroom accounts` validates through the server's own config rules (the public
+`server/accountconfig` facade, never copied rules) with the managed server's
+recorded arguments, approved environment, and working directory. It checks the
+requested account before running `claude auth login`, skips the login when the
+directory already has a readable sign-in, writes `config_dir` with exactly the
+string it passed as `CLAUDE_CONFIG_DIR`, and edits the config under a file lock
+from its current contents. Without `--config` it edits the file a ready managed
+`headroom serve` reports, and refuses to guess when a receipt exists but cannot
+be verified. It restarts only a managed `headroom serve` supervised by the
+current user's `headroom.service` and reading the edited file, holding the
+install lock through readiness of a replacement that reports the same file. If
+that start fails it stops the unit, restores the previous bytes only when the
+file still holds the edit, and starts the unit once more; if the restart cannot
+begin, the edit stays saved and is reported. Otherwise it prints the restart
+step. Error output never echoes config contents. It never edits Claude Code
+credentials or the Keychain, and tests never run a real `claude` login or
+systemctl.
 
 Claude credentials are discovered unless `providers.claude.credentials_path`
 names a file (then only that file is read): Claude Code's macOS Keychain item
