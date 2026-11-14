@@ -371,7 +371,7 @@ private slots:
         QTRY_COMPARE(events, QStringList({"reply", "quit"}));
         const QJsonObject expected{{"ok", true}, {"status", "accepted"}, {"request_nonce", request.value("request_nonce")},
             {"version", sameVersion ? "0.1.0" : "9.1.0"},
-            {"transaction_directory", QDir::toNativeSeparators(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef"))},
+            {"transaction_directory", QDir::toNativeSeparators(QDir(options().installRoot).filePath("transactions/apply-0123456789abcdef0123456789abcdef"))},
             {"nonce", QString(48, 'a')}};
         QCOMPARE(response, expected);
         const auto added = record().mid(before.size());
