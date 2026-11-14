@@ -150,6 +150,21 @@ private slots:
         QVERIFY(!QFileInfo::exists(client.lockPath()));
     }
 
+    void lockedPrimaryWithoutSocketIsUnavailableRatherThanAbsent()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("settings.json"), ready = dir.filePath("ready");
+        QProcess primary;
+        primary.start(helperPath(), {path, ready, dir.filePath("unused"), "lock-only"});
+        QVERIFY(primary.waitForStarted(2000));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(ready), 3000);
+        InstanceService client(path);
+        QVERIFY(client.request(R"({"command":"info"})", 100).isEmpty());
+        QVERIFY(!client.primaryUnavailable());
+        QCOMPARE(primary.state(), QProcess::Running);
+        primary.kill(); QVERIFY(primary.waitForFinished(3000));
+    }
+
     void malformedAndOversizedMessagesAreRejected()
     {
         QTemporaryDir dir;

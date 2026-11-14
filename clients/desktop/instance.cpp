@@ -196,12 +196,20 @@ QByteArray InstanceService::request(const QByteArray &message, int timeoutMillis
     if (!m_pathsReady || message.isEmpty() || message.size() > 4095 || message.contains('\n') || message.contains('\0')) return {};
 #ifndef Q_OS_WIN
     if (!safeEndpoint(m_scopeName, S_IFSOCK)) { m_error = "Unsafe local desktop endpoint."; return {}; }
+    if (!safeEndpoint(m_lockPath, S_IFREG)) { m_error = "Unsafe local desktop lock."; return {}; }
 #endif
     QLocalSocket socket;
     socket.setReadBufferSize(maximumReply + 1);
     socket.connectToServer(m_scopeName, QIODevice::ReadWrite);
     if (!socket.waitForConnected(timeoutMilliseconds)) {
-        m_primaryUnavailable = socket.error() == QLocalSocket::ServerNotFoundError;
+        if (socket.error() == QLocalSocket::ServerNotFoundError || socket.error() == QLocalSocket::ConnectionRefusedError) {
+            QLockFile probe(m_lockPath);
+            probe.setStaleLockTime(0);
+            if (probe.tryLock(0)) {
+                probe.unlock();
+                m_primaryUnavailable = true;
+            }
+        }
         m_error = "The local desktop is unavailable.";
         return {};
     }
@@ -230,7 +238,8 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
     }
 #endif
     m_lock = new QLockFile(m_lockPath);
-    if (!m_lock->tryLock()) {
+    m_lock->setStaleLockTime(0);
+    if (!m_lock->tryLock(0)) {
         QLocalSocket socket;
         socket.setReadBufferSize(9);
         socket.connectToServer(m_scopeName, QIODevice::ReadWrite);

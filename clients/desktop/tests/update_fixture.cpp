@@ -51,6 +51,8 @@ int main(int argc, char **argv) {
             {"current_pid", valueAfter(QStringLiteral("--current-pid")).toLongLong()},
             {"current_executable", valueAfter(QStringLiteral("--current-executable"))}, {"acknowledgement_path", acknowledgement},
             {"commit_path", commit}, {"nonce", nonce}};
+        const QString prior = valueAfter(QStringLiteral("--prior-state-sha256"));
+        if (!prior.isEmpty()) request["prior_state_sha256"] = mode == QStringLiteral("mismatched-digest") ? QString(64, 'd') : prior;
         QJsonArray participants;
         for (qsizetype index = 1; index + 1 < args.size(); ++index) {
             if (args.at(index) != QStringLiteral("--participant")) continue;
@@ -75,7 +77,8 @@ int main(int argc, char **argv) {
 		requestFile.close();
 		QFile accepted(acknowledgement);
 		if (!accepted.open(QIODevice::WriteOnly)
-		    || accepted.write(QJsonDocument(QJsonObject{{"schema", 1}, {"product", "Headroom"}, {"accepted", true}, {"nonce", nonce}}).toJson()) < 0) return 3;
+		    || accepted.write(QJsonDocument(QJsonObject{{"schema", 1}, {"product", "Headroom"}, {"accepted", true},
+                {"nonce", mode == QStringLiteral("mismatched-ack") ? QString(48, 'c') : nonce}}).toJson()) < 0) return 3;
 		accepted.close();
         const QString resultNonce = mode == QStringLiteral("mismatched-prepare") ? QString(48, QLatin1Char('b')) : nonce;
         const QJsonObject result{{"schema", 1}, {"product", "Headroom"}, {"transaction_directory", QDir::toNativeSeparators(directory)},

@@ -290,6 +290,12 @@ private slots:
         QVERIFY(record().contains("\nupdate token=absent"));
         QVERIFY(!record().contains("\nupdate token=present"));
         QJsonObject reply;
+        auto reinstall = cliRequest(); reinstall["command"] = "reinstall";
+        reinstall["prepared_stage"] = service.verifiedStage(); reinstall["additional_processes"] = QJsonArray{};
+        reinstall["prior_state_sha256"] = QString(64, 'c');
+        service.requestReinstall(reinstall, [&](const QJsonObject &result) { reply = result; });
+        QCOMPARE(reply.value("status").toString(), QString("busy"));
+        QVERIFY(!record().contains("prepare-apply"));
         service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &result) { reply = result; });
         QCOMPARE(reply.value("status").toString(), QString("busy"));
         QVERIFY(!record().contains("prepare-apply"));
@@ -320,6 +326,7 @@ private slots:
         QStringList events;
         connect(&service, &UpdateService::applyPrepared, this, [&] { events.append("quit"); });
         service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) {
+            QCOMPARE(reply.size(), 4);
             QCOMPARE(reply.value("status").toString(), QString("accepted"));
             QVERIFY(reply.value("ok").toBool());
             QCOMPARE(reply.value("request_nonce"), cliRequest().value("request_nonce"));
@@ -328,6 +335,107 @@ private slots:
         });
         QTRY_COMPARE(events, QStringList({"reply", "quit"}));
         QVERIFY(record().contains("--participant"));
+    }
+    void reinstallCommitsPreparedPackageWithoutPublicOrPairedUpdate_data() {
+        QTest::addColumn<bool>("sameVersion");
+        QTest::newRow("same-version") << true;
+        QTest::newRow("new-version") << false;
+    }
+    void reinstallCommitsPreparedPackageWithoutPublicOrPairedUpdate() {
+        QFETCH(bool, sameVersion);
+        UpdateService service(true, options()); QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        auto stage = service.verifiedStage();
+        if (sameVersion) {
+            stage["version"] = "0.1.0";
+            QFile file(QDir(stage.value("package_root").toString()).absoluteFilePath("../../verified-stage.json"));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            QVERIFY(file.write(QJsonDocument(stage).toJson()) > 0); file.close();
+        }
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json"));
+        QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
+        auto request = cliRequest(); request["command"] = "reinstall";
+        request["prepared_stage"] = stage; request["additional_processes"] = QJsonArray{};
+        request["prior_state_sha256"] = QString(64, 'c');
+        const auto before = record();
+        QStringList events;
+        connect(&service, &UpdateService::applyPrepared, this, [&] { events.append("quit"); });
+        QJsonObject response;
+        service.requestReinstall(request, [&](const QJsonObject &reply) {
+            response = reply;
+            QVERIFY(QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
+            events.append("reply");
+        });
+        QTRY_COMPARE(events, QStringList({"reply", "quit"}));
+        const QJsonObject expected{{"ok", true}, {"status", "accepted"}, {"request_nonce", request.value("request_nonce")},
+            {"version", sameVersion ? "0.1.0" : "9.1.0"},
+            {"transaction_directory", QDir::toNativeSeparators(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef"))},
+            {"nonce", QString(48, 'a')}};
+        QCOMPARE(response, expected);
+        const auto added = record().mid(before.size());
+        QCOMPARE(added.count("prepare-apply"), 1);
+        QVERIFY(added.contains("--prior-state-sha256|" + QString(64, 'c').toUtf8()));
+        QVERIFY(!added.contains("--participant")); QVERIFY(!added.contains("check-update"));
+        QVERIFY(!added.contains("stage-update")); QVERIFY(!added.contains("\nupdate "));
+    }
+    void reinstallRejectsInvalidOrUnacknowledgedRequests_data() {
+        QTest::addColumn<QString>("problem");
+        QTest::addColumn<QString>("status");
+        for (const auto &problem : {"digest", "stage", "missing-stage", "extra-field"})
+            QTest::newRow(problem) << QString(problem) << QString("invalid_request");
+        for (const auto &problem : {"participants", "null-participants"})
+            QTest::newRow(problem) << QString(problem) << QString("invalid_participants");
+        QTest::newRow("missing-participants") << QString("missing-participants") << QString("invalid_request");
+        QTest::newRow("busy") << QString("busy") << QString("busy");
+        QTest::newRow("update-empty") << QString("update-empty") << QString("invalid_participants");
+        for (const auto &problem : {"mismatched-digest", "mismatched-ack"})
+            QTest::newRow(problem) << QString(problem) << QString("failed");
+    }
+    void reinstallRejectsInvalidOrUnacknowledgedRequests() {
+        QFETCH(QString, problem); QFETCH(QString, status);
+        UpdateService service(true, options()); QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        auto request = cliRequest(); request["command"] = "reinstall";
+        request["prepared_stage"] = service.verifiedStage(); request["additional_processes"] = QJsonArray{};
+        request["prior_state_sha256"] = QString(64, 'c');
+        if (problem == "digest") request["prior_state_sha256"] = "invalid";
+        if (problem == "stage") request["prepared_stage"] = QJsonArray{};
+        if (problem == "missing-stage") request.remove("prepared_stage");
+        if (problem == "extra-field") request["extra"] = true;
+        if (problem == "participants") request["additional_processes"] = cliRequest().value("additional_processes");
+        if (problem == "missing-participants") request.remove("additional_processes");
+        if (problem == "null-participants") request["additional_processes"] = QJsonValue::Null;
+        if (problem == "busy") { qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "hang"); service.checkForUpdates(); }
+        if (problem.startsWith("mismatched-")) qputenv("HEADROOM_UPDATE_FIXTURE_MODE", problem.toUtf8());
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        QJsonObject response;
+        auto reply = [&](const QJsonObject &value) { response = value; };
+        if (problem == "update-empty") { request["command"] = "update"; service.requestCLIUpdate(request, reply); }
+        else service.requestReinstall(request, reply);
+        QTRY_COMPARE(response.value("status").toString(), status);
+        QCOMPARE(response.value("ok"), QJsonValue(false));
+        QCOMPARE(prepared.count(), 0);
+        QVERIFY(!QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
+        if (!problem.startsWith("mismatched-")) QVERIFY(!record().contains("prepare-apply"));
+    }
+    void reinstallRejectsUnmanagedSessions() {
+        auto request = cliRequest(); request["command"] = "reinstall";
+        request["prepared_stage"] = QJsonObject{}; request["additional_processes"] = QJsonArray{};
+        request["prior_state_sha256"] = QString(64, 'c');
+        auto source = options(); source.installRoot.clear(); source.launcherPath.clear(); source.packageVersion.clear();
+        auto system = options(); system.systemManaged = true;
+        for (const auto &config : {options(), source, system}) {
+            UpdateService service(config.systemManaged || config.installRoot.isEmpty(), config);
+            QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+            QJsonObject response;
+            service.requestReinstall(request, [&](const QJsonObject &reply) { response = reply; });
+            QCOMPARE(response.value("status").toString(), config.installRoot.isEmpty() ? QString("invalid_request") : QString("unmanaged_installation"));
+            QCOMPARE(prepared.count(), 0);
+        }
+        QVERIFY(record().isEmpty());
     }
     void cliUpdateRejectsChangedParticipantBeforeCommit() {
         UpdateService service(true, options());
