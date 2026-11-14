@@ -20,7 +20,7 @@ func TestListHumanReadableSignInStates(t *testing.T) {
 		for _, enabled := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/enabled=%t", tc.state, enabled), func(t *testing.T) {
 				o, out, path := fixture(t)
-				write(t, path, fmt.Sprintf("providers:\n  claude:\n    accounts:\n      - id: work\n        label: Work\n        config_dir: /synthetic/work\n        enabled: %t\n", enabled))
+				write(t, path, fmt.Sprintf("providers:\n  claude:\n    accounts:\n      - id: work\n        label: Work\n        config_dir: ~/synthetic/work\n        enabled: %t\n", enabled))
 				o.SignIn = func(context.Context, string) accountconfig.SignIn {
 					return accountconfig.SignIn{State: tc.state}
 				}

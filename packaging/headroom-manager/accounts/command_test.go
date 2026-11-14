@@ -168,7 +168,7 @@ func TestListShowsPathStatusAndEmptyHint(t *testing.T) {
 		t.Run(map[bool]string{false: "empty", true: "populated"}[populated], func(t *testing.T) {
 			o, out, path := fixture(t)
 			if populated {
-				write(t, path, "providers:\n  claude:\n    accounts:\n      - id: work\n        label: Work\n        config_dir: /synthetic/work\n        enabled: false\n")
+				write(t, path, "providers:\n  claude:\n    accounts:\n      - id: work\n        label: Work\n        config_dir: ~/synthetic/work\n        enabled: false\n")
 			}
 			o.Args = []string{"list", "--config", path}
 			if err := Run(context.Background(), o); err != nil {

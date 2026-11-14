@@ -12,11 +12,11 @@ import (
 )
 
 func TestValidationPrecedesLogin(t *testing.T) {
-	const saved = "providers:\n  claude:\n    accounts:\n      - id: saved\n        label: Saved\n        config_dir: /synthetic/saved\n"
+	const saved = "providers:\n  claude:\n    accounts:\n      - id: saved\n        label: Saved\n        config_dir: ~/synthetic/saved\n"
 	var full strings.Builder
 	full.WriteString("providers:\n  claude:\n    accounts:\n")
 	for i := range 8 {
-		fmt.Fprintf(&full, "      - id: saved%d\n        config_dir: /synthetic/saved%d\n", i, i)
+		fmt.Fprintf(&full, "      - id: saved%d\n        config_dir: ~/synthetic/saved%d\n", i, i)
 	}
 	for _, tc := range []struct {
 		name, data, id string
@@ -28,7 +28,7 @@ func TestValidationPrecedesLogin(t *testing.T) {
 		{"invalid directory", "", "work", []string{"--config-dir", "relative/dir"}, accountconfig.ErrInvalidConfigDir},
 		{"duplicate id", saved, "saved", nil, accountconfig.ErrDuplicateID},
 		{"duplicate label", saved, "work", []string{"--label", "saved"}, accountconfig.ErrDuplicateLabel},
-		{"duplicate directory", saved, "work", []string{"--config-dir", "/synthetic/saved"}, accountconfig.ErrDuplicateConfigDir},
+		{"duplicate directory", saved, "work", []string{"--config-dir", "~/synthetic/saved"}, accountconfig.ErrDuplicateConfigDir},
 		{"too many accounts", full.String(), "work", nil, accountconfig.ErrTooManyAccounts},
 		{"invalid existing config", "poll_interval: sensitive-secret\n", "work", nil, nil},
 	} {

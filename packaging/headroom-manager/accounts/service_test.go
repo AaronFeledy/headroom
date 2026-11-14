@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -35,7 +36,11 @@ func TestConfigSelection(t *testing.T) {
 	for _, mode := range []string{"explicit relative", "receipt", "missing receipt", "no service", "invalid receipt", "not ready", "missing path", "explicit invalid receipt", "explicit same overrides", "explicit different overrides"} {
 		t.Run(mode, func(t *testing.T) {
 			o, out, path := fixture(t)
-			defaultPath, err := filepath.Abs(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "headroom", "config.yaml"))
+			base, name := os.Getenv("XDG_CONFIG_HOME"), "headroom"
+			if runtime.GOOS == "windows" {
+				base, name = os.Getenv("APPDATA"), "Headroom"
+			}
+			defaultPath, err := filepath.Abs(filepath.Join(base, name, "config.yaml"))
 			if err != nil {
 				t.Fatal(err)
 			}
