@@ -93,6 +93,10 @@ func Test_CheckAdd_and_List_redact_invalid_config_values(t *testing.T) {
 			for _, operation := range []func() error{
 				func() error { return accountconfig.CheckAdd(context.Background(), target, activeAccount("work")) },
 				func() error { _, err := accountconfig.List(context.Background(), target); return err },
+				func() error {
+					_, err := accountconfig.Update(context.Background(), target, "work", accountconfig.AccountChanges{Enabled: pointer(false)})
+					return err
+				},
 			} {
 				err := operation()
 				var validation *accountconfig.ValidationError

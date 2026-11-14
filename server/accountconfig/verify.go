@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func verifyGeneric(before, after []byte, keys []string, account Account, removeIndex int) error {
+func verifyGeneric(before, after []byte, keys []string, account Account, index int, changes *AccountChanges) error {
 	var original, candidate any
 	if err := yaml.Unmarshal(before, &original); err != nil {
 		return &ValidationError{cause: err}
@@ -37,10 +37,29 @@ func verifyGeneric(before, after []byte, keys []string, account Account, removeI
 			return ErrUnsupportedLayout
 		}
 	}
-	if removeIndex < 0 {
+	if changes != nil {
+		item := items[index]
+		if changes.Label != nil && !genericSet(item, "label", *changes.Label) {
+			return ErrUnsupportedLayout
+		}
+		if changes.Enabled != nil {
+			if *changes.Enabled {
+				switch mapping := item.(type) {
+				case map[string]any:
+					delete(mapping, "enabled")
+				case map[any]any:
+					delete(mapping, "enabled")
+				default:
+					return ErrUnsupportedLayout
+				}
+			} else if !genericSet(item, "enabled", false) {
+				return ErrUnsupportedLayout
+			}
+		}
+	} else if index < 0 {
 		items = append(items, accountFields(account))
 	} else {
-		items = append(items[:removeIndex], items[removeIndex+1:]...)
+		items = append(items[:index], items[index+1:]...)
 	}
 	if len(items) == 0 {
 		items = []any{}

@@ -69,11 +69,14 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		return err
 	}
+	if cfg.CheckConfig && cfg.DesktopSession {
+		return fmt.Errorf("check-config and desktop-session cannot be combined: %w", config.ErrInvalidConfig)
+	}
 	if cfg.DesktopSession {
 		if cfg.SSHAccess {
 			return fmt.Errorf("desktop-session and ssh-access cannot be combined: %w", config.ErrInvalidConfig)
 		}
-		return runDesktopSession(ctx, cfg, logger, desktopOptions)
+		return runDesktopSession(ctx, cfg, logger, desktopOptions, env)
 	}
 	if cfg.SSHAccess {
 		if err := sshaccess.ValidatePlatform(); err != nil {
@@ -81,6 +84,10 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 	}
 	if err := api.ValidateStartup(cfg.ListenAddr, cfg.AuthToken); err != nil {
+		return err
+	}
+	if cfg.CheckConfig {
+		_, err := fmt.Fprintf(desktopOptions.output, "config ok: %s\n", cfg.ConfigPath)
 		return err
 	}
 	var sshListener net.Listener
@@ -95,7 +102,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		defer sshListener.Close()
 	}
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger, env)
 	if err != nil {
 		return err
 	}
@@ -135,7 +142,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	return runServerAndPoller(ctx, appRuntime{servers: servers, poller: providerPoller, interval: cfg.PollInterval})
 }
 
-func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions) error {
+func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions, env []string) error {
 	ctx, stopParentWatch := desktopParentContext(ctx)
 	defer stopParentWatch()
 	prepared, err := prepareDesktopSession(ctx, cfg.ListenAddr, options)
@@ -144,7 +151,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	}
 	defer prepared.listener.Close()
 	cfg.AuthToken = prepared.request.Token
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger, env)
 	if err != nil {
 		return err
 	}
@@ -164,7 +171,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		Reset:         resetCore,
 		Automation:    automation,
 	})
-	if err := prepared.publishIdentity(); err != nil {
+	if err := prepared.publishIdentity(cfg.ConfigPath); err != nil {
 		return err
 	}
 	if err := acknowledgeReady(ctx, options.ready, Ready{ConfigPath: cfg.ConfigPath}); err != nil {

@@ -500,6 +500,7 @@ are logged and the loader falls back to the legacy config when available.
 CLI flags:
 
 - `--config <path>` - config YAML path.
+- `--check-config` - validate startup configuration, print its absolute path, and exit without starting the server; incompatible with `--desktop-session` and `--ssh-stdio`.
 - `--listen-addr <host:port>` - HTTP listen address.
 - `--auth-token <token>` - bearer token.
 - `--tls <auto|on|off>` - default `auto` enables TLS for non-loopback binds.
@@ -591,6 +592,9 @@ For a WSL server, run it inside WSL.
 ```sh
 headroom accounts add claude work --label Work
 headroom accounts list
+headroom accounts login claude work                # sign in again
+headroom accounts set claude work --label "Work Team"
+headroom accounts set claude work --disable        # or --enable
 headroom accounts remove claude work
 ```
 
@@ -607,16 +611,30 @@ pass `--config`. Nothing is written when a check or the sign-in fails. The file
 is rewritten with its comments and settings kept, though spacing may be
 normalized.
 
-Configuration is read only at startup. When the current user's
-`headroom.service` runs the managed server for that file, `add` and `remove`
-restart it and wait for it to report ready. If it does not start with the
-change, the change is undone and the service is started again; a file edited
-again in the meantime is left as it is. If the restart cannot begin, for example
-while an update is running, the change stays saved and the command says how to
-restart. Without such a service the command prints the step to take: quit and
-reopen Headroom if the desktop app started the server, or restart the server the
-way you started it. `remove` deletes only the config entry and leaves the
+Configuration is read only at startup, so `add`, `set`, and `remove` restart the
+server that reads the edited file when Headroom started it:
+
+- When the current user's `headroom.service` runs the managed `headroom serve`,
+  the command restarts the unit and waits for it to report ready.
+- Otherwise, when the Headroom desktop app started its bundled server in Local
+  mode, the command asks the desktop to restart it.
+
+If the server fails to restart with the change, the change is undone and the
+server is started again; a file edited again in the meantime is left as it is.
+If the restart cannot begin, for example while an update is running, the
+change stays saved and the command says what to do. For any other server, it
+prints the step to take. `remove` deletes only the config entry and leaves the
 account's Claude Code sign-in in place.
+
+`login` signs an existing account in again with its exact `config_dir`. The
+server reads the new sign-in on its next poll, so no restart is needed. In a
+managed Headroom installation, a signed-out account's card shows
+`headroom accounts login claude <id>` as its sign-in command; other deployments
+show the equivalent `CLAUDE_CONFIG_DIR=... claude auth login` command.
+`list --json` prints `config_path` and an `accounts` array with each account's
+`id`, `label`, `enabled`, `config_dir`, and `sign_in` (`state`, `source_kind`,
+`source_name`). An invalid configuration is reported without its contents; run
+`headroom serve --check-config --config <path>` to see the full error.
 
 The account appears as its own `Claude (Work)` card. If the account is later
 signed out, the card says `Not signed in.` and shows the exact sign-in command

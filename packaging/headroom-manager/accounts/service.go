@@ -76,7 +76,7 @@ func sameFile(a, b string) bool {
 func (o Options) restart(ctx context.Context, selected selection, change accountconfig.Change) (restartOutcomeKind, error) {
 	r := selected.record
 	if r == nil {
-		return manualRestart, nil
+		return o.restartDesktop(ctx, selected.target, change)
 	}
 	if !sameFile(r.ConfigPath, change.Path) {
 		return otherConfig, nil

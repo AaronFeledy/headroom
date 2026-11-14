@@ -65,6 +65,8 @@ public:
     QString saveWindowSize(const QSize &size) { return m_settingsService.saveWindowSize(size); }
     // C++ integration seam for update preparation; attached/remote servers are untouched.
     void stopOwnedServer() { m_server.stopOwned(); }
+    void requestServerRestart(const QJsonObject &request, bool busy, std::function<void(const QJsonObject &)> reply)
+    { m_server.requestRestart(request, busy, std::move(reply)); }
     qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }
     QString ownedServerExecutablePath() const { return m_server.ownedExecutablePath(); }
     // Internal cache read of GET /api/v1/usage: startup, reconnects, settings,

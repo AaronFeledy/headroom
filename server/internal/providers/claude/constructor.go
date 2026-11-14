@@ -42,7 +42,10 @@ func New(opts Options) *Client {
 	signInCommand := &command
 	if account != nil {
 		signInCommand = nil
-		if opts.ConfigDir != "" {
+		if opts.SignInCommand != "" {
+			command = opts.SignInCommand
+			signInCommand = &command
+		} else if opts.ConfigDir != "" {
 			command = accountSignInCommand(runtime.GOOS, expandConfigDir(opts.ConfigDir, opts.HomeDir))
 			signInCommand = &command
 		}

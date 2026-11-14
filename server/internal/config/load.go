@@ -31,6 +31,7 @@ type flagValues struct {
 	AuthToken      string
 	PollInterval   string
 	DesktopSession bool
+	CheckConfig    bool
 	SSHAccess      bool
 	Set            map[string]bool
 	TLS            string
@@ -76,6 +77,7 @@ func parseFlags(args []string) (flagValues, error) {
 	fs.StringVar(&values.TLSKeyFile, "tls-key-file", "", "TLS private key PEM file")
 	fs.StringVar(&values.PollInterval, "poll-interval", "", "provider poll interval")
 	fs.BoolVar(&values.DesktopSession, "desktop-session", false, "start a private desktop TLS session")
+	fs.BoolVar(&values.CheckConfig, "check-config", false, "validate configuration and exit without starting the server")
 	fs.BoolVar(&values.SSHAccess, "ssh-access", false, "enable access through the private SSH Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return flagValues{}, fmt.Errorf("parse flags: %w", err)
@@ -192,6 +194,7 @@ func applyProviderEnv(env map[string]string, cfg *Config) error {
 }
 
 func applyFlags(flags flagValues, cfg *Config) error {
+	cfg.CheckConfig = flags.CheckConfig
 	if flags.Set["tls"] {
 		cfg.TLS = flags.TLS
 	}

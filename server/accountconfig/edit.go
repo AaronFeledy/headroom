@@ -108,25 +108,28 @@ func edit(data []byte, target Target, account Account, removeID string) ([]byte,
 		expected = append(expected[:index], expected[index+1:]...)
 		sequence.Content = append(sequence.Content[:index], sequence.Content[index+1:]...)
 	}
-	after, err := encodeDocument(doc, data)
+	after, err := encodeVerified(doc, data, func(candidate []byte) error {
+		want := append([]Account{}, expected...)
+		if err := verifyGeneric(data, candidate, keys, account, index, nil); err != nil {
+			return err
+		}
+		// The current file validated above, so a failure here is caused by the
+		// requested account in the context of the whole file and its overrides.
+		actual, err := check(candidate, target)
+		if err != nil {
+			return requestedAccountError(err)
+		}
+		if removeID == "" && len(actual) == len(original)+1 {
+			effective = actual[len(original)]
+			want = append(want, effective)
+		}
+		if !reflect.DeepEqual(actual, want) {
+			return ErrUnsupportedLayout
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, Account{}, err
-	}
-	if err := verifyGeneric(data, after, keys, account, index); err != nil {
-		return nil, Account{}, err
-	}
-	// The current file validated above, so a failure here is caused by the
-	// requested account in the context of the whole file and its overrides.
-	actual, err := check(after, target)
-	if err != nil {
-		return nil, Account{}, requestedAccountError(err)
-	}
-	if removeID == "" && len(actual) == len(original)+1 {
-		effective = actual[len(original)]
-		expected = append(expected, effective)
-	}
-	if !reflect.DeepEqual(actual, expected) {
-		return nil, Account{}, ErrUnsupportedLayout
 	}
 	return after, effective, nil
 }

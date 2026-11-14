@@ -81,6 +81,8 @@ int main(int argc, char **argv)
                 mode == QStringLiteral("wrong-cert") ? TlsFixture::replacementCertificatePem
                 : TlsFixture::certificatePem) + (mode == QStringLiteral("trailing-cert") ? QStringLiteral("junk") : QString())},
         };
+        if (qEnvironmentVariableIsSet("HEADROOM_FIXTURE_CONFIG_PATH"))
+            identity.insert(QStringLiteral("config_path"), qEnvironmentVariable("HEADROOM_FIXTURE_CONFIG_PATH"));
         QByteArray frame = QJsonDocument(identity).toJson(QJsonDocument::Compact) + '\n';
         if (mode == QStringLiteral("escaped-duplicate"))
             frame.replace("\"schema\":1", "\"schema\":1,\"sch\\u0065ma\":1");

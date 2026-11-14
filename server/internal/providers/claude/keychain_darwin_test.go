@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 func Test_systemKeychain_reads_disposable_native_keychain(t *testing.T) {
@@ -69,6 +71,29 @@ func Test_systemKeychain_reads_disposable_native_keychain(t *testing.T) {
 			t.Fatalf("missing fixture service: %v", err)
 		}
 	})
+	for _, spelling := range []string{"exact", "add slash", "remove slashes"} {
+		t.Run("extra account "+spelling, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "synthetic-account")
+			stored := dir
+			switch spelling {
+			case "add slash":
+				stored += "/"
+			case "remove slashes":
+				dir += "///"
+			}
+			data := claudeCredentialsJSON(credentialFixture{Access: "fixture-extra", Refresh: "fixture-refresh", ExpiresAt: futureMillis(t)})
+			keychainFixtureCommand(t, "add-generic-password", "-a", account, "-s", accountKeychainService(stored), "-w", data, file)
+			client := New(Options{ConfigDir: dir, Keychain: adapter, Account: &usage.Account{ID: "work", Label: "Work"}})
+			probe := client.ProbeSignIn(context.Background())
+			if probe.State != "signed_in" || probe.Source == nil || probe.Source.Kind != "keychain" || len(probe.Checked) != 1 || probe.Checked[0].Status != "signed_in" {
+				t.Fatalf("extra-account probe=%+v", probe)
+			}
+			creds, err := client.loadCredentials(context.Background())
+			if err != nil || creds.accessToken != "fixture-extra" || len(client.checked) != 1 || client.checked[0].Kind != "keychain" || client.checked[0].Status != "signed_in" {
+				t.Fatalf("extra-account discovery failed: %v", err)
+			}
+		})
+	}
 	t.Run("locked keychain fails within timeout", func(t *testing.T) {
 		// Given
 		keychainFixtureCommand(t, "lock-keychain", file)

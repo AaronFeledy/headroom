@@ -15,15 +15,15 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-func buildPoller(cfg config.Config, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	return buildPollerWithDiagnostics(cfg, nil, logger)
+func buildPoller(cfg config.Config, logger *slog.Logger, env []string) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
+	return buildPollerWithDiagnostics(cfg, nil, logger, env)
 }
 
 func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	return buildPollerWithDiagnostics(cfg, discovery, nil)
+	return buildPollerWithDiagnostics(cfg, discovery, nil, nil)
 }
 
-func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
+func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, logger *slog.Logger, env []string) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
 	providerPoller := poller.New(poller.Options{Logger: logger})
 	var cursorClient *cursor.Client
 	var codexClient *codex.Client
@@ -65,10 +65,11 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 				continue
 			}
 			extra := claude.New(claude.Options{
-				ConfigDir: account.ConfigDir,
-				Keychain:  claudeKeychain(),
-				Name:      "Claude (" + account.Label + ")",
-				Account:   &usage.Account{ID: account.ID, Label: account.Label},
+				SignInCommand: managedAccountSignIn(env, account.ID),
+				ConfigDir:     account.ConfigDir,
+				Keychain:      claudeKeychain(),
+				Name:          "Claude (" + account.Label + ")",
+				Account:       &usage.Account{ID: account.ID, Label: account.Label},
 			})
 			if err := providerPoller.Register(extra, true); err != nil {
 				return nil, nil, nil, nil, nil, nil, err
@@ -77,6 +78,19 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 		}
 	}
 	return providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, nil
+}
+
+func managedAccountSignIn(env []string, id string) string {
+	root := ""
+	for _, entry := range env {
+		if key, value, ok := strings.Cut(entry, "="); ok && key == "HEADROOM_INSTALL_ROOT" {
+			root = value
+		}
+	}
+	if root != "" {
+		return "headroom accounts login claude " + id
+	}
+	return ""
 }
 
 func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string) (usage.Provider, error) {

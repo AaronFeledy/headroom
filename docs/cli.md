@@ -15,8 +15,9 @@ headroom --weekly-only           # weekly meters only
 headroom --ssh usageuser@server.example
 headroom --url https://usage.example
 headroom serve --config /path/to/config.yaml
+headroom serve --check-config     # validate the server config and exit
 headroom accounts add claude work --label Work
-headroom accounts list
+headroom accounts list --json
 headroom accounts remove claude work
 headroom update
 headroom version
@@ -53,24 +54,34 @@ cancels, or redeems anything.
 
 ## Extra Claude accounts
 
-`headroom accounts` adds, lists, and removes extra Claude accounts in the
-server configuration of this computer. Run it where the server runs, as the
-user that runs it; for a WSL server, run it inside WSL.
+`headroom accounts` manages extra Claude accounts in this computer's server
+configuration. Run it as the server's user, on the server's computer; for a WSL
+server, run it inside WSL.
 
 ```text
-headroom accounts list [--config PATH]
+headroom accounts list [--config PATH] [--json]
 headroom accounts add claude <id> [--label LABEL] [--config-dir DIR] [--config PATH]
+headroom accounts login claude <id> [--config PATH]
+headroom accounts set claude <id> [--label LABEL] [--enable | --disable] [--config PATH]
 headroom accounts remove claude <id> [--config PATH]
 ```
 
 `add` signs the account in with `claude auth login` in its own Claude Code config
 directory (`~/.claude-<id>` unless `--config-dir` is given), skipping the login
 when that directory already has a readable sign-in, then adds the account.
-Without `--config`, it edits the configuration of the running managed
-`headroom serve`, or the default config path when none is running. When your
-user's `headroom.service` runs that server, `add` and `remove` restart it, and
-undo the change if the service does not start with it; otherwise they print the
-restart step. `remove` leaves the account's Claude Code sign-in in place. See
+`login` signs an existing account in again; the server reads the new sign-in on
+its next poll. Without `--config`, the commands use the configuration of the
+running managed `headroom serve`, or the default config path when none is
+running.
+
+After `add`, `set`, or `remove`, the command restarts the server when Headroom
+started it for that file: your user's `headroom.service`, or the desktop app's
+bundled Local-mode server. If that server fails to start with the change, the
+change is undone. When no restart is performed, the command prints the restart
+step. `remove` leaves the account's Claude Code sign-in in place. `list --json`
+is stable for scripts and agents: `config_path` plus an `accounts` array of
+`id`, `label`, `enabled`, `config_dir`, and `sign_in` (`state`, `source_kind`,
+`source_name`). See
 [multiple Claude accounts](../server/README.md#multiple-claude-accounts) for the
 configuration rules.
 

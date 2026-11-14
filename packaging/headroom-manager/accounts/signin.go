@@ -37,19 +37,8 @@ func (o Options) add(ctx context.Context, c command, selected selection) error {
 			return err
 		}
 	case "signed_out", "expired":
-		if err := o.Login(ctx, dir, o.Stdin, o.Stdout, o.Stderr, loginEnvironment(o.Env, dir)); err != nil {
-			if errors.Is(err, errClaudeNotFound) {
-				return err
-			}
-			return fmt.Errorf("claude auth login failed: %w", err)
-		}
-		probe = o.SignIn(ctx, dir)
-		if probe.State != "signed_in" {
-			checked := make([]string, 0, len(probe.Checked))
-			for _, source := range probe.Checked {
-				checked = append(checked, fmt.Sprintf("%s (%s)", signInWhere(dir, source.Kind), signInState(source.Status)))
-			}
-			return fmt.Errorf("Claude Code did not save a sign-in Headroom can read for %s; checked: %s", dir, strings.Join(checked, ", "))
+		if err := o.loginAndProbe(ctx, dir); err != nil {
+			return err
 		}
 	case "locked":
 		return errors.New("the login keychain is locked; unlock it and run this command again")
@@ -109,7 +98,7 @@ func login(ctx context.Context, dir string, stdin io.Reader, stdout, stderr io.W
 	if err != nil {
 		return errClaudeNotFound
 	}
-	cmd := exec.CommandContext(ctx, program, "auth", "login")
+	cmd := claudeCommand(ctx, program)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Env = env
 	return cmd.Run()

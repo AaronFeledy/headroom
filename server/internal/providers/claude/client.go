@@ -49,6 +49,8 @@ type Options struct {
 	Name string
 	// Account is nil for the default Claude row.
 	Account *usage.Account
+	// SignInCommand overrides extra-account sign-in instructions verbatim when nonempty.
+	SignInCommand string
 }
 
 type Client struct {

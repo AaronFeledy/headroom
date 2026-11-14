@@ -26,6 +26,7 @@ type Config struct {
 	PollInterval   time.Duration
 	Providers      map[string]ProviderConfig
 	DesktopSession bool
+	CheckConfig    bool
 	SSHAccess      bool
 	TLS            string
 	TLSCertFile    string

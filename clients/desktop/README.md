@@ -395,6 +395,13 @@ server on `127.0.0.1:7823`,
 or starts an adjacent bundled `usage-server` executable with bounded readiness and
 restart handling. Headroom stops only a server process that it started.
 
+When `headroom accounts` adds, changes, or removes an extra Claude account, it
+asks a running desktop to restart its bundled server so account cards update
+without reopening Headroom. The desktop restarts only its own Local-mode child
+reading the edited config file, and only when no update is in progress. An
+attached, SSH, or HTTP(S) server is never restarted, and capture and
+isolated-config sessions do not accept the request.
+
 Settings shows the app version and checks the configured server's authenticated
 health/version endpoint. Official per-user packages perform one delayed startup
 check and automatically download, verify, and stage a newer matching Headroom

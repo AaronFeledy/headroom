@@ -106,13 +106,13 @@ headroom accounts add claude work --label Work
 ```
 
 The command signs the account in to Claude Code with its own config directory,
-adds it to the server config, and restarts the server when your user's
-`headroom.service` runs it. Otherwise it tells you to restart: if the desktop app
-started the server, quit and reopen Headroom. Each account gets its own
-`Claude (<label>)` card that you can reorder or pin like any other. See
-[multiple Claude accounts](server/README.md#multiple-claude-accounts) for listing,
-removing, and the config format. Banked resets can be used only from the default
-Claude account.
+adds it to the server config, and restarts the server Headroom started (the
+desktop app's bundled server or your user's `headroom.service`). Each account
+gets a `Claude (Work)` card that you can reorder or pin like any other.
+`headroom accounts login claude work` signs it in again later. See
+[multiple Claude accounts](server/README.md#multiple-claude-accounts) for
+listing, renaming, disabling, removing, and the config format. Banked resets can
+be used only from the default Claude account.
 
 ## Use it in the terminal
 

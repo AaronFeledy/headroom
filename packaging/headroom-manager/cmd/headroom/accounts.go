@@ -16,6 +16,7 @@ func accountsCommand(ctx context.Context, args []string) error {
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 		Service: managedAccountsService{},
+		Desktop: accountsDesktop{},
 	})
 }
 

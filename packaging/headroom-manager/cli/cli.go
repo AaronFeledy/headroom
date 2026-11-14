@@ -122,7 +122,7 @@ func runDashboard(ctx context.Context, options Options) error {
 	set.StringVar(&flags.ssh, "ssh", "", "SSH destination ([user@]host[:port])")
 	showVersion := set.Bool("version", false, "print Headroom version")
 	set.Usage = func() {
-		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update [--this-install-only [--version VERSION] | --reconcile]\n       headroom desktop\n       headroom pair windows-wsl [pairing options]\n       headroom accounts list [--config PATH]\n       headroom accounts add claude <id> [--label LABEL] [--config-dir DIR] [--config PATH]\n       headroom accounts remove claude <id> [--config PATH]\n       headroom version")
+		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update [--this-install-only [--version VERSION] | --reconcile]\n       headroom desktop\n       headroom pair windows-wsl [pairing options]\n       headroom accounts list [--config PATH] [--json]\n       headroom accounts add claude <id> [--label LABEL] [--config-dir DIR] [--config PATH]\n       headroom accounts login claude <id> [--config PATH]\n       headroom accounts set claude <id> [--label LABEL] [--enable | --disable] [--config PATH]\n       headroom accounts remove claude <id> [--config PATH]\n       headroom version")
 		set.PrintDefaults()
 		fmt.Fprintln(options.Stderr, "Remote HTTP authentication: HEADROOM_AUTH_TOKEN or HEADROOM_AUTH_TOKEN_FILE")
 		fmt.Fprintln(options.Stderr, "Token files require owner-only permissions on Linux/macOS; use HEADROOM_AUTH_TOKEN on Windows.")

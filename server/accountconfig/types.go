@@ -15,6 +15,12 @@ type Account struct {
 	Enabled              bool
 }
 
+// AccountChanges selects the account fields to update; nil leaves a field unchanged.
+type AccountChanges struct {
+	Label   *string
+	Enabled *bool
+}
+
 // Target identifies the file and the server overrides used to validate its contents.
 // Path takes precedence over any --config argument or USAGE_CONFIG environment value.
 // Dir is the server's working directory for relative paths; empty means this process's.
@@ -33,6 +39,8 @@ type Change struct {
 }
 
 var (
+	// ErrNoChanges means neither Label nor Enabled was requested.
+	ErrNoChanges          = errors.New("no account changes requested")
 	ErrDuplicateID        = errors.New("a Claude account with this id already exists")
 	ErrDuplicateLabel     = errors.New("a Claude account with this label already exists (labels ignore case)")
 	ErrDuplicateConfigDir = errors.New("this Claude config directory is already used by another Claude account or the default Claude sign-in")
