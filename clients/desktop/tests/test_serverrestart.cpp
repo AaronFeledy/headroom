@@ -10,6 +10,27 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+// Answers the local health probe so ManagedServer attaches without owning it.
+class AttachedServer : public QTcpServer {
+public:
+    AttachedServer() {
+        connect(this, &QTcpServer::newConnection, this, [this] {
+            while (auto socket = nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    if (!request.contains("\r\n\r\n")) return;
+                    const QByteArray body = R"({"status":"ok","version":"dev","providers":[]})";
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                        + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+    }
+};
+
 class ServerRestartTest : public QObject {
     Q_OBJECT
 private:
@@ -74,23 +95,17 @@ private slots:
         QVERIFY(controller.ownedServerProcessId() != originalPid);
     }
     void attachedServerIsNeverRestarted() {
-        const auto configured = options();
-        QProcess external;
-        external.start(QStringLiteral(FIXTURE_PATH), {"--listen-addr", QString("127.0.0.1:%1").arg(configured.localUrl.port())});
-        QVERIFY(external.waitForStarted());
-        QTcpSocket probe;
-        QTRY_VERIFY_WITH_TIMEOUT(([&] {
-            probe.abort(); probe.connectToHost(QHostAddress::LocalHost, configured.localUrl.port());
-            return probe.waitForConnected(100);
-        })(), 5000);
+        AttachedServer attached; QVERIFY(attached.listen(QHostAddress::LocalHost));
+        auto configured = options();
+        configured.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(attached.serverPort()));
         ManagedServer server(configured); QSignalSpy ready(&server, &ManagedServer::available);
         server.configure("local", {}); server.ensureAvailable();
-        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 15000); QVERIFY(server.isAttached());
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 15000);
+        QVERIFY(server.isAttached()); QVERIFY(!server.ownsProcess());
         QJsonObject response;
         server.requestRestart(request(QDir::tempPath() + "/config.yaml"), false, [&](const auto &value) { response = value; });
         QCOMPARE(response.value("result").toString(), QString("not_owner"));
-        QCOMPARE(external.state(), QProcess::Running);
-        external.kill(); QVERIFY(external.waitForFinished());
+        QVERIFY(attached.isListening()); QVERIFY(server.isAttached());
     }
     void ownedRestart_data() {
         QTest::addColumn<QString>("scenario");
