@@ -33,8 +33,8 @@ func TestCompletedApplyRecoveryResult(t *testing.T) {
 		t.Fatalf("complete crash journal = %+v, %v", journal, err)
 	}
 	candidate := *journal.Candidate
-	bound := ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
-	for _, name := range []string{"missing", "malformed", "wrong-version", "wrong-generation", "wrong-status", "bound", "prior-state", "write-failure"} {
+	bound := ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
+	for _, name := range []string{"missing", "malformed", "wrong-version", "wrong-generation", "wrong-nonce", "wrong-status", "bound", "prior-state", "write-failure"} {
 		t.Run(name, func(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(paths[0]), 0o700); err != nil {
 				t.Fatal(err)
@@ -58,6 +58,8 @@ func TestCompletedApplyRecoveryResult(t *testing.T) {
 				result.Version = prior.ActiveVersion
 			case "wrong-generation":
 				result.VersionPath = prior.VersionPath
+			case "wrong-nonce":
+				result.Nonce = "000000000000000000000000000000000000000000000000"
 			case "wrong-status":
 				result.Status, result.RolledBack = "rolled_back", true
 			case "bound":
@@ -79,7 +81,7 @@ func TestCompletedApplyRecoveryResult(t *testing.T) {
 				if err := os.WriteFile(resultPath, before, 0o600); err != nil {
 					t.Fatal(err)
 				}
-			case "wrong-version", "wrong-generation", "wrong-status":
+			case "wrong-version", "wrong-generation", "wrong-nonce", "wrong-status":
 				if err := writeDurableJSON(resultPath, result); err != nil {
 					t.Fatal(err)
 				}
@@ -107,6 +109,14 @@ func TestCompletedApplyRecoveryResult(t *testing.T) {
 				}
 			} else {
 				assertCrashResult(t, root, candidate, "applied")
+				data, readErr := readBoundedFile(resultPath, maxManifestBytes)
+				var persisted ApplyResult
+				if readErr != nil || json.Unmarshal(data, &persisted) != nil {
+					t.Fatalf("read recovered outcome: %s, %v", data, readErr)
+				}
+				if persisted.Nonce != journal.Request.Nonce {
+					t.Fatalf("recovered nonce = %q, want %q", persisted.Nonce, journal.Request.Nonce)
+				}
 			}
 			if name == "bound" {
 				after, err := os.ReadFile(resultPath)

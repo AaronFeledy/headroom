@@ -16,6 +16,11 @@ func TestMain(m *testing.M) {
 }
 
 func runTests(m *testing.M) int {
+	defer func() {
+		if activationTools.manager != "" {
+			_ = os.RemoveAll(filepath.Dir(activationTools.manager))
+		}
+	}()
 	if executable := os.Getenv("HEADROOM_CRASH_HELPER_FIXTURE"); executable != "" {
 		fixtureExecutable = executable
 		return m.Run()

@@ -111,16 +111,6 @@ type PreparedApply struct {
 	Nonce                string `json:"nonce"`
 }
 
-type ApplyResult struct {
-	Schema        int    `json:"schema"`
-	Product       string `json:"product"`
-	Status        string `json:"status"`
-	Version       string `json:"version"`
-	VersionPath   string `json:"version_path"`
-	RolledBack    bool   `json:"rolled_back"`
-	FailureReason string `json:"failure_reason,omitempty"`
-}
-
 func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	root, err := NormalizeInstallRoot(request.InstallRoot)
 	if err != nil {
@@ -282,10 +272,14 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	} else if request.OwnedChildExecutable != "" {
 		return PreparedApply{}, errors.New("owned child identity is incomplete")
 	}
-	request.PriorStateSHA256, err = digestFile(filepath.Join(root, StateName))
+	priorDigest, err := digestFile(filepath.Join(root, StateName))
 	if err != nil {
 		return PreparedApply{}, err
 	}
+	if request.PriorStateSHA256 != "" && request.PriorStateSHA256 != priorDigest {
+		return PreparedApply{}, errors.New("installed state changed before apply preparation")
+	}
+	request.PriorStateSHA256 = priorDigest
 	if stage.Version == "" {
 		return PreparedApply{}, errors.New("verified stage has no version")
 	}
@@ -612,7 +606,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			cleanupErr = writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal)
 		}
 		if cleanupErr == nil {
-			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
+			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, RolledBack: true, FailureReason: boundedError(originalFailure)}
 			relaunch := journal.Request
 			relaunch.ReadyPath = filepath.Join(directory, "rollback-ready.json")
@@ -620,7 +614,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			cleanupErr = relaunchRollbackPrior(relaunch, *previous)
 		}
 		if cleanupErr != nil {
-			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "recovery_required", Version: previous.ActiveVersion,
+			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "recovery_required", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, FailureReason: boundedError(errors.Join(originalFailure, cleanupErr))}
 			if current, stateErr := readStateUnchecked(journal.Request.InstallRoot); stateErr == nil && validVersionPath(current) {
 				result.Version, result.VersionPath = current.ActiveVersion, current.VersionPath
@@ -824,9 +818,11 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	_ = os.RemoveAll(filepath.Dir(filepath.Dir(stage.PackageRoot)))
-	result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
-	_ = writeDurableJSON(filepath.Join(request.InstallRoot, "last-apply-result.json"), result)
 	complete = true
+	result = ApplyResult{Nonce: request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
+	if err = writeDurableJSON(filepath.Join(request.InstallRoot, "last-apply-result.json"), result); err != nil {
+		return result, fmt.Errorf("persist apply outcome: %w", err)
+	}
 	return result, nil
 }
 

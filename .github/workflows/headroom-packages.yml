@@ -90,12 +90,6 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
-      - name: Check installer readiness on Windows PowerShell 5.1
-        shell: powershell
-        run: ./packaging/tests/readiness_fixture.ps1 -RepositoryRoot $PWD.Path
-      - name: Check installer readiness on PowerShell Core
-        shell: pwsh
-        run: ./packaging/tests/readiness_fixture.ps1 -RepositoryRoot $PWD.Path
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x

@@ -1,9 +1,9 @@
 package contract
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,25 +74,13 @@ func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func
 		}
 	}
 	expected := readinessMarker{Nonce: request.Nonce, PID: process.Pid, Version: state.ActiveVersion, Executable: executable}
-	deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
-	for time.Now().Before(deadline) {
-		select {
-		case waitErr := <-done:
-			return fmt.Errorf("replacement app exited before readiness: %v", waitErr)
-		default:
-		}
-		data, readErr := readBoundedFile(request.ReadyPath, 4096)
-		if readErr == nil && matchesReadinessMarker(data, expected) {
-			select {
-			case waitErr := <-done:
-				return fmt.Errorf("replacement app exited during readiness: %v", waitErr)
-			case <-time.After(200 * time.Millisecond):
-				return nil
-			}
-		}
-		time.Sleep(25 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(request.ReadyTimeoutMS)*time.Millisecond)
+	defer cancel()
+	err = (readinessObservation{path: request.ReadyPath, expected: expected, exited: done}).wait(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		_ = process.Kill()
+		<-done
+		return errors.New("replacement app readiness timed out")
 	}
-	_ = process.Kill()
-	<-done
-	return errors.New("replacement app readiness timed out")
+	return err
 }

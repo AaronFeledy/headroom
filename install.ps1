@@ -71,40 +71,19 @@ function Save-HeadroomFile {
     throw 'Too many download redirects.'
 }
 
-function Wait-HeadroomReady {
-    param([string]$Path, $Expected)
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($clock.Elapsed.TotalSeconds -lt 10) {
-        $readyMatches = $false
-        try {
-            $input = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
-            try {
-                $buffer = New-Object byte[] 4097
-                $length = 0
-                while ($length -lt $buffer.Length) {
-                    $read = $input.Read($buffer, $length, $buffer.Length - $length)
-                    if ($read -eq 0) { break }
-                    $length += $read
-                }
-            } finally { $input.Dispose() }
-            if ($length -gt 0 -and $length -le 4096) {
-                $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $length).TrimStart()
-                if (-not $text.StartsWith('{')) { throw 'Readiness marker must be a JSON object.' }
-                $ready = $text | ConvertFrom-Json
-                $readyMatches = $ready -is [pscustomobject] -and
-                    $ready.nonce -is [string] -and $ready.nonce -ceq $Expected.nonce -and
-                    $ready.version -is [string] -and $ready.version -ceq $Expected.version -and
-                    ($ready.pid -is [int32] -or $ready.pid -is [int64]) -and $ready.pid -gt 0 -and
-                    $ready.executable -is [string] -and [System.IO.Path]::IsPathRooted($ready.executable) -and
-                    ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or [System.IO.Path]::GetPathRoot($ready.executable).Length -gt 2) -and
-                    [System.IO.Path]::GetFullPath($ready.executable) -ieq $Expected.executable
-            }
-        } catch { $readyMatches = $false }
-        if ($readyMatches) { return $true }
-        $remaining = 10000 - $clock.Elapsed.TotalMilliseconds
-        if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Min(100, [Math]::Ceiling($remaining))) }
+function Invoke-HeadroomManager {
+    param([string[]]$Arguments)
+    $text = & $managerPath @Arguments
+    $exitCode = $LASTEXITCODE
+    $reply = ($text -join "`n") | ConvertFrom-Json
+    if ($exitCode -ne 0 -or $reply.ok -ne $true) {
+        if ($reply.error) { throw [string]$reply.error }
+        throw "Headroom package operation did not complete (exit code $exitCode)."
     }
-    return $false
+    if ($reply.command -cne $Arguments[0] -or $null -eq $reply.result) {
+        throw 'Headroom package manager returned an invalid result.'
+    }
+    return $reply.result
 }
 
 function Read-ReleaseManifest {
@@ -207,8 +186,15 @@ try {
             try { [System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($legacyExecutable) } catch { $false }
         } | Stop-Process -Force
         }
-        & $managerPath install --archive $localArchive --install-root $InstallRoot --entry-path $EntryPath --cli-entry-path $CLIEntryPath --version $manifest.version --platform windows --arch $contractArchitecture --asset $assetName
-        if ($LASTEXITCODE -ne 0) { throw "Headroom package manager failed with exit code $LASTEXITCODE." }
+        $installArguments = @('install', '--archive', $localArchive, '--install-root', $InstallRoot,
+            '--entry-path', $EntryPath, '--cli-entry-path', $CLIEntryPath, '--version', $manifest.version,
+            '--platform', 'windows', '--arch', $contractArchitecture, '--asset', $assetName)
+        if (-not $CLI -and -not $NoLaunch) { $installArguments += '--coordinate' }
+        Write-Host "Installing Headroom $($manifest.version)..."
+        $installed = Invoke-HeadroomManager -Arguments $installArguments
+        if ($installed.state.active_version -cne $manifest.version -or -not $installed.state.version_path) {
+            throw 'The installed generation does not match the requested package.'
+        }
         $cliDirectory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($CLIEntryPath))
         # [Environment]::GetEnvironmentVariable expands a REG_EXPAND_SZ Path and
         # [Environment]::SetEnvironmentVariable rewrites it as REG_SZ, which would
@@ -272,29 +258,22 @@ namespace HeadroomInstaller {
                 if ([System.IO.Path]::GetFullPath($legacy.TargetPath) -eq [System.IO.Path]::GetFullPath($legacyTarget)) { Remove-Item -LiteralPath $legacyShortcutPath }
             }
         } finally { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        $activation = $installed.activation
+        if ($null -eq $activation) {
+            $activateArguments = @('activate', '--install-root', $InstallRoot, '--version-path', $installed.state.version_path)
+            if ($NoLaunch) { $activateArguments += '--no-launch' }
+            $activation = Invoke-HeadroomManager -Arguments $activateArguments
+        }
+        if ($activation.version_path -cne $installed.state.version_path -or
+            @('ready', 'skipped', 'restart_required', 'unconfirmed') -cnotcontains $activation.status) {
+            throw 'Headroom package manager returned an invalid activation outcome.'
+        }
         Write-Host "Installed Headroom $($manifest.version) at $InstallRoot"
-        if ($NoLaunch) {
-            Write-Host "Quit any running Headroom window and launch $EntryPath to use the installed generation."
-        } else {
-            $readyPath = Join-Path $privateRoot 'installed-ready.json'
-            $nonce = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')).Substring(0, 48)
-            $state = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-state.json') -Raw | ConvertFrom-Json
-            $expected = [pscustomobject]@{
-                nonce = $nonce
-                version = $state.active_version
-                executable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot (Join-Path $state.version_path 'bin\headroom.exe')))
-            }
-            $priorNonce = [Environment]::GetEnvironmentVariable('HEADROOM_READY_NONCE', 'Process')
-            try {
-                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $nonce, 'Process')
-                $quotedReady = '"' + $readyPath.Replace('"', '\"') + '"'
-                Start-Process -FilePath $EntryPath -ArgumentList @('--headroom-installed-restart', '--headroom-ready-file', $quotedReady)
-            } finally {
-                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $priorNonce, 'Process')
-            }
-            $readyMatches = Wait-HeadroomReady $readyPath $expected
-            if ($readyMatches) { Write-Host 'Started the verified installed generation.' }
-            else { Write-Warning "The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch $EntryPath." }
+        switch -CaseSensitive ($activation.status) {
+            'ready' { Write-Host "Headroom $($manifest.version) is running." }
+            'skipped' { Write-Host "Launch skipped. Open $EntryPath when you are ready; quit any older Headroom window first." }
+            'restart_required' { Write-Warning "An earlier Headroom generation is still running. Quit it, then open $EntryPath." }
+            'unconfirmed' { Write-Warning "The package is installed, but startup could not be confirmed. Open $EntryPath and check Headroom diagnostics if it does not start." }
         }
     }
 } finally {

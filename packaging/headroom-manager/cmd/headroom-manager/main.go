@@ -84,6 +84,8 @@ func run(args []string) int {
 		result, err = stage(args[2:])
 	case "install":
 		result, err = install(args[2:])
+	case "activate":
+		result, err = activate(args[2:])
 	case "migrate-entries":
 		result, err = migrateEntries(args[2:])
 	case "check-update":
@@ -127,6 +129,7 @@ func prepareApply(args []string) (any, error) {
 	root := set.String("install-root", defaultInstallRoot(), "installation root")
 	entry := set.String("entry-path", defaultEntryPath(), "stable launcher entry")
 	record := set.String("stage-record", "", "verified stage record")
+	priorState := set.String("prior-state-sha256", "", "expected installed state digest")
 	pid := set.Int("current-pid", 0, "running Headroom process")
 	executable := set.String("current-executable", "", "running Headroom executable")
 	currentRole := set.String("current-role", contract.RoleApplication, "running Headroom component role")
@@ -147,7 +150,7 @@ func prepareApply(args []string) (any, error) {
 	prepared, err := contract.PrepareApply(manager, contract.ApplyRequest{InstallRoot: *root, EntryPath: *entry, StageRecord: *record,
 		CurrentPID: *pid, CurrentExecutable: *executable, CurrentRole: *currentRole, CandidateRole: *candidateRole,
 		OwnedChildPID: *childPID, OwnedChildExecutable: *childExecutable, AdditionalProcesses: participants,
-		RelaunchArguments: relaunch})
+		RelaunchArguments: relaunch, PriorStateSHA256: *priorState})
 	if err != nil {
 		return nil, err
 	}
@@ -311,17 +314,6 @@ func stage(args []string) (any, error) {
 		return nil, err
 	}
 	return contract.StageArchive(*archive, *root, expectations(v, p, a, n))
-}
-func install(args []string) (any, error) {
-	set, v, p, a, n := flags("install")
-	archive := set.String("archive", "", "package archive")
-	root := set.String("install-root", defaultInstallRoot(), "installation root")
-	entry := set.String("entry-path", defaultEntryPath(), "stable launcher entry")
-	cliEntry := set.String("cli-entry-path", "", "stable public CLI entry")
-	if err := set.Parse(args); err != nil {
-		return nil, err
-	}
-	return contract.InstallArchiveWithCLIEntry(*archive, *root, *entry, *cliEntry, expectations(v, p, a, n))
 }
 func createPackage(args []string) (any, error) {
 	set := flag.NewFlagSet("create-package", flag.ContinueOnError)
