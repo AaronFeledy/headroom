@@ -126,21 +126,28 @@ func TestInstallActivation(t *testing.T) {
 		t.Skip("synthetic AppKit wrapper requires native package CI")
 	}
 	archive := activationArchive(t, "41.0.0", "")
-	t.Run("fresh command ready", func(t *testing.T) {
-		root, installed := activationInstall(t, archive)
-		if installed.State == nil || installed.Activation != nil {
-			t.Fatalf("direct install result = %+v", installed)
-		}
-		manager, _ := installActivationTools(t)
-		data, err := exec.Command(manager, "activate", "--install-root", root, "--version-path", installed.State.VersionPath).Output()
-		var reply struct {
-			OK     bool             `json:"ok"`
-			Result ActivationResult `json:"result"`
-		}
-		if err != nil || json.Unmarshal(data, &reply) != nil || !reply.OK || reply.Result.Status != "ready" || reply.Result.VersionPath != installed.State.VersionPath {
-			t.Fatalf("activation command = %s, %v", data, err)
-		}
-	})
+	// Successful activation uses the command's normal readiness budget, including delayed markers.
+	for _, scenario := range []struct{ name, mode string }{
+		{"fresh command ready", ""},
+		{"delayed", "delayed"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Setenv("HEADROOM_FIXTURE_READY_MODE", scenario.mode)
+			root, installed := activationInstall(t, archive)
+			if installed.State == nil || installed.Activation != nil {
+				t.Fatalf("direct install result = %+v", installed)
+			}
+			manager, _ := installActivationTools(t)
+			data, err := exec.Command(manager, "activate", "--install-root", root, "--version-path", installed.State.VersionPath).Output()
+			var reply struct {
+				OK     bool             `json:"ok"`
+				Result ActivationResult `json:"result"`
+			}
+			if err != nil || json.Unmarshal(data, &reply) != nil || !reply.OK || reply.Result.Status != "ready" || reply.Result.VersionPath != installed.State.VersionPath {
+				t.Fatalf("activation command = %s, %v", data, err)
+			}
+		})
+	}
 	t.Run("no launch", func(t *testing.T) {
 		root, installed := activationInstall(t, archive)
 		result, err := ActivateInstall(context.Background(), ActivationOptions{InstallRoot: root, VersionPath: installed.State.VersionPath, NoLaunch: true})
@@ -176,19 +183,15 @@ func TestInstallActivation(t *testing.T) {
 			t.Fatalf("CLI activation = %+v, %v", result, err)
 		}
 	})
-	for _, mode := range []string{"wrong_nonce", "wrong_pid", "wrong_path", "wrong_version", "early_exit", "missing", "malformed", "delayed"} {
+	for _, mode := range []string{"wrong_nonce", "wrong_pid", "wrong_path", "wrong_version", "early_exit", "missing", "malformed"} {
 		t.Run(mode, func(t *testing.T) {
 			root, installed := activationInstall(t, archive)
 			t.Setenv("HEADROOM_FIXTURE_READY_MODE", mode)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			result, err := ActivateInstall(ctx, ActivationOptions{InstallRoot: root, VersionPath: installed.State.VersionPath})
-			want := "unconfirmed"
-			if mode == "delayed" {
-				want = "ready"
-			}
-			if err != nil || result.Status != want {
-				t.Fatalf("activation = %+v %v, want %s", result, err, want)
+			if err != nil || result.Status != "unconfirmed" {
+				t.Fatalf("activation = %+v %v, want unconfirmed", result, err)
 			}
 		})
 	}
