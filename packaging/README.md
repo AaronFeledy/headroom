@@ -321,6 +321,13 @@ user bus and refuses an existing `headroom.service`. Its runtime-only unit is
 stopped and removed afterward. Linux CLI jobs run this fixture on isolated CI
 runner accounts; it does not enable a service on a user's machine.
 
+The weekly and manually dispatched `.github/workflows/claude-code-contract.yml`
+canary checks credential-storage string markers in the latest Claude Code macOS
+ARM64 npm package without executing it. Run `python3 packaging/claude_code_contract.py`
+locally with Python 3 and npm, or add `--binary /path/to/claude` for an offline
+check. It prints the package version and fails with named missing markers when
+the upstream contract changes; it does not run on pull requests.
+
 ## Reusable release recipe
 
 Linux dependency setup runs in separate steps with a 15-minute limit, leaving

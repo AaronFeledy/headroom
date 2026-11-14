@@ -39,6 +39,9 @@ func Test_Load_returns_defaults_when_config_file_missing(t *testing.T) {
 			t.Fatalf("%s provider enabled = %v, want true", name, got)
 		}
 	}
+	if cfg.Providers["claude"].CredentialsPath != "" {
+		t.Fatalf("claude CredentialsPath = %q, want empty for discovery", cfg.Providers["claude"].CredentialsPath)
+	}
 }
 
 func Test_Load_enables_desktop_session_only_from_CLI(t *testing.T) {

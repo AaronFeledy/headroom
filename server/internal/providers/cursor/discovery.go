@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/browsercookie"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/safestorage"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/winprofile"
 )
@@ -19,6 +20,7 @@ type Discovery struct {
 	Environment        winprofile.Environment
 	Now                func() time.Time
 	BrowserCredentials bool
+	Unprotect          safestorage.UnprotectFunc
 }
 
 type credential struct {
@@ -77,14 +79,34 @@ func (d Discovery) files(authPath string) []credential {
 	return result
 }
 
-func readCredential(ctx context.Context, candidate credential) credential {
+func (d Discovery) readCredential(ctx context.Context, candidate credential) credential {
 	candidate.status = "signed_out"
 	var err error
 	if candidate.source.Kind == "app" {
 		var token string
 		token, err = browsercookie.AppToken(ctx, candidate.path)
 		if err == nil && token != "" {
-			candidate.cookie, err = cookieFromAccessToken(strings.Trim(token, "\""))
+			token = strings.Trim(token, "\"")
+			encrypted := safestorage.IsEncrypted(token)
+			if encrypted {
+				if d.Environment.GOOS == "windows" {
+					root := filepath.Dir(filepath.Dir(filepath.Dir(candidate.path)))
+					token, err = safestorage.Decrypt(token, filepath.Join(root, "Local State"), d.Unprotect)
+				} else {
+					err = safestorage.ErrUnsupported
+				}
+				if err != nil {
+					candidate.status = "encrypted"
+					candidate.failure = &usage.FetchFailure{Kind: usage.FailureOther}
+					return candidate
+				}
+			}
+			candidate.cookie, err = cookieFromAccessToken(token)
+			if encrypted && err != nil {
+				candidate.status = "encrypted"
+				candidate.failure = &usage.FetchFailure{Kind: usage.FailureOther}
+				return candidate
+			}
 		}
 	} else {
 		candidate.cookie, err = readLocalCookieHeader(ctx, candidate.path)

@@ -229,10 +229,13 @@ func formatCredentialError(err error, goos string) string {
 		return ""
 	}
 	if errors.Is(err, ErrCredentialsMissing) {
-		if goos == "darwin" {
-			return "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet."
-		}
 		return "Not signed in."
+	}
+	if errors.Is(err, ErrKeychainLocked) {
+		return "The macOS Keychain is locked. Unlock it so Headroom can read your Claude Code sign-in."
+	}
+	if errors.Is(err, ErrKeychainUnavailable) {
+		return "Headroom couldn't read your Claude Code sign-in from the macOS Keychain."
 	}
 	return "Saved sign-in could not be read. Sign in again."
 }

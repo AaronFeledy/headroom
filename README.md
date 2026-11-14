@@ -76,7 +76,7 @@ If you reinstall while Headroom is open, quit and reopen it afterward.
 
 | Provider | Where Headroom looks for a sign-in |
 | --- | --- |
-| Claude | Claude Code credentials, with an OpenCode fallback |
+| Claude | Claude Code credentials (macOS Keychain first), with an OpenCode fallback |
 | ChatGPT | Codex CLI credentials, with an OpenCode fallback |
 | Cursor | cursor-agent, the Cursor app, or supported browser sign-ins |
 | Grok | Grok CLI credentials, with a browser sign-in fallback |
@@ -97,12 +97,11 @@ if you'd like it available at login. Usage pace is an estimate; the
 ### Multiple Claude accounts
 
 To watch more than one Claude subscription, sign in to each extra account with
-its own `CLAUDE_CONFIG_DIR`, list it under `providers.claude.accounts` in the
-server config, and restart Headroom. Each one gets its own `Claude (<label>)`
-card that you can reorder or pin like any other. The
-[setup steps](server/README.md#multiple-claude-accounts) cover Linux, WSL, and
-Windows; macOS servers can't read these sign-ins yet. Banked resets can be used
-only from the default Claude account.
+its own `CLAUDE_CONFIG_DIR`, list that directory as `config_dir` under
+`providers.claude.accounts` in the server config, and restart Headroom. Each one
+gets its own `Claude (<label>)` card that you can reorder or pin like any other.
+The [setup steps](server/README.md#multiple-claude-accounts) cover macOS, Linux,
+WSL, and Windows. Banked resets can be used only from the default Claude account.
 
 ## Use it in the terminal
 
@@ -162,6 +161,9 @@ an HTTPS server with a verified certificate, or an SSH connection. See the
 
 - **A provider asks for sign-in:** sign in on the server's computer, as the user
   running it. For a WSL server, run the suggested command inside WSL.
+- **Claude says its sign-in expired on macOS:** Headroom reads Claude Code's
+  Keychain sign-in but leaves refreshing it to Claude Code. Use Claude Code once,
+  or run `claude auth login`.
 - **No usage in the terminal:** open the desktop or start `headroom serve`, then
   check the provider sign-in status.
 - **The desktop can't connect:** check Settings and diagnostics. An official

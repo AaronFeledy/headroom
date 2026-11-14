@@ -49,17 +49,18 @@ func validateAccountEntry(name string, index int, provider *ProviderConfig) erro
 	if err := validateAccountLabel(prefix, account.Label); err != nil {
 		return err
 	}
-	if account.CredentialsPath == "" {
-		return fmt.Errorf("%s: credentials_path is required: %w", prefix, ErrInvalidConfig)
+	if strings.TrimSpace(account.ConfigDir) == "" {
+		return fmt.Errorf("%s: config_dir is required: %w", prefix, ErrInvalidConfig)
 	}
-	expanded, err := expandCredentialsPath(account.CredentialsPath)
+	expanded, err := expandHomePath(account.ConfigDir)
 	if err != nil {
-		return fmt.Errorf("%s: credentials_path: %v: %w", prefix, err, ErrInvalidConfig)
+		return fmt.Errorf("%s: config_dir: %v: %w", prefix, err, ErrInvalidConfig)
 	}
-	if !filepath.IsAbs(expanded) {
-		return fmt.Errorf("%s: credentials_path must be absolute after ~ expansion: %w", prefix, ErrInvalidConfig)
+	if !filepath.IsAbs(filepath.Clean(expanded)) {
+		return fmt.Errorf("%s: config_dir must be absolute after ~ expansion: %w", prefix, ErrInvalidConfig)
 	}
-	account.CredentialsPath = filepath.Clean(expanded)
+	// Keep the raw expanded spelling (trailing slash included) for Keychain and commands.
+	account.ConfigDir = expanded
 	return nil
 }
 
@@ -75,7 +76,9 @@ func validateAccountLabel(prefix, label string) error {
 	return nil
 }
 
-func expandCredentialsPath(path string) (string, error) {
+// expandHomePath replaces a leading ~ with $HOME without cleaning, so a trailing
+// slash is preserved for Keychain service hashing.
+func expandHomePath(path string) (string, error) {
 	if path == "~" {
 		return os.UserHomeDir()
 	}
@@ -84,9 +87,16 @@ func expandCredentialsPath(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(home, path[2:]), nil
+		return home + path[1:], nil
 	}
 	return path, nil
+}
+
+type accountLocation struct {
+	file    string
+	dir     string
+	enabled bool
+	source  string
 }
 
 func validateAccountCredentialUniqueness(cfg Config, goos string) error {
@@ -94,30 +104,45 @@ func validateAccountCredentialUniqueness(cfg Config, goos string) error {
 	if len(claude.Accounts) == 0 {
 		return nil
 	}
-	type pathRef struct {
-		path    string
-		enabled bool
-		source  string
-	}
-	var refs []pathRef
+	var refs []accountLocation
 	if claude.Enabled {
-		defaultPath := strings.TrimSpace(claude.CredentialsPath)
-		if defaultPath == "" {
-			defaultPath = "~/.claude/.credentials.json"
-		}
-		expanded, err := expandCredentialsPath(defaultPath)
+		defaultFile, err := defaultClaudeCredentialsFile(claude.CredentialsPath)
 		if err != nil {
-			return fmt.Errorf("providers.claude.credentials_path: %v: %w", err, ErrInvalidConfig)
+			return err
 		}
-		refs = append(refs, pathRef{path: filepath.Clean(expanded), enabled: true, source: "providers.claude"})
+		defaultDir := ""
+		if filepath.Base(defaultFile) == ".credentials.json" {
+			defaultDir = filepath.Dir(defaultFile)
+		}
+		refs = append(refs, accountLocation{
+			file: defaultFile, dir: defaultDir,
+			enabled: true, source: "providers.claude",
+		})
 	}
 	for i, account := range claude.Accounts {
-		refs = append(refs, pathRef{
-			path:    account.CredentialsPath,
+		refs = append(refs, accountLocation{
+			file:    filepath.Join(account.ConfigDir, ".credentials.json"),
+			dir:     filepath.Clean(account.ConfigDir),
 			enabled: account.Enabled,
 			source:  fmt.Sprintf("providers.claude.accounts[%d]", i),
 		})
 	}
+	return rejectDuplicateAccountLocations(refs, goos)
+}
+
+func defaultClaudeCredentialsFile(credentialsPath string) (string, error) {
+	defaultPath := strings.TrimSpace(credentialsPath)
+	if defaultPath == "" {
+		defaultPath = "~/.claude/.credentials.json"
+	}
+	expanded, err := expandHomePath(defaultPath)
+	if err != nil {
+		return "", fmt.Errorf("providers.claude.credentials_path: %v: %w", err, ErrInvalidConfig)
+	}
+	return filepath.Clean(expanded), nil
+}
+
+func rejectDuplicateAccountLocations(refs []accountLocation, goos string) error {
 	for i := 0; i < len(refs); i++ {
 		if !refs[i].enabled {
 			continue
@@ -126,18 +151,29 @@ func validateAccountCredentialUniqueness(cfg Config, goos string) error {
 			if !refs[j].enabled {
 				continue
 			}
-			if sameCredentialsPath(refs[i].path, refs[j].path, goos) {
-				return fmt.Errorf("%s: credentials_path duplicates %s: %w", refs[j].source, refs[i].source, ErrInvalidConfig)
+			if sameAccountLocation(refs[i], refs[j], goos) {
+				return fmt.Errorf("%s: config_dir duplicates %s: %w", refs[j].source, refs[i].source, ErrInvalidConfig)
 			}
 		}
 	}
 	return nil
 }
 
-func sameCredentialsPath(a, b, goos string) bool {
-	if a == b || goos == "windows" && strings.EqualFold(a, b) {
+func sameAccountLocation(a, b accountLocation, goos string) bool {
+	if samePathString(a.file, b.file, goos) || sameExistingPath(a.file, b.file) {
 		return true
 	}
+	if a.dir == "" || b.dir == "" {
+		return false
+	}
+	return samePathString(a.dir, b.dir, goos) || sameExistingPath(a.dir, b.dir)
+}
+
+func samePathString(a, b, goos string) bool {
+	return a == b || goos == "windows" && strings.EqualFold(a, b)
+}
+
+func sameExistingPath(a, b string) bool {
 	infoA, errA := os.Stat(a)
 	infoB, errB := os.Stat(b)
 	if errA != nil || errB != nil {

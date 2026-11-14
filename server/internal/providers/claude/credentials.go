@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,6 +21,7 @@ const (
 
 type discoveryOptions struct {
 	configuredPath string
+	configDir      string
 	homeDir        string
 	wslHomeDir     string
 	openCodePath   string
@@ -35,6 +35,8 @@ type credentials struct {
 	expiresAt        time.Time
 	source           credentialSource
 	snapshot         credstore.Snapshot
+	store            credentialStore
+	rediscover       bool
 }
 
 type claudeCredentialShape struct {
@@ -61,48 +63,6 @@ type parsedCredentialFields struct {
 type credentialIdentity struct {
 	path   string
 	source credentialSource
-}
-
-func (c *Client) loadCredentials(ctx context.Context) (*credentials, error) {
-	path, source, err := discoverCredentialsPath(c.paths)
-	if err != nil {
-		return nil, err
-	}
-	snapshot, err := credstore.LoadSnapshot(ctx, path)
-	if err != nil {
-		return nil, credentialsError{path: path, err: fmt.Errorf("%w: %v", ErrCredentialsMissing, err)}
-	}
-	parsed, err := parseCredentials(path, source, snapshot)
-	if err != nil {
-		return nil, err
-	}
-	c.stateMu.Lock()
-	c.loaded = parsed
-	c.stateMu.Unlock()
-	return parsed, nil
-}
-
-func discoverCredentialsPath(opts discoveryOptions) (string, credentialSource, error) {
-	if opts.configuredPath != "" {
-		return requirePath(expandHome(opts.configuredPath, opts.homeDir), credentialSourceClaude)
-	}
-	if path := filepath.Join(homeDir(opts.homeDir), ".claude", ".credentials.json"); fileExists(path) {
-		return path, credentialSourceClaude, nil
-	}
-	wslHome := opts.wslHomeDir
-	if wslHome == "" {
-		wslHome = defaultWSLHome()
-	}
-	if wslHome != "" {
-		if path := filepath.Join(wslHome, ".claude", ".credentials.json"); fileExists(path) {
-			return path, credentialSourceClaude, nil
-		}
-	}
-	if path := openCodePath(opts, wslHome); path != "" && fileExists(path) {
-		return path, credentialSourceOpenCode, nil
-	}
-	missing := filepath.Join(homeDir(opts.homeDir), ".claude", ".credentials.json")
-	return "", credentialSourceClaude, credentialsError{path: missing, err: ErrCredentialsMissing}
 }
 
 func parseCredentials(path string, source credentialSource, snapshot credstore.Snapshot) (*credentials, error) {
@@ -180,13 +140,6 @@ func inferSubscriptionType(rateLimitTier string) *string {
 	return nil
 }
 
-func requirePath(path string, source credentialSource) (string, credentialSource, error) {
-	if fileExists(path) {
-		return path, source, nil
-	}
-	return "", source, credentialsError{path: path, err: ErrCredentialsMissing}
-}
-
 func openCodePath(opts discoveryOptions, wslHome string) string {
 	if opts.openCodePath != "" {
 		return opts.openCodePath
@@ -219,9 +172,4 @@ func expandHome(path string, home string) string {
 		return filepath.Join(homeDir(home), path[2:])
 	}
 	return path
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

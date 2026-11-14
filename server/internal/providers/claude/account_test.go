@@ -16,10 +16,10 @@ func Test_Client_account_identity_methods_and_reset_dir_invariant(t *testing.T) 
 	account := &usage.Account{ID: "work", Label: "Work"}
 	resetDir := t.TempDir()
 	client := New(Options{
-		Name:            "Claude (Work)",
-		Account:         account,
-		ResetStateDir:   resetDir,
-		CredentialsPath: filepath.Join(t.TempDir(), ".claude-work", ".credentials.json"),
+		Name:          "Claude (Work)",
+		Account:       account,
+		ResetStateDir: resetDir,
+		ConfigDir:     filepath.Join(t.TempDir(), ".claude-work"),
 	})
 
 	// Then
@@ -78,14 +78,15 @@ func Test_accountSignInCommand_shapes(t *testing.T) {
 	}
 }
 
-func Test_Client_extra_account_nil_command_for_auth_json(t *testing.T) {
+func Test_Client_extra_account_command_preserves_raw_config_dir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".claude-work") + "/"
 	client := New(Options{
-		Name:            "Claude (Work)",
-		Account:         &usage.Account{ID: "work", Label: "Work"},
-		CredentialsPath: filepath.Join(t.TempDir(), "auth.json"),
+		Name:      "Claude (Work)",
+		Account:   &usage.Account{ID: "work", Label: "Work"},
+		ConfigDir: dir,
 	})
-	if client.signInCommand != nil {
-		t.Fatalf("signInCommand = %v, want nil for auth.json", *client.signInCommand)
+	if client.signInCommand == nil || !strings.Contains(*client.signInCommand, dir) {
+		t.Fatalf("signInCommand = %v, want raw config dir", client.signInCommand)
 	}
 }
 
@@ -102,13 +103,13 @@ func Test_Client_extra_account_missing_path_does_not_fallback(t *testing.T) {
 	}))
 	defer server.Close()
 	client := New(Options{
-		Name:            "Claude (Work)",
-		Account:         &usage.Account{ID: "work", Label: "Work"},
-		CredentialsPath: missing,
-		HomeDir:         home,
-		HTTPClient:      server.Client(),
-		UsageURL:        server.URL + "/api/oauth/usage",
-		TokenURL:        server.URL + "/v1/oauth/token",
+		Name:       "Claude (Work)",
+		Account:    &usage.Account{ID: "work", Label: "Work"},
+		ConfigDir:  filepath.Dir(missing),
+		HomeDir:    home,
+		HTTPClient: server.Client(),
+		UsageURL:   server.URL + "/api/oauth/usage",
+		TokenURL:   server.URL + "/v1/oauth/token",
 	})
 
 	// When
@@ -123,12 +124,6 @@ func Test_Client_extra_account_missing_path_does_not_fallback(t *testing.T) {
 	}
 	if got.Account == nil || got.Account.ID != "work" {
 		t.Fatalf("account = %+v", got.Account)
-	}
-	if client.goos == "darwin" {
-		if got.ReauthCommand != nil || got.Auth.SignInCommand != nil {
-			t.Fatal("Keychain sign-in must not suggest a command")
-		}
-		return
 	}
 	prefix := "CLAUDE_CONFIG_DIR="
 	if client.goos == "windows" {
@@ -154,12 +149,12 @@ func Test_Client_Fetch_stamps_extra_account_on_success(t *testing.T) {
 	}))
 	defer server.Close()
 	client := New(Options{
-		Name:            "Claude (Work)",
-		Account:         &usage.Account{ID: "work", Label: "Work"},
-		CredentialsPath: path,
-		HTTPClient:      server.Client(),
-		UsageURL:        server.URL + "/api/oauth/usage",
-		TokenURL:        server.URL + "/v1/oauth/token",
+		Name:       "Claude (Work)",
+		Account:    &usage.Account{ID: "work", Label: "Work"},
+		ConfigDir:  filepath.Dir(path),
+		HTTPClient: server.Client(),
+		UsageURL:   server.URL + "/api/oauth/usage",
+		TokenURL:   server.URL + "/v1/oauth/token",
 	})
 	got, err := client.Fetch(context.Background())
 	if err != nil {

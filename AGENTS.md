@@ -88,13 +88,42 @@ command automatically, pass arbitrary commands/paths from the UI, weaken a
 usage-only forced key, or expose this action over HTTP. Source, capture,
 explicit-config, and system-managed desktop sessions cannot invoke it.
 
+Claude credentials are discovered unless `providers.claude.credentials_path`
+names a file (then only that file is read): Claude Code's macOS Keychain item
+(macOS only), `~/.claude/.credentials.json`, the WSL home's file (native Windows
+only), then OpenCode's `auth.json`. This mirrors Claude Code, which reads the
+Keychain before its file. Extra accounts set `config_dir`, the `CLAUDE_CONFIG_DIR`
+used at sign-in, and never fall back to other sources. Their Keychain service is
+`Claude Code-credentials-` plus the first 8 hex digits of SHA-256 over the NFC
+form of `config_dir` exactly as written after `~` expansion. Only a missing item
+permits a second lookup with trailing slashes removed or one slash added; no
+other spelling is tried. Files and uniqueness use the cleaned path. Claude's
+`auth.checked` lists only examined candidates through the selected one, including
+failed discovery: `keychain` or `cli`, with `signed_in`, `signed_out`, `locked`,
+`unreadable`, or selected `expired` status. Keychain access is read-only through
+`/usr/bin/security find-generic-password`: never write, delete, unlock, or
+change ACLs, and never refresh a Keychain token (Claude Code owns refresh and
+its write lock). Before file refresh write-back, Headroom compares the stored
+refresh token with the one it refreshed and skips the write on a mismatch; this
+does not synchronize with other writers' locks. Locked or unavailable Keychains
+carry no sign-in command; expired Keychain sign-ins keep their command and explain
+that Claude Code owns refresh. Tests use fake Keychains; the macOS-only native
+fixture requires `HEADROOM_KEYCHAIN_FIXTURE=1`, uses only disposable synthetic
+items, and restores the user search list and default keychain. `server/app` tests
+disable the system adapter in `TestMain`.
+
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 Cursor credentials come, in order, from cursor-agent's auth file, the Cursor
 app's `state.vscdb`, Firefox profiles on the server machine (Chromium profiles
 are detected, never decrypted), then credentials pushed by a desktop or the API
-(memory only). WSL servers also check the Windows side. Discovery does not depend
-on a loopback bind.
+(memory only). A native Windows server decrypts the app's `cursor-safe-storage:v1:`
+sign-in (a `v10` AES-GCM blob) with the key in that Cursor root's `Local State`,
+unprotected by the current user's DPAPI without UI. Other versions, failed
+decryption, and every other platform, including WSL reading Windows profiles,
+report the app as `encrypted`; discovery continues and the value never goes
+upstream.
+WSL servers also check the Windows side. Discovery does not depend on a loopback bind.
 
 OpenCode Go reads the OpenCode CLI's own credential store read-only. Stable
 1.x CLIs keep keys only in `auth.json`; their database creates a `credential`
