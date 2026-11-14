@@ -95,16 +95,22 @@ only), then OpenCode's `auth.json`. This mirrors Claude Code, which reads the
 Keychain before its file. Extra accounts set `config_dir`, the `CLAUDE_CONFIG_DIR`
 used at sign-in, and never fall back to other sources. Their Keychain service is
 `Claude Code-credentials-` plus the first 8 hex digits of SHA-256 over the NFC
-form of `config_dir` exactly as written after `~` expansion; files and uniqueness
-use the cleaned path. Keychain access is read-only through
+form of `config_dir` exactly as written after `~` expansion. Only a missing item
+permits a second lookup with trailing slashes removed or one slash added; no
+other spelling is tried. Files and uniqueness use the cleaned path. Claude's
+`auth.checked` lists only examined candidates through the selected one, including
+failed discovery: `keychain` or `cli`, with `signed_in`, `signed_out`, `locked`,
+`unreadable`, or selected `expired` status. Keychain access is read-only through
 `/usr/bin/security find-generic-password`: never write, delete, unlock, or
 change ACLs, and never refresh a Keychain token (Claude Code owns refresh and
 its write lock). Before file refresh write-back, Headroom compares the stored
 refresh token with the one it refreshed and skips the write on a mismatch; this
-does not synchronize with other writers' locks. When signing in again can't help
-(a locked Keychain, or a Keychain sign-in only Claude Code can refresh), the row
-carries no sign-in command and its error explains why. Tests use fake Keychains;
-`server/app` tests disable the system adapter in `TestMain`.
+does not synchronize with other writers' locks. Locked or unavailable Keychains
+carry no sign-in command; expired Keychain sign-ins keep their command and explain
+that Claude Code owns refresh. Tests use fake Keychains; the macOS-only native
+fixture requires `HEADROOM_KEYCHAIN_FIXTURE=1`, uses only disposable synthetic
+items, and restores the user search list and default keychain. `server/app` tests
+disable the system adapter in `TestMain`.
 
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.

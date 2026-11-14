@@ -6,18 +6,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 type storeCandidate struct {
-	store  credentialStore
-	key    string
-	source credentialSource
+	store   credentialStore
+	key     string
+	source  credentialSource
+	checked usage.AuthChecked
 }
 
 func (c *Client) credentialCandidates() []storeCandidate {
 	opts := c.paths
 	file := func(path string, source credentialSource) storeCandidate {
-		return storeCandidate{store: fileStore{path: path}, key: path, source: source}
+		return storeCandidate{store: fileStore{path: path}, key: path, source: source, checked: usage.AuthChecked{Kind: "cli", Name: credentialSourceName(path, source)}}
 	}
 	if opts.configuredPath != "" {
 		return []storeCandidate{file(expandHome(opts.configuredPath, opts.homeDir), credentialSourceClaude)}
@@ -25,7 +28,15 @@ func (c *Client) credentialCandidates() []storeCandidate {
 	var candidates []storeCandidate
 	if c.goos == "darwin" && c.keychain != nil {
 		service := keychainService(opts.configDir)
-		candidates = append(candidates, storeCandidate{store: keychainStore{keychain: c.keychain, service: service}, key: service, source: credentialSourceClaude})
+		alternate := ""
+		if opts.configDir != "" {
+			toggled := opts.configDir + "/"
+			if strings.HasSuffix(opts.configDir, "/") {
+				toggled = strings.TrimRight(opts.configDir, "/")
+			}
+			alternate = accountKeychainService(toggled)
+		}
+		candidates = append(candidates, storeCandidate{store: keychainStore{keychain: c.keychain, service: service, alternate: alternate}, key: service, source: credentialSourceClaude, checked: usage.AuthChecked{Kind: "keychain", Name: "Claude Code"}})
 	}
 	dir := opts.configDir
 	if dir == "" {
@@ -42,7 +53,9 @@ func (c *Client) credentialCandidates() []storeCandidate {
 			wslHome = defaultWSLHome()
 		}
 		if wslHome != "" {
-			candidates = append(candidates, file(filepath.Join(wslHome, ".claude", ".credentials.json"), credentialSourceClaude))
+			candidate := file(filepath.Join(wslHome, ".claude", ".credentials.json"), credentialSourceClaude)
+			candidate.checked.Name = "Claude Code (WSL)"
+			candidates = append(candidates, candidate)
 		}
 	}
 	candidates = append(candidates, file(openCodePath(opts, wslHome), credentialSourceOpenCode))
@@ -50,14 +63,25 @@ func (c *Client) credentialCandidates() []storeCandidate {
 }
 
 func (c *Client) loadCredentials(ctx context.Context) (resolved *credentials, err error) {
+	var checked []usage.AuthChecked
 	defer func() {
 		c.stateMu.Lock()
 		c.loaded = resolved
+		c.checked = checked
 		c.stateMu.Unlock()
 	}()
 	var keychainErr error
 	for _, candidate := range c.credentialCandidates() {
 		snapshot, loadErr := candidate.store.load(ctx)
+		entry := candidate.checked
+		entry.Status = "unreadable"
+		switch {
+		case errors.Is(loadErr, ErrCredentialsMissing):
+			entry.Status = "signed_out"
+		case errors.Is(loadErr, ErrKeychainLocked):
+			entry.Status = "locked"
+		}
+		checked = append(checked, entry)
 		switch {
 		case errors.Is(loadErr, ErrCredentialsMissing):
 			continue
@@ -73,6 +97,7 @@ func (c *Client) loadCredentials(ctx context.Context) (resolved *credentials, er
 		}
 		parsed.store = candidate.store
 		parsed.rediscover = keychainErr != nil
+		checked[len(checked)-1].Status = "signed_in"
 		return parsed, nil
 	}
 	if keychainErr != nil {

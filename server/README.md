@@ -327,8 +327,11 @@ Claude account). Each usage entry also includes an always-present `auth` object:
 (`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,
 nullable `sign_in_command` and `sign_in_url`, `accepts_browser_credentials`, and
 an array `checked` (up to 12 `{kind, name, status}` entries). Only Cursor accepts
-browser credentials and populates `checked`. A signed-in credential can coexist
-with a network or upstream error. Existing fields remain unchanged; Cursor's
+browser credentials. Cursor and Claude populate `checked`; source kinds include
+`cli`, `app`, `browser`, `desktop`, and `keychain`. Claude lists examined sources
+in discovery order through the selected source, with status `signed_in`,
+`signed_out`, `locked`, `unreadable`, or `expired`. A signed-in credential can
+coexist with a network or upstream error. Existing fields remain unchanged; Cursor's
 `needs_reauth` is true when signed out or expired, and `reauth_command` mirrors
 its sign-in command.
 
@@ -620,10 +623,11 @@ they keep running when `providers.claude.enabled` is false.
 On macOS, an extra account is read from its Claude Code Keychain item, then from
 `<config_dir>/.credentials.json`. Claude Code names that Keychain item after the
 exact `CLAUDE_CONFIG_DIR` value it received, so set `config_dir` to the same text
-as you typed it at sign-in: `~/.claude-work` and `~/.claude-work/` are different
-items. Headroom expands a leading `~` to the server user's home and keeps the rest
-as written; file access uses the cleaned path. The card's sign-in command uses the
-same spelling. The server ignores `CLAUDE_CONFIG_DIR` in
+as you typed it at sign-in. A trailing-slash difference is tolerated: if the exact
+item is missing, Headroom tries adding one slash or removing trailing slashes.
+Other spellings must match. Headroom expands a leading `~` to the server user's
+home and keeps the rest as written; file access uses the cleaned path. The card's
+sign-in command uses the same spelling. The server ignores `CLAUDE_CONFIG_DIR` in
 its own environment; the default account is always Claude Code's default sign-in.
 
 Accounts are YAML-only (no env vars or CLI flags). Each entry needs a stable `id`

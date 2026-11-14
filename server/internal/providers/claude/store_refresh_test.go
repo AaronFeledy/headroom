@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -23,9 +24,9 @@ func Test_Client_keychain_expired_or_unauthorized_never_refreshes(t *testing.T) 
 			}
 			t.Run(name, func(t *testing.T) {
 				// Given
-				expires := futureMillis(t)
+				expires := int64(4102444800000)
 				if expired {
-					expires = pastMillis(t)
+					expires = 1
 				}
 				keychain := &fakeKeychain{data: []byte(claudeCredentialsJSON(credentialFixture{Access: "a", Refresh: "r", ExpiresAt: expires}))}
 				requests := 0
@@ -50,8 +51,14 @@ func Test_Client_keychain_expired_or_unauthorized_never_refreshes(t *testing.T) 
 				if err != nil || got.Error == nil || got.Auth.State != "expired" || !got.NeedsReauth {
 					t.Fatalf("expected expired row: %+v, %v", got, err)
 				}
-				if got.Auth.Source == nil || got.Auth.Source.Name != "Claude Code" || got.Auth.SignInCommand != nil || got.ReauthCommand != nil {
-					t.Fatal("expired Keychain row must name Claude Code and carry its command only in the explanation")
+				if got.Auth.Source == nil || got.Auth.Source.Kind != "cli" || got.Auth.Source.Name != "Claude Code" || got.Auth.SignInCommand == nil || got.ReauthCommand == nil || *got.Auth.SignInCommand != *client.signInCommand || *got.ReauthCommand != *client.signInCommand {
+					t.Fatal("expired Keychain row must name Claude Code and retain its sign-in command")
+				}
+				if !reflect.DeepEqual(got.Auth.Checked, []usage.AuthChecked{{Kind: "keychain", Name: "Claude Code", Status: "expired"}}) {
+					t.Fatalf("checked = %+v", got.Auth.Checked)
+				}
+				if !reflect.DeepEqual(client.checked, []usage.AuthChecked{{Kind: "keychain", Name: "Claude Code", Status: "signed_in"}}) {
+					t.Fatal("auth attachment mutated discovery results")
 				}
 				want := "Claude Code refreshes this sign-in when it runs. Use Claude Code once, or run `" + *client.signInCommand + "`."
 				if *got.Error != want {

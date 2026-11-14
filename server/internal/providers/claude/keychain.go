@@ -28,6 +28,7 @@ type commandRunner func(context.Context, string, ...string) ([]byte, int, error)
 type systemKeychain struct {
 	run     commandRunner
 	account string
+	file    string
 }
 
 // SystemKeychain returns the read-only macOS adapter. Other platforms have none.
@@ -65,19 +66,28 @@ func keychainAccount(name string, current func() (*user.User, error)) string {
 	return name
 }
 
+const defaultKeychainService = "Claude Code-credentials"
+
 func keychainService(configDir string) string {
-	const service = "Claude Code-credentials"
 	if configDir == "" {
-		return service
+		return defaultKeychainService
 	}
+	return accountKeychainService(configDir)
+}
+
+func accountKeychainService(configDir string) string {
 	hash := sha256.Sum256([]byte(norm.NFC.String(configDir)))
-	return service + "-" + hex.EncodeToString(hash[:4])
+	return defaultKeychainService + "-" + hex.EncodeToString(hash[:4])
 }
 
 func (k systemKeychain) Read(ctx context.Context, service string) ([]byte, error) {
 	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, code, err := k.run(readCtx, "/usr/bin/security", "find-generic-password", "-a", k.account, "-w", "-s", service)
+	args := []string{"find-generic-password", "-a", k.account, "-w", "-s", service}
+	if k.file != "" {
+		args = append(args, k.file)
+	}
+	output, code, err := k.run(readCtx, "/usr/bin/security", args...)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

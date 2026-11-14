@@ -397,6 +397,8 @@ jobs:
           cmake --build "$env:RUNNER_TEMP/desktop-package" --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Push-Location server
+          go test ./internal/safestorage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -trimpath -ldflags "-s -w -X main.version=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/usage-server.exe" ./cmd/usage-server
           Pop-Location
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -465,6 +467,8 @@ jobs:
       - name: Build and test native macOS server
         id: mac-server
         timeout-minutes: 10
+        env:
+          HEADROOM_KEYCHAIN_FIXTURE: '1'
         run: |
           (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
       - name: Test native macOS installs and update transactions

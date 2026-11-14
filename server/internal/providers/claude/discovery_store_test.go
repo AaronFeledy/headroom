@@ -71,8 +71,14 @@ func Test_Client_discovery_selects_first_present_store(t *testing.T) {
 				if len(keychain.services) != 0 {
 					t.Fatal("keychain read outside discovery contract")
 				}
-			} else if len(keychain.services) != 1 || keychain.services[0] != keychainService(opts.ConfigDir) {
-				t.Fatal("wrong keychain service selected")
+			} else {
+				probes := 1
+				if tt.account && errors.Is(tt.keyErr, ErrCredentialsMissing) {
+					probes = 2
+				}
+				if len(keychain.services) != probes || keychain.services[0] != keychainService(opts.ConfigDir) {
+					t.Fatal("wrong keychain service selected")
+				}
 			}
 		})
 	}

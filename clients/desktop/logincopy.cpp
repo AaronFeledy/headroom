@@ -61,6 +61,7 @@ QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode,
         if (openHere) result[QStringLiteral("url")] = signInUrl;
     }
     int notes = 0;
+    bool hasCheckedNote = false;
     for (int origin = 0; origin < 2; ++origin) {
         const auto entries = origin == 0 ? checked : helperChecked;
         for (const auto &value : entries.mid(0, 12)) {
@@ -74,22 +75,26 @@ QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode,
             const QString named = Usage::displayName(entryName) + (origin == 0 && !local ? QStringLiteral(" on the server") : QString());
             const QString status = text(entry.value(QStringLiteral("status")));
             QString note;
-            if (status == QStringLiteral("encrypted")) note = (entry.value(QStringLiteral("kind")) == QStringLiteral("app")
+            if (entry.value(QStringLiteral("kind")) == QStringLiteral("keychain")) {
+                if (status == QStringLiteral("locked")) note = QStringLiteral("Unlock the macOS Keychain so Headroom can read the Claude Code sign-in.");
+                else if (status == QStringLiteral("unreadable")) note = QStringLiteral("Headroom couldn't read the Claude Code sign-in from the macOS Keychain.");
+                else if (status == QStringLiteral("expired")) note = QStringLiteral("Claude Code renews this Keychain sign-in when it runs, so using Claude Code once also works.");
+            } else if (status == QStringLiteral("encrypted")) note = (entry.value(QStringLiteral("kind")) == QStringLiteral("app")
                 ? QStringLiteral("%1 has an encrypted sign-in that Headroom can't read.")
                 : QStringLiteral("%1 is signed in, but Headroom can't read its cookies.")).arg(named);
             else if (status == QStringLiteral("locked")) note = QStringLiteral("Close %1 so Headroom can read its sign-in, or use another browser.").arg(named);
             else if (status == QStringLiteral("expired")) note = QStringLiteral("Your %1 sign-in also expired.").arg(named);
             else if (status == QStringLiteral("unreadable")) note = QStringLiteral("Headroom couldn't read %1.").arg(named);
-            if (!note.isEmpty()) { lines.append(note); ++notes; }
+            if (!note.isEmpty()) {
+                lines.append(note);
+                ++notes;
+                if (origin == 0) hasCheckedNote = true;
+            }
         }
     }
-    // Signed-out and CLI rows normally offer a command. The server withholds it
-    // when signing in again won't help (a locked Keychain, or a sign-in only
-    // Claude Code can refresh), and its error explains why instead.
-    if ((state == QStringLiteral("signed_out") || kind == QStringLiteral("cli")) && command.isEmpty()) {
+    if (state == QStringLiteral("signed_out") && command.isEmpty() && !hasCheckedNote) {
         const QString explanation = text(provider.value(QStringLiteral("error")));
-        if (!explanation.isEmpty() && explanation != QStringLiteral("AUTH_EXPIRED") && !lines.contains(explanation))
-            lines.append(explanation);
+        if (!explanation.isEmpty() && !lines.contains(explanation)) lines.append(explanation);
     }
     result[QStringLiteral("lines")] = lines;
     return result;

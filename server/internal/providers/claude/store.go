@@ -48,12 +48,16 @@ func (s fileStore) update(ctx context.Context, mutator credstore.Mutator) error 
 }
 
 type keychainStore struct {
-	keychain Keychain
-	service  string
+	keychain  Keychain
+	service   string
+	alternate string
 }
 
 func (s keychainStore) load(ctx context.Context) (credstore.Snapshot, error) {
 	data, err := s.keychain.Read(ctx, s.service)
+	if errors.Is(err, ErrCredentialsMissing) && s.alternate != "" {
+		data, err = s.keychain.Read(ctx, s.alternate)
+	}
 	if err != nil {
 		return credstore.Snapshot{}, err
 	}

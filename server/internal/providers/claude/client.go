@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,6 +66,7 @@ type Client struct {
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex
 	loaded             *credentials
+	checked            []usage.AuthChecked
 	bankMu             sync.Mutex
 	bank               bankCache
 	resetMu            sync.Mutex
@@ -104,44 +104,17 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		result.ProviderName = c.name
 		result.ProviderType = providerName
 		result.Account = c.account.Clone()
-		c.stateMu.Lock()
-		creds := c.loaded
-		c.stateMu.Unlock()
-		state := "signed_out"
-		var source *usage.AuthSource
-		if creds != nil {
-			name := "Claude Code"
-			if creds.source == credentialSourceOpenCode {
-				name = "OpenCode"
-			}
-			if strings.HasPrefix(creds.path, `\\wsl.`) {
-				name += " (WSL)"
-			}
-			source = &usage.AuthSource{Kind: "cli", Name: name}
-			state = "signed_in"
-			if result.NeedsReauth || authExpired {
-				state = "expired"
-			}
-		}
-		auth := usage.NewAuth(providerName, state, source)
-		if c.account != nil && auth.SignInCommand != nil {
-			auth.SignInCommand = c.signInCommand
-		}
-		if commandless {
-			auth.SignInCommand = nil
-			result.ReauthCommand = nil
-		}
-		result.Auth = auth
+		c.attachAuth(&result, authExpired, commandless)
 	}()
 	creds, err := c.currentCredentials(ctx)
 	if err != nil {
-		commandless = needsClaudeCode(err)
+		commandless = keychainAccessError(err)
 		return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ready, refreshErr := c.ensureFreshCredentials(ctx, creds)
 		if refreshErr != nil {
-			commandless = needsClaudeCode(refreshErr)
+			commandless = keychainAccessError(refreshErr)
 			if isCredentialError(refreshErr) {
 				return c.reauthUsageData(c.credentialErrorMessage(refreshErr)), nil
 			}
@@ -185,7 +158,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			}
 			if refreshErr := c.refreshCredentials(ctx, creds, refreshModeForced); refreshErr != nil {
 				failure = nil
-				commandless = needsClaudeCode(refreshErr)
+				commandless = keychainAccessError(refreshErr)
 				if isCredentialError(refreshErr) {
 					return c.reauthUsageData(c.credentialErrorMessage(refreshErr)), nil
 				}
@@ -196,7 +169,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			}
 			creds, err = c.currentCredentials(ctx)
 			if err != nil {
-				commandless = needsClaudeCode(err)
+				commandless = keychainAccessError(err)
 				return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 			}
 			continue
