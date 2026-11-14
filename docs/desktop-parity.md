@@ -72,13 +72,14 @@ MSVC runtime, and Start menu shortcut. Linux x86_64 packages target the Ubuntu
 22.04 desktop ABI, include X11/Wayland Qt plugins, and add an XDG application
 entry. Source and system-managed builds do not use public self-update traffic.
 
-Rerunning an external installer repairs or replaces the on-disk generation. It
-launches the stable entry and accepts startup only after the selected generation
-reports a matching nonce, process ID, executable path, and compiled version. If
-Headroom is already open, that launch may activate the old primary process; the
-installer then reports that a restart is required instead of claiming the new
-generation started. Quit and reopen Headroom to complete that transition. The
-in-app restart path stops and replaces the expected running generation.
+Rerunning an external installer stages the package and asks a healthy running
+managed desktop to apply it through the existing restart transaction. The manager
+verifies the exact transaction nonce and resulting generation before reporting
+success, including same-version reinstalls. A fresh install launches the stable
+entry after platform integration and verifies startup through the same Go
+readiness policy. Busy or declined coordination never falls back to overwriting
+the active install. Direct repairs and deliberately skipped launches retain
+explicit instructions when a verified older primary still needs to be restarted.
 
 ## Source references
 

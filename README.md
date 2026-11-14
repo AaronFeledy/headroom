@@ -60,7 +60,9 @@ See [releases](https://github.com/AaronFeledy/headroom/releases/latest) for
 downloads and [packaging](packaging/README.md) for custom paths and Linux runtime
 dependencies.
 
-If you reinstall while Headroom is open, quit and reopen it afterward.
+When you reinstall, a healthy running Headroom installation coordinates its own
+restart. The installer confirms which generation is running and tells you if
+startup needs attention. Settings and provider sign-ins are retained.
 
 ## Get started
 

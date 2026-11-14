@@ -14,7 +14,8 @@ macOS requires 14.4+. Node.js does not need to be installed separately.
 ## Install and configure
 
 1. Install Headroom with the [current installer](../../README.md#install).
-   If Headroom is running during a reinstall, quit it and reopen it afterward.
+   A healthy running Headroom installation restarts automatically during reinstall;
+   follow any startup instructions printed by the installer.
 2. Double-click the built `.streamDeckPlugin` file and accept Stream Deck's
    installation prompt.
 3. Drag **Headroom → Usage Meter** onto a key. Choose a provider and meter.

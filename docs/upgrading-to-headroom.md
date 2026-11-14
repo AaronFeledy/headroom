@@ -88,7 +88,9 @@ Existing Headroom desktop users should rerun the updated official installer once
 to add the unified `headroom` CLI entry and PATH integration. On Linux this moves
 the desktop entry inside the managed root so bare `headroom` opens the terminal
 dashboard; application-menu and login entries continue opening the desktop.
-Quit and reopen an already-running Qt app after this external reinstall.
+A healthy running managed desktop coordinates its own restart during reinstall.
+If the installer reports that an older generation is still running, quit it and
+open the stable launcher shown in the installer output.
 
 Standalone servers can keep their current deployment or install the CLI-only
 package and run `headroom serve` with the same configuration. Stop the old server
