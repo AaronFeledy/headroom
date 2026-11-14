@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 type refreshResponse struct {
@@ -48,6 +47,9 @@ func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mod
 	if current.accessToken != creds.accessToken || current.refreshToken != creds.refreshToken {
 		return nil
 	}
+	if _, writable := current.store.(writableCredentialStore); !writable {
+		return ErrKeychainExpired
+	}
 	if mode == refreshModeProactive && current.expiresAt.After(time.Now().UTC().Add(expirySkew)) {
 		return nil
 	}
@@ -59,7 +61,7 @@ func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mod
 		refreshed.RefreshToken = current.refreshToken
 	}
 	newExpiresAt := time.Now().UTC().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
-	if err := c.writeCredentials(ctx, current, credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}); err != nil {
+	if err := c.writeCredentials(ctx, current, credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}); err != nil && !errors.Is(err, errCredentialsChanged) {
 		return err
 	}
 	_, err = c.loadCredentials(ctx)
@@ -102,7 +104,11 @@ func (c *Client) requestRefresh(ctx context.Context, refreshToken string) (refre
 }
 
 func (c *Client) writeCredentials(ctx context.Context, creds *credentials, update credentialUpdate) error {
-	return credstore.AtomicUpdate(ctx, creds.path, func(data []byte) ([]byte, error) {
+	store, writable := creds.store.(writableCredentialStore)
+	if !writable {
+		return ErrKeychainExpired
+	}
+	return store.update(ctx, func(data []byte) ([]byte, error) {
 		var top map[string]json.RawMessage
 		if err := json.Unmarshal(data, &top); err != nil {
 			return nil, fmt.Errorf("parse credentials: %w", err)
@@ -112,6 +118,17 @@ func (c *Client) writeCredentials(ctx context.Context, creds *credentials, updat
 		if creds.source == credentialSourceOpenCode {
 			key = "anthropic"
 			fields = sectionFields{access: "access", refresh: "refresh", expires: "expires"}
+		}
+		var stored map[string]json.RawMessage
+		if err := json.Unmarshal(top[key], &stored); err != nil {
+			return nil, ErrCredentialsMalformed
+		}
+		var refreshToken string
+		if err := json.Unmarshal(stored[fields.refresh], &refreshToken); err != nil {
+			return nil, ErrCredentialsMalformed
+		}
+		if refreshToken != creds.refreshToken {
+			return nil, errCredentialsChanged
 		}
 		section, err := updateSection(top[key], fields, update)
 		if err != nil {

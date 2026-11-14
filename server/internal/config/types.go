@@ -28,10 +28,14 @@ type Config struct {
 }
 
 type AccountConfig struct {
-	ID              string
-	Label           string
-	CredentialsPath string
-	Enabled         bool
+	ID    string
+	Label string
+	// ConfigDir is the CLAUDE_CONFIG_DIR used at sign-in. After load it holds the
+	// raw expanded spelling (~ replaced, separators and trailing slash kept) for
+	// Keychain hashing and sign-in commands. File access and uniqueness use the
+	// cleaned path.
+	ConfigDir string
+	Enabled   bool
 }
 
 type ProviderConfig struct {
@@ -53,7 +57,7 @@ func Defaults() Config {
 		TLS:          "auto",
 		PollInterval: 60 * time.Second,
 		Providers: map[string]ProviderConfig{
-			"claude":     {Enabled: true, CredentialsPath: "~/.claude/.credentials.json"},
+			"claude":     {Enabled: true},
 			"codex":      {Enabled: true},
 			"cursor":     {Enabled: true, BrowserCredentials: true},
 			"grok":       {Enabled: true},

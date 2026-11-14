@@ -79,7 +79,7 @@ private slots:
         auto row = provider("signed_out", "cli", "Claude");
         row["provider_name"] = "Claude (Work)";
         row["account"] = QVariantMap{{"id", "work"}, {"label", "Work"}};
-        const QString explanation = "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet.";
+        const QString explanation = "The macOS Keychain is locked. Unlock it so Headroom can read your Claude Code sign-in.";
         const QString first = "Headroom couldn't find a Claude (Work) sign-in.";
         row["error"] = explanation;
         auto auth = row["auth"].toMap();
@@ -98,6 +98,14 @@ private slots:
         auto expiredAuth = expired["auth"].toMap(); expiredAuth["sign_in_command"] = QVariant(); expired["auth"] = expiredAuth;
         QCOMPARE(LoginCopy::compose(expired, "local", "disabled")["lines"].toStringList(),
             (QStringList{"Your Claude login on this computer expired."}));
+        const QString refresh = "Claude Code refreshes this sign-in when it runs. Use Claude Code once, or run `claude auth login`.";
+        auto keychain = provider("expired", "cli", "Claude Code");
+        keychain["provider_name"] = "Claude"; keychain["error"] = refresh;
+        QCOMPARE(LoginCopy::compose(keychain, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Your Claude Code login on this computer expired.", refresh}));
+        auto withCommand = keychain["auth"].toMap(); withCommand["sign_in_command"] = "claude auth login"; keychain["auth"] = withCommand;
+        QCOMPARE(LoginCopy::compose(keychain, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Your Claude Code login on this computer expired.", "Run claude auth login on this computer."}));
         row["provider_name"] = "Claude"; row["account"] = QVariant(); row["error"] = explanation;
         auth["state"] = "signed_out"; auth["sign_in_command"] = "claude auth login"; row["auth"] = auth;
         QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(),
@@ -299,24 +307,26 @@ private slots:
         QCOMPARE(copy["command"].toString(), QStringLiteral("cursor-agent login"));
     }
     void checkedNotes_data() {
+        QTest::addColumn<QString>("entryKind");
         QTest::addColumn<QString>("status"); QTest::addColumn<QString>("expected");
-        QTest::newRow("encrypted") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server is signed in, but Headroom can't read its cookies.");
-        QTest::newRow("locked") << QStringLiteral("locked") << QStringLiteral("Close Chrome on the server so Headroom can read its sign-in, or use another browser.");
-        QTest::newRow("expired") << QStringLiteral("expired") << QStringLiteral("Your Chrome on the server sign-in also expired.");
-        QTest::newRow("unreadable") << QStringLiteral("unreadable") << QStringLiteral("Headroom couldn't read Chrome on the server.");
+        QTest::newRow("encrypted") << QStringLiteral("browser") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server is signed in, but Headroom can't read its cookies.");
+        QTest::newRow("encrypted-app") << QStringLiteral("app") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server has an encrypted sign-in that Headroom can't read.");
+        QTest::newRow("locked") << QStringLiteral("browser") << QStringLiteral("locked") << QStringLiteral("Close Chrome on the server so Headroom can read its sign-in, or use another browser.");
+        QTest::newRow("expired") << QStringLiteral("browser") << QStringLiteral("expired") << QStringLiteral("Your Chrome on the server sign-in also expired.");
+        QTest::newRow("unreadable") << QStringLiteral("browser") << QStringLiteral("unreadable") << QStringLiteral("Headroom couldn't read Chrome on the server.");
     }
     void checkedNotes() {
-        QFETCH(QString, status); QFETCH(QString, expected);
-        auto p = provider(); auto auth = p["auth"].toMap();
+        QFETCH(QString, entryKind); QFETCH(QString, status); QFETCH(QString, expected);
+        auto p = provider(); auto auth = p["auth"].toMap(); auth["sign_in_command"] = "cursor-agent login";
         auth["checked"] = QVariantList{QVariantMap{{"kind", "cli"}, {"name", "cursor-agent"}, {"status", "expired"}},
             QVariantMap{{"kind", "browser"}, {"name", "Firefox"}, {"status", "signed_in"}},
             QVariantMap{{"kind", "browser"}, {"name", "Edge"}, {"status", "signed_out"}},
-            QVariantMap{{"kind", "browser"}, {"name", "Chrome"}, {"status", status}}}; p["auth"] = auth;
+            QVariantMap{{"kind", entryKind}, {"name", "Chrome"}, {"status", status}}}; p["auth"] = auth;
         const QVariantList helper{QVariantMap{{"name", "Brave"}, {"status", "unreadable"}}, QVariantMap{{"name", "Edge"}, {"status", "locked"}}};
         auto lines = LoginCopy::compose(p, "remote", "available", helper)["lines"].toStringList();
-        QCOMPARE(lines.size(), 3); QCOMPARE(lines[1], expected); QCOMPARE(lines[2], QStringLiteral("Headroom couldn't read Brave."));
+        QCOMPARE(lines.size(), 4); QCOMPARE(lines[2], expected); QCOMPARE(lines[3], QStringLiteral("Headroom couldn't read Brave."));
         lines = LoginCopy::compose(p, "local", "available", helper)["lines"].toStringList();
-        QCOMPARE(lines[1], expected.replace(" on the server", ""));
+        QCOMPARE(lines[2], expected.replace(" on the server", ""));
     }
     void legacyAndSignedInErrors() {
         auto p = provider(); p.remove("auth"); QVERIFY(LoginCopy::compose(p, "local", "available").isEmpty());

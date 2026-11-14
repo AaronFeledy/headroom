@@ -29,14 +29,14 @@ func Test_buildPoller_registers_all_default_providers(t *testing.T) {
 
 func Test_buildPoller_registers_claude_accounts(t *testing.T) {
 	// Given
-	workPath := filepath.Join(t.TempDir(), "work.json")
+	workDir := filepath.Join(t.TempDir(), "work")
 	cfg := config.Defaults()
 	cfg.Providers = map[string]config.ProviderConfig{
 		"claude": {
 			Enabled: true,
 			Accounts: []config.AccountConfig{
-				{ID: "work", Label: "Work", CredentialsPath: workPath, Enabled: true},
-				{ID: "off", Label: "Off", CredentialsPath: filepath.Join(t.TempDir(), "off.json"), Enabled: false},
+				{ID: "work", Label: "Work", ConfigDir: workDir, Enabled: true},
+				{ID: "off", Label: "Off", ConfigDir: filepath.Join(t.TempDir(), "off"), Enabled: false},
 			},
 		},
 	}
@@ -59,13 +59,13 @@ func Test_buildPoller_registers_claude_accounts(t *testing.T) {
 
 func Test_buildPoller_extra_account_when_default_disabled(t *testing.T) {
 	// Given
-	workPath := filepath.Join(t.TempDir(), "work.json")
+	workDir := filepath.Join(t.TempDir(), "work")
 	cfg := config.Defaults()
 	cfg.Providers = map[string]config.ProviderConfig{
 		"claude": {
 			Enabled: false,
 			Accounts: []config.AccountConfig{
-				{ID: "work", Label: "Work", CredentialsPath: workPath, Enabled: true},
+				{ID: "work", Label: "Work", ConfigDir: workDir, Enabled: true},
 			},
 		},
 		"codex":  {Enabled: false},

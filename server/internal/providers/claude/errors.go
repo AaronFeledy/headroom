@@ -10,6 +10,10 @@ var (
 	ErrCredentialsMalformed = errors.New("claude: credentials malformed")
 	ErrUpstream             = errors.New("claude: upstream error")
 	ErrInvalidGrant         = errors.New("claude: invalid grant")
+	ErrKeychainLocked       = errors.New("claude: keychain locked")
+	ErrKeychainUnavailable  = errors.New("claude: keychain unavailable")
+	ErrKeychainExpired      = errors.New("claude: keychain credential expired")
+	errCredentialsChanged   = errors.New("claude: credentials changed during refresh")
 )
 
 type credentialsError struct {

@@ -253,9 +253,10 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 				continue
 			}
 			extra := claude.New(claude.Options{
-				CredentialsPath: account.CredentialsPath,
-				Name:            "Claude (" + account.Label + ")",
-				Account:         &usage.Account{ID: account.ID, Label: account.Label},
+				ConfigDir: account.ConfigDir,
+				Keychain:  claudeKeychain(),
+				Name:      "Claude (" + account.Label + ")",
+				Account:   &usage.Account{ID: account.ID, Label: account.Label},
 			})
 			if err := providerPoller.Register(extra, true); err != nil {
 				return nil, nil, nil, nil, nil, nil, err
@@ -269,7 +270,7 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string) (usage.Provider, error) {
 	switch strings.ToLower(name) {
 	case "claude":
-		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, ResetStateDir: resetStateDir}), nil
+		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, Keychain: claudeKeychain(), ResetStateDir: resetStateDir}), nil
 	case "codex":
 		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "cursor":

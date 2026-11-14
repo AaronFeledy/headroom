@@ -22,6 +22,8 @@ func Test_Client_Fetch_sign_in_rows_by_os_and_account(t *testing.T) {
 					}
 					opts := Options{CredentialsPath: path}
 					if account == "extra" {
+						opts.CredentialsPath = ""
+						opts.ConfigDir = filepath.Dir(path) + "/"
 						opts.Name = "Claude (Work)"
 						opts.Account = &usage.Account{ID: "work", Label: "Work"}
 					}
@@ -36,18 +38,11 @@ func Test_Client_Fetch_sign_in_rows_by_os_and_account(t *testing.T) {
 					want := "Saved sign-in could not be read. Sign in again."
 					if contents == "missing" {
 						want = "Not signed in."
-						if goos == "darwin" {
-							want = "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet."
-						}
 					}
 					if got.Error == nil || *got.Error != want || !got.NeedsReauth || got.Auth.State != "signed_out" {
 						t.Fatalf("sign-in row = %+v, want %q", got, want)
 					}
-					if goos == "darwin" && contents == "missing" {
-						if got.ReauthCommand != nil || got.Auth.SignInCommand != nil {
-							t.Fatal("Keychain sign-in must not suggest a command")
-						}
-					} else if got.ReauthCommand == nil || got.Auth.SignInCommand == nil || *got.ReauthCommand != *got.Auth.SignInCommand {
+					if got.ReauthCommand == nil || got.Auth.SignInCommand == nil || *got.ReauthCommand != *got.Auth.SignInCommand {
 						t.Fatal("sign-in and reauth commands must match")
 					} else if account == "default" && *got.ReauthCommand != "claude auth login" {
 						t.Fatalf("default sign-in command = %q", *got.ReauthCommand)

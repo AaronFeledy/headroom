@@ -196,9 +196,9 @@ Turning it off prevents the helper from reading browser sign-ins. Sharing still
 requires HTTPS (system-trusted or token-verified) or SSH; plain HTTP is refused.
 New servers supply source-aware sign-in cards: they name the expired CLI, app,
 browser, or shared sign-in, show where to sign in, and offer **Copy command** or
-**Open cursor.com** when appropriate. Up to two browser-readability notes explain
-encrypted, locked, expired, or unreadable sources. Older servers retain the
-existing error message and Cursor sign-in link.
+**Open cursor.com** when appropriate. Up to two readability notes explain an
+encrypted app sign-in or an encrypted, locked, expired, or unreadable browser
+source. Older servers retain the existing error message and Cursor sign-in link.
 
 The client polls `GET /api/v1/usage`, the server's current cache. Polling
 defaults to 60 seconds and can be adjusted in settings. Requests time out, refuse
