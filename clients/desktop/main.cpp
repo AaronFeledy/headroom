@@ -49,7 +49,8 @@ int desktopCLIRequest(int argc, char **argv) {
     const auto command = QJsonDocument::fromJson(bytes);
     if (!command.isObject()) return 1;
     InstanceService instance(SettingsService::instanceIdentityPath());
-    const int timeout = command.object().value(QStringLiteral("command")).toString() == QStringLiteral("update") ? 8 * 60 * 1000 : 3000;
+    const QString operation = command.object().value(QStringLiteral("command")).toString();
+    const int timeout = operation == QStringLiteral("update") || operation == QStringLiteral("reinstall") ? 8 * 60 * 1000 : 3000;
     const auto response = instance.request(command.toJson(QJsonDocument::Compact), timeout);
     if (response.isEmpty()) return instance.primaryUnavailable() ? 3 : 1;
     QFile output;
@@ -122,6 +123,7 @@ int main(int argc, char **argv) {
     QObject::connect(&remoteUpdate, &RemoteUpdateService::completed, &app, [&] {
         appInfo.refreshServer(); controller.refresh();
     });
+    bool uiReady = false;
     if (!capture && !isolated) instance.setRequestHandler([&](const QByteArray &request) {
         const auto document = QJsonDocument::fromJson(request);
         if (!document.isObject()) return QByteArray();
@@ -133,7 +135,9 @@ int main(int argc, char **argv) {
                         {"status", controller.state().value(QStringLiteral("status")).toString()},
                         {"last_good", controller.state().value(QStringLiteral("lastGood")).toLongLong()}};
         } else if (command == QStringLiteral("info")) {
-            response = {{"ok", true}, {"version", QCoreApplication::applicationVersion()},
+            response = {{"ok", true}, {"schema", 1}, {"product", "Headroom"},
+                        {"request_nonce", object.value(QStringLiteral("request_nonce"))},
+                        {"ready", uiReady}, {"busy", updateService.busy()}, {"version", QCoreApplication::applicationVersion()},
                         {"pid", qint64(QCoreApplication::applicationPid())},
                         {"executable", QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath()},
                         {"install_root", QFileInfo(qEnvironmentVariable("HEADROOM_INSTALL_ROOT")).canonicalFilePath()}};
@@ -142,10 +146,13 @@ int main(int argc, char **argv) {
     });
     if (!capture && !isolated) instance.setAsyncRequestHandler([&](const QByteArray &request, InstanceService::Reply reply) {
         const auto object = QJsonDocument::fromJson(request).object();
-        if (object.value(QStringLiteral("command")).toString() != QStringLiteral("update")) return false;
-        updateService.requestCLIUpdate(object, [reply = std::move(reply)](const QJsonObject &response) {
+        const auto command = object.value(QStringLiteral("command")).toString();
+        if (command != QStringLiteral("update") && command != QStringLiteral("reinstall")) return false;
+        auto respond = [reply = std::move(reply)](const QJsonObject &response) {
             reply(QJsonDocument(response).toJson(QJsonDocument::Compact));
-        });
+        };
+        if (command == QStringLiteral("reinstall")) updateService.requestReinstall(object, std::move(respond));
+        else updateService.requestCLIUpdate(object, std::move(respond));
         return true;
     });
     updateService.setOwnedProcessProvider([&controller] {
@@ -384,5 +391,6 @@ int main(int argc, char **argv) {
         || parser.isSet("headroom-installed-restart")) show();
     if (!capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
     if (capture) QTimer::singleShot(900, &app, [&] { app.exit(window->grabWindow().save(parser.value("screenshot")) ? 0 : 2); });
+    uiReady = true;
     return app.exec();
 }

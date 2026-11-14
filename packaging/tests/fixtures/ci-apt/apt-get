@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+for option in Acquire::Retries=3 Acquire::http::Timeout=30 Acquire::https::Timeout=30 DPkg::Lock::Timeout=60 APT::Update::Error-Mode=any; do
+  [[ " $* " == *" -o $option "* ]] || exit 90
+done
+[[ "$DEBIAN_FRONTEND" == noninteractive ]] || exit 91
+shift 10
+case "$1" in
+  update) phase=update ;;
+  install)
+    [[ "$#" -eq 5 && "$2" == -y && "$4" == fixture-package && "$5" == another-package ]] || exit 92
+    case "$3" in
+      --download-only) phase=download ;;
+      --no-download) phase=install ;;
+      *) exit 93 ;;
+    esac
+    ;;
+  *) exit 94 ;;
+esac
+printf '%s\n' "$phase" >> "$APT_FIXTURE/operations"
+mapfile -t statuses < "$APT_FIXTURE/$phase-statuses"
+printf '%s\n' "${statuses[@]:1}" > "$APT_FIXTURE/$phase-statuses"
+status=${statuses[0]:-0}
+[[ "$status" -eq 0 ]] || exit "$status"
+if [[ "${APT_HANG_PHASE:-}" == "$phase" ]]; then
+  if [[ "${APT_IGNORE_TERM:-0}" == 1 ]]; then
+    trap '' TERM
+  else
+    trap 'exit 0' TERM
+  fi
+  while :; do :; done
+fi
+case "$phase" in
+  update) printf ready > "$APT_FIXTURE/metadata" ;;
+  download)
+    [[ -f "$APT_FIXTURE/metadata" ]] || exit 95
+    printf cached > "$APT_FIXTURE/cache"
+    ;;
+  install)
+    [[ -f "$APT_FIXTURE/cache" ]] || exit 96
+    printf '%s\n' fixture-package another-package > "$APT_FIXTURE/installed"
+    ;;
+esac

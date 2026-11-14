@@ -119,8 +119,10 @@ current user's PATH; open a new terminal after installation.
 
 Existing desktop installations can continue updating through the desktop.
 Rerun the updated official installer once to install the public CLI entry and
-its PATH integration. Settings and provider configuration are retained. Quit
-and reopen an already-running Qt app after an external reinstall.
+its PATH integration. Settings and provider configuration are retained. A healthy
+running desktop coordinates its own restart during reinstall. The installer
+reports any remaining activation step; CLI-only installation still leaves the
+server stopped until you start it.
 
 ## Updates
 

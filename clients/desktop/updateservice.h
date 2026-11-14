@@ -41,7 +41,7 @@ public:
     QString state() const { return stateName(m_state); }
     QString statusText() const { return m_status; }
     QString latestVersion() const { return m_latestVersion; }
-    bool busy() const { return m_process || m_pairProcess; }
+    bool busy() const { return m_process || m_pairProcess || m_cliReply || m_state == State::Applying; }
     bool canCancel() const { return m_process && m_operation != Operation::Apply; }
     bool canCheck() const { return m_allowed && m_official && !busy() && !m_cliReply; }
     bool canStage() const { return m_allowed && m_state == State::Available && !busy(); }
@@ -62,6 +62,7 @@ public:
     void setOwnedProcessProvider(std::function<QPair<qint64, QString>()> provider) { m_ownedProcessProvider = std::move(provider); }
     void setRelaunchArguments(QStringList arguments) { m_relaunchArguments = std::move(arguments); }
     void requestCLIUpdate(const QJsonObject &request, std::function<void(const QJsonObject &)> reply);
+    void requestReinstall(const QJsonObject &request, std::function<void(const QJsonObject &)> reply);
 signals:
     void changed();
     void applyPrepared();
@@ -82,7 +83,8 @@ private:
     void handleUpdateResult(Operation operation, const QJsonObject &result);
     void restoreAllowedState();
     void applyDeferredTrafficState();
-    void finishCLIRequest(const QString &status, bool ok);
+    void finishCLIRequest(const QString &status, bool ok, const QJsonObject &prepared = {});
+    void applyRequestedStage(const QJsonObject &stage);
     void startPairedUpdate();
     QString guidePath() const;
     UpdateServiceOptions m_options;
@@ -123,6 +125,7 @@ private:
     QStringList m_relaunchArguments;
     QJsonArray m_cliParticipants;
     QString m_cliRequestNonce;
+    QString m_priorStateSha256;
     std::function<void(const QJsonObject &)> m_cliReply;
     Operation m_operation = Operation::None;
 };

@@ -111,7 +111,21 @@ text.
   prior recovery is blocked by a lost backup, a fully verified native reinstall
   may supersede only the journal that owns the current state, after stopping its
   exact recorded candidate; the old journal is retired only after the replacement
-  state is durably complete.
+  state is durably complete. The command result contains `state` (the installed
+  state) and nullable `activation` (an assessment, if one has already completed).
+  `install --coordinate` stages a desktop package and asks a healthy running
+  managed desktop to apply it before changing state or stable entries. The request
+  pins the observed prior-state digest and uses the existing update transaction;
+  the private bootstrap stays alive only to observe its exact terminal outcome.
+  Same-version reinstalls create a new generation through this path too. Busy or
+  declined requests do not fall back to a direct install. A lost reply preserves
+  possibly owned staging and reports uncertainty rather than dispatching again.
+- `activate --install-root <path> --version-path <generation> [--no-launch]`
+  assesses the exact installed generation. Fresh installs call it after completing
+  platform integration. It launches only the stable application entry, verifies
+  readiness through the shared Go implementation, and does not repair or replace
+  installation state. `--no-launch` and CLI-only profiles return `skipped` without
+  starting a desktop or server.
 - `check-update --install-root <path>` checks the public GitHub release metadata
   for a newer stable version of the exact native package. `stage-update` performs
   the same check, downloads the complete archive into a private directory,
@@ -142,7 +156,27 @@ text.
   PID, nonce, and compiled package version. `recover` stops an exact recorded
   candidate before restoring an interrupted transaction. Apply outcomes are
   persisted for the reopened UI as `applied`, `rolled_back`, or
-  `recovery_required`.
+  `recovery_required`, with the transaction `nonce`. Coordinated installers check
+  that nonce and the exact resulting generation; matching a version alone cannot
+  prove that a same-version reinstall completed.
+
+Installation and activation are separate facts. An install result's null
+`activation` means activation has not been assessed yet. An activation result
+contains `status`, a machine-readable `reason`, and the selected `version_path`:
+
+| Status | Meaning and next step |
+| --- | --- |
+| `ready` | The selected generation is verified running. |
+| `skipped` | Launch was deliberately disabled or the package is CLI-only. Open the desktop or start the server when needed. |
+| `restart_required` | A verified primary from another generation remains running. Quit it and open the stable entry. |
+| `unconfirmed` | Readiness could not be established within the bounded observation. Check the app and its diagnostics; do not repeat installation automatically. |
+
+These are successful activation assessments (`ok: true`, exit 0). Invalid input
+or an untrusted target is an error. Failed coordinated installation, rollback, or
+indeterminate completion returns `ok: false`, exit 2, with any known `result`
+preserved alongside `error`. Scripts and agents must inspect both the command
+outcome and activation status, and must never turn an ambiguous reply into an
+automatic installation retry.
 
 The stable launcher is `headroom.exe` at the Windows install root and
 `headroom-launcher` at the Linux install root, copied to the user-facing Linux
@@ -171,13 +205,21 @@ package manager. A standalone server registered by the same installed
 PID, kernel creation token, arguments, and recognized server configuration.
 The manager also accounts for a Windows console wrapper before replacing it.
 
-An external installer also verifies which immutable generation actually starts.
-It launches the stable entry with a private readiness nonce and accepts only a
-marker whose executable and compiled version match the newly selected install
-state. A process already owning the normal settings scope is left running; in
-that case the installer reports that the on-disk install succeeded and asks the
-user to quit the old window and relaunch the stable entry. `--no-launch` and
-`-NoLaunch` skip activation and print that restart instruction.
+The Go manager owns readiness for both external installers and transactions.
+Readiness binds a private nonce, positive integer PID, executable, and compiled
+version to the selected immutable generation, with native process identity and
+liveness checks. Missing, malformed, or mismatching markers remain pending until
+the elapsed-time deadline. Transaction apply additionally requires its exact
+launched PID and retains its rollback and cleanup authority. Activation through
+a stable launcher verifies the actual application's PID, which can differ from
+the launcher's PID on Windows or macOS.
+
+External installers finish platform integration from the returned immutable
+generation before requesting fresh activation. A coordinated reinstall already
+verified as ready is not launched a second time. Healthy running desktops use
+the ordinary shutdown and owned-server handoff; attached services are untouched.
+Direct repairs can leave an older primary running and return an explicit restart
+instruction. `--no-launch` and `-NoLaunch` skip coordination and activation.
 
 ## Release JSON
 
@@ -321,7 +363,50 @@ locally with Python 3 and npm, or add `--binary /path/to/claude` for an offline
 check. It prints the package version and fails with named missing markers when
 the upstream contract changes; it does not run on pull requests.
 
+## Focused installation checks
+
+Use the focused tests while changing installation code; leave the full native
+package matrix to CI. From the repository root, with Go on PATH:
+
+```sh
+GOMAXPROCS=2 go -C packaging/headroom-manager test -p 2 -race -shuffle=on -count=1 \
+  -skip Reset -run 'Activation|CoordinatedReinstall|ReinstallOutcome|Readiness' \
+  ./contract ./cmd/headroom-manager
+python3 -m unittest discover -s packaging/tests -p test_install_entries.py
+python3 -m unittest discover -s packaging/tests -p test_install_platforms.py
+python3 -m unittest discover -s packaging/tests -p test_ci_apt.py
+bash packaging/tests/test-install-download.sh
+```
+
+For desktop IPC changes, first configure the desktop with your Qt kit using the
+[desktop build guide](../clients/desktop/README.md#build-and-run), then build and
+run only the affected targets:
+
+```sh
+cmake --build clients/desktop/build --parallel 2 --target headroom-update-tests headroom-instance-tests
+ctest --test-dir clients/desktop/build --output-on-failure -R '^headroom-(update|instance)-tests$'
+```
+
+Fixtures use temporary installations, synthetic applications, and disabled
+providers. Do not run installers against a normal user profile for validation:
+Windows installation also updates the current user's PATH. Native installation
+tests belong on disposable runner accounts. The apt fixture runs only on Linux
+and never invokes the real package manager. Reset actions remain excluded.
+
 ## Reusable release recipe
+
+Linux dependency setup runs in separate steps with a 15-minute limit, leaving
+the package smoke test its full five-minute budget. APT uses three download
+retries and 30-second HTTP/HTTPS inactivity timeouts. Updating package indexes
+and downloading dependencies share a four-minute attempt, repeated once only
+after a graceful timeout. A forced kill or ordinary APT error fails the step.
+Installing the downloaded packages has a separate five-minute limit and is
+never retried. Each command timeout allows 15 seconds for termination before
+forcing a stop.
+
+Dependency diagnostics identify the phase, preparation attempt, exit status, and
+elapsed seconds, so a mirror or package-installation failure can be distinguished
+from a Headroom build or smoke failure without rerunning the job.
 
 `.github/workflows/headroom-packages.yml` accepts one validated version and
 builds the same five desktop and six CLI packages for pull requests, main-branch releases

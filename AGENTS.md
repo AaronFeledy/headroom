@@ -247,7 +247,14 @@ trusted native per-user install. Capture, explicit-config, source, and
 system-managed sessions make no public update requests. Restart
 apply uses a two-way acknowledgement/commit, exact process identity, readiness,
 rollback, and durable recovery. Do not add a second archive validator outside
-the Go manager. macOS framework links are the only archive symlinks allowed:
+the Go manager. External desktop installers use manager-owned activation and
+coordinate healthy live reinstalls before changing install state. Keep the
+`reinstall` IPC request separate from the managed CLI's `update` request: its
+private bootstrap observer is not an exit participant. Pin the prior state,
+transaction nonce, and exact generation; a lost reply never permits a direct
+fallback install or a duplicate request. Complete platform integration before
+fresh activation, and preserve `ready`, `skipped`, `restart_required`, and
+`unconfirmed` as distinct outcomes. macOS framework links are the only archive symlinks allowed:
 they must be manifest-listed and resolve within the same packaged framework.
 Mac payloads use Headroom.app/Contents/MacOS; the stable Finder launcher is
 ~/Applications/Headroom.app and managed generations live under
@@ -300,7 +307,14 @@ exact binary SBOM, and record optional installed-kit SPDX SBOMs when present.
 
 ## Verification
 
-From the repository root:
+During development, run focused tests for the changed behavior and its adjacent
+contracts. Use `GOMAXPROCS=2` and `go test -p 2` or CMake `--parallel 2` on a
+resource-limited machine. Do not run the full suite unless explicitly requested;
+the package CI matrix owns comprehensive and native-platform validation. The
+[package guide](packaging/README.md#focused-installation-checks) lists the fast
+installation and activation checks.
+
+The complete CI verification inventory, from the repository root:
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -344,8 +358,9 @@ validation unless it actually ran.
 Derive flags, environment variables, YAML keys, provider defaults, paths,
 release names, and API fields from source. Do not claim a Home Assistant add-on
 exists; only `docs/home-assistant.md` REST sensor configuration exists. State
-that an external reinstall requires quitting and reopening an already-running
-Qt app until that lifecycle is changed. Keep bearer tokens, provider credentials,
+activation outcomes honestly: healthy coordinated reinstalls restart the desktop,
+while skipped or non-ready outcomes may require a manual launch or restart. Never
+equate an installation on disk with a running generation. Keep bearer tokens, provider credentials,
 browser cookies, URLs containing secrets, and live account output redacted.
 Never stage `.omo/**`; it contains task-local caches and evidence only.
 

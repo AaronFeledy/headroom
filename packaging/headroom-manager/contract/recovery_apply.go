@@ -41,7 +41,7 @@ func recoverApplyJournal(journal ApplyJournal, directory string) error {
 	switch plan.action {
 	case recoveryDiscard:
 		if plan.recordApplied {
-			if err := ensureAppliedResult(root, *journal.Candidate); err != nil {
+			if err := ensureAppliedResult(root, *journal.Candidate, journal.Request.Nonce); err != nil {
 				return err
 			}
 		}
@@ -106,7 +106,7 @@ func recoverApplyJournal(journal ApplyJournal, directory string) error {
 			}
 		}
 	}
-	result := ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: journal.Previous.ActiveVersion,
+	result := ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: journal.Previous.ActiveVersion,
 		VersionPath: journal.Previous.VersionPath, RolledBack: true, FailureReason: "An interrupted update was rolled back."}
 	if err := writeDurableJSON(filepath.Join(root, "last-apply-result.json"), result); err != nil {
 		return err

@@ -425,9 +425,19 @@ take place on the first normal launch. See the
 [upgrade guide](../../docs/upgrading-to-headroom.md) for the complete transition
 and rollback steps.
 
-Rerunning an external installer replaces the verified on-disk generation. If a
-Headroom window is already open, quit and reopen it afterward; a new launcher
-invocation may activate the existing primary process until that process exits.
+Rerunning an external installer stages the verified package before changing the
+active generation. A healthy running managed desktop coordinates its own restart
+through the same acknowledgement, commit, and rollback flow as an in-app update,
+including a reinstall of the same version. Busy or declined requests leave the
+running installation unchanged. A lost acknowledgement is reported as uncertain;
+the installer never submits a second installation to compensate.
+
+Fresh installs finish their application-menu or Finder integration before launch.
+The installer reports whether the selected generation is running, launch was
+skipped, a verified older generation needs a restart, or startup could not be
+confirmed. Follow that outcome's instructions; a manual quit and reopen is needed
+only when an older generation remains running. `--no-launch` / `-NoLaunch` preserves
+the current process and skips automatic activation.
 
 **Open diagnostics** shows the last 500 events in this session, with UTC times,
 categories, Copy log, and Clear. Provider events show each actual attempt once,

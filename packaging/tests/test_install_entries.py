@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = (ROOT / "install.sh").read_text()
 
 
-def run_entry(name, root, entry, home, private, *arguments, xdg=True):
+def run_entry(name, root, entry, home, private, *arguments, xdg=True, version_path=""):
     start = INSTALLER.index(name + "() {\n")
     end = INSTALLER.index("\n}\n", start) + 3
     function = INSTALLER[start:end]
     environment = os.environ | {"HOME": str(home), "install_root": str(root),
-        "entry_path": str(entry), "private_root": str(private)}
+        "entry_path": str(entry), "private_root": str(private), "version_path": version_path}
     environment.pop("XDG_DATA_HOME", None)
     if xdg:
         environment["XDG_DATA_HOME"] = str(home / "user data")
@@ -44,8 +44,8 @@ class InstalledEntryTests(unittest.TestCase):
                     asset.parent.mkdir(parents=True)
                     contents = '<svg xmlns="http://www.w3.org/2000/svg"><!-- %d --></svg>' % number
                     asset.write_text(contents)
-                    (root / "install-state.json").write_text(json.dumps({"version_path": str(generation)}))
-                    run_entry("linux_entry", root, entry, home, private, xdg=xdg)
+                    (root / "install-state.json").write_text(json.dumps({"version_path": "versions/concurrent-install"}))
+                    run_entry("linux_entry", root, entry, home, private, xdg=xdg, version_path=str(generation))
                     text = desktop.read_text()
                     self.assertIn('Exec="' + str(entry) + '"\n', text)
                     self.assertIn("Icon=headroom\n", text)
@@ -72,9 +72,9 @@ class InstalledEntryTests(unittest.TestCase):
                 source = root / generation / "Headroom.app/Contents/Resources/headroom.icns"
                 source.parent.mkdir(parents=True)
                 source.write_bytes(b"synthetic icon " + bytes([number]))
-                (root / "install-state.json").write_text(json.dumps({"version_path": str(generation)}))
+                (root / "install-state.json").write_text(json.dumps({"version_path": "versions/concurrent-install"}))
                 run_entry("macos_entry", root, entry, home, private, "check")
-                run_entry("macos_entry", root, entry, home, private, "write")
+                run_entry("macos_entry", root, entry, home, private, "write", version_path=str(generation))
                 info = plistlib.loads((contents / "Info.plist").read_bytes())
                 self.assertEqual(info["CFBundleIdentifier"], "io.headroom.launcher")
                 self.assertEqual(info["CFBundleExecutable"], "headroom")

@@ -244,8 +244,8 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
 PY
 chmod 0700 "$manager"
 macos_entry() {
-  python3 - "$entry_path" "$install_root" "$1" <<'PY'
-import json, os, pathlib, plistlib, stat, sys, tempfile
+  python3 - "$entry_path" "$install_root" "$1" "${version_path:-}" <<'PY'
+import os, pathlib, plistlib, stat, sys, tempfile
 entry=pathlib.Path(sys.argv[1])
 if not (entry.name == 'headroom' and entry.parent.name == 'MacOS' and entry.parent.parent.name == 'Contents' and entry.parent.parent.parent.suffix == '.app'):
     raise SystemExit(0)  # A custom command-line entry needs no Finder wrapper.
@@ -267,8 +267,7 @@ if info_path.exists():
     if previous.get('CFBundleIdentifier') != 'io.headroom.launcher':
         raise SystemExit('Headroom will not overwrite another Mac application')
 if sys.argv[3] == 'check': raise SystemExit(0)
-state=json.loads((pathlib.Path(sys.argv[2])/'install-state.json').read_text())
-payload=pathlib.Path(sys.argv[2])/state['version_path']/'Headroom.app'/'Contents'
+payload=pathlib.Path(sys.argv[2])/sys.argv[4]/'Headroom.app'/'Contents'
 # This wrapper is the stable launcher, not a separately versioned product.
 info={'CFBundleExecutable':'headroom', 'CFBundleIdentifier':'io.headroom.launcher',
       'CFBundleName':'Headroom', 'CFBundleDisplayName':'Headroom',
@@ -294,11 +293,10 @@ icon_theme=${XDG_DATA_HOME:-"$HOME/.local/share"}/icons/hicolor
 icons=$icon_theme/scalable/apps
 mkdir -p -- "$applications" "$icons"
 # Copy from the verified generation into the user's stable icon theme location.
-python3 - "$install_root" "$private_root/headroom.svg" <<'PY'
-import json, pathlib, sys
+python3 - "$install_root" "$private_root/headroom.svg" "$version_path" <<'PY'
+import pathlib, sys
 root=pathlib.Path(sys.argv[1])
-state=json.loads((root/'install-state.json').read_text())
-source=root/state['version_path']/'share/icons/hicolor/scalable/apps/headroom.svg'
+source=root/sys.argv[3]/'share/icons/hicolor/scalable/apps/headroom.svg'
 pathlib.Path(sys.argv[2]).write_bytes(source.read_bytes())
 PY
 install -m 0644 "$private_root/headroom.svg" "$icons/headroom.svg"
@@ -324,9 +322,35 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$icon_theme" >/dev/null 2>&1 || :
 fi
 }
+manager_request() {
+  response=$private_root/$1.json
+  status=0
+  "$manager" "$@" > "$response" || status=$?
+  python3 - "$response" "$1" "$status" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    response=json.load(source)
+if sys.argv[3] != '0' or response.get('ok') is not True:
+    raise SystemExit(response.get('error') or 'Headroom package operation did not complete.')
+if response.get('command') != sys.argv[2] or not isinstance(response.get('result'), dict):
+    raise SystemExit('Headroom package manager returned an invalid result.')
+PY
+}
 if [ "$platform" = macos ] && [ "$package_kind" != cli ]; then macos_entry check; fi
-"$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
+set -- install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
   --cli-entry-path "$cli_entry_path" --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
+if [ "$package_kind" != cli ] && [ "$no_launch" -eq 0 ]; then set -- "$@" --coordinate; fi
+printf 'Installing Headroom %s...\n' "$version"
+manager_request "$@"
+version_path=$(python3 - "$private_root/install.json" "$version" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    state=json.load(source)['result']['state']
+if state['active_version'] != sys.argv[2] or not state['version_path']:
+    raise SystemExit('The installed generation does not match the requested package.')
+print(state['version_path'])
+PY
+)
 
 if [ "$package_kind" = cli ]; then
   printf 'Installed Headroom %s at %s\nRun %s for usage, %s serve for the server, or %s update to update.\n' "$version" "$install_root" "$cli_entry_path" "$cli_entry_path" "$cli_entry_path"
@@ -338,32 +362,35 @@ if [ "$platform" = macos ]; then
 else
   linux_entry
 fi
-printf 'Installed Headroom %s at %s\n' "$version" "$install_root"
-if [ "$no_launch" -eq 1 ]; then
-  printf 'Quit any running Headroom window and launch %s to use the installed generation.\n' "$entry_path"
-else
-  ready=$private_root/installed-ready.json
-  nonce=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
-  HEADROOM_READY_NONCE=$nonce "$entry_path" --headroom-installed-restart --headroom-ready-file "$ready" >/dev/null 2>&1 &
-  ready_ok=0
-  attempts=0
-  while [ "$attempts" -lt 100 ]; do
-    if [ -s "$ready" ] && python3 - "$ready" "$install_root" "$nonce" "$platform" <<'PY'
-import json, os, sys
-marker=json.load(open(sys.argv[1], encoding='utf-8'))
-state=json.load(open(os.path.join(sys.argv[2], 'install-state.json'), encoding='utf-8'))
-app_path=('Headroom.app', 'Contents', 'MacOS', 'headroom') if sys.argv[4]=='macos' else ('bin','headroom')
-expected=os.path.realpath(os.path.join(sys.argv[2], state['version_path'], *app_path))
-actual=os.path.realpath(marker.get('executable',''))
-if marker.get('nonce') != sys.argv[3] or marker.get('version') != state.get('active_version') or actual != expected or not isinstance(marker.get('pid'), int) or marker['pid'] <= 0:
-    raise SystemExit(1)
+activation_status=$(python3 - "$private_root/install.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    activation=json.load(source)['result']['activation']
+print(activation['status'] if activation is not None else '')
 PY
-    then ready_ok=1; break; fi
-    attempts=$((attempts + 1)); sleep 0.1
-  done
-  if [ "$ready_ok" -eq 1 ]; then
-    printf 'Started the verified installed generation.\n'
-  else
-    printf 'The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch %s.\n' "$entry_path" >&2
-  fi
+)
+if [ -z "$activation_status" ]; then
+  set -- activate --install-root "$install_root" --version-path "$version_path"
+  if [ "$no_launch" -eq 1 ]; then set -- "$@" --no-launch; fi
+  manager_request "$@"
+  activation_status=$(python3 - "$private_root/activate.json" "$version_path" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    activation=json.load(source)['result']
+if activation['version_path'] != sys.argv[2]:
+    raise SystemExit('Activation refers to a different installed generation.')
+print(activation['status'])
+PY
+)
 fi
+case "$activation_status" in
+  ready|skipped|restart_required|unconfirmed) ;;
+  *) echo 'Headroom package manager returned an unrecognized activation outcome.' >&2; exit 1 ;;
+esac
+printf 'Installed Headroom %s at %s\n' "$version" "$install_root"
+case "$activation_status" in
+  ready) printf 'Headroom %s is running.\n' "$version" ;;
+  skipped) printf 'Launch skipped. Open %s when you are ready; quit any older Headroom window first.\n' "$entry_path" ;;
+  restart_required) printf 'An earlier Headroom generation is still running. Quit it, then open %s.\n' "$entry_path" >&2 ;;
+  unconfirmed) printf 'The package is installed, but startup could not be confirmed. Open %s and check Headroom diagnostics if it does not start.\n' "$entry_path" >&2 ;;
+esac

@@ -23,8 +23,17 @@ int main(int argc, char **argv)
     const auto arguments = app.arguments();
     if (arguments.size() < 4 || arguments.size() > 5) return 2;
     InstanceService instance(arguments[1]);
+    if (arguments.size() == 5 && arguments[4] == "lock-only") {
+        QLockFile lock(instance.lockPath());
+        lock.setStaleLockTime(0);
+        if (!lock.tryLock(0)) return 7;
+        if (!writeMarker(arguments[2], "ready")) return 4;
+        QTimer::singleShot(10000, &app, [&] { app.exit(6); });
+        return app.exec();
+    }
     if (arguments.size() == 5 && arguments[4] == "noack") {
         QLockFile lock(instance.lockPath());
+        lock.setStaleLockTime(0);
         if (!lock.tryLock()) return 7;
         QLocalServer::removeServer(instance.scopeName());
         QLocalServer server;

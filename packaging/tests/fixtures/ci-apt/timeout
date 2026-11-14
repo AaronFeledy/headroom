@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "$1" == --kill-after=15s ]] || exit 97
+case "$2" in
+  4m) printf 'download\n' >> "$APT_FIXTURE/deadlines" ;;
+  5m) printf 'install\n' >> "$APT_FIXTURE/deadlines" ;;
+  *) exit 98 ;;
+esac
+shift 2
+if [[ -n "${APT_REAL_TIMEOUT:-}" ]]; then
+  exec "$APT_REAL_TIMEOUT" --kill-after=0.1s 0.2s "$@"
+fi
+mapfile -t statuses < "$APT_FIXTURE/timeout-statuses"
+printf '%s\n' "${statuses[@]:1}" > "$APT_FIXTURE/timeout-statuses"
+status=${statuses[0]:-0}
+[[ "$status" -eq 0 ]] || exit "$status"
+exec "$@"

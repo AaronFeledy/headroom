@@ -111,16 +111,6 @@ type PreparedApply struct {
 	Nonce                string `json:"nonce"`
 }
 
-type ApplyResult struct {
-	Schema        int    `json:"schema"`
-	Product       string `json:"product"`
-	Status        string `json:"status"`
-	Version       string `json:"version"`
-	VersionPath   string `json:"version_path"`
-	RolledBack    bool   `json:"rolled_back"`
-	FailureReason string `json:"failure_reason,omitempty"`
-}
-
 func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	root, err := NormalizeInstallRoot(request.InstallRoot)
 	if err != nil {
@@ -282,10 +272,14 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	} else if request.OwnedChildExecutable != "" {
 		return PreparedApply{}, errors.New("owned child identity is incomplete")
 	}
-	request.PriorStateSHA256, err = digestFile(filepath.Join(root, StateName))
+	priorDigest, err := digestFile(filepath.Join(root, StateName))
 	if err != nil {
 		return PreparedApply{}, err
 	}
+	if request.PriorStateSHA256 != "" && request.PriorStateSHA256 != priorDigest {
+		return PreparedApply{}, errors.New("installed state changed before apply preparation")
+	}
+	request.PriorStateSHA256 = priorDigest
 	if stage.Version == "" {
 		return PreparedApply{}, errors.New("verified stage has no version")
 	}
@@ -612,7 +606,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			cleanupErr = writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal)
 		}
 		if cleanupErr == nil {
-			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
+			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, RolledBack: true, FailureReason: boundedError(originalFailure)}
 			relaunch := journal.Request
 			relaunch.ReadyPath = filepath.Join(directory, "rollback-ready.json")
@@ -620,7 +614,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			cleanupErr = relaunchRollbackPrior(relaunch, *previous)
 		}
 		if cleanupErr != nil {
-			result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "recovery_required", Version: previous.ActiveVersion,
+			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "recovery_required", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, FailureReason: boundedError(errors.Join(originalFailure, cleanupErr))}
 			if current, stateErr := readStateUnchecked(journal.Request.InstallRoot); stateErr == nil && validVersionPath(current) {
 				result.Version, result.VersionPath = current.ActiveVersion, current.VersionPath
@@ -824,9 +818,11 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	_ = os.RemoveAll(filepath.Dir(filepath.Dir(stage.PackageRoot)))
-	result = ApplyResult{Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
-	_ = writeDurableJSON(filepath.Join(request.InstallRoot, "last-apply-result.json"), result)
 	complete = true
+	result = ApplyResult{Nonce: request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "applied", Version: candidate.ActiveVersion, VersionPath: candidate.VersionPath}
+	if err = writeDurableJSON(filepath.Join(request.InstallRoot, "last-apply-result.json"), result); err != nil {
+		return result, fmt.Errorf("persist apply outcome: %w", err)
+	}
 	return result, nil
 }
 
@@ -1607,85 +1603,6 @@ func rollbackJournal(journal ApplyJournal, directory string) error {
 	}
 	journal.Phase = journalPhaseRollbackRelaunch
 	return writeApplyJournal(filepath.Join(directory, TransactionJournalName), journal)
-}
-
-func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func(int, string, string) error) error {
-	inspection, err := inspectState(request.InstallRoot, state)
-	if err != nil {
-		return err
-	}
-	manifest, err := installedManifest(request.InstallRoot, state)
-	if err != nil {
-		return err
-	}
-	packagePath := manifest.Components.Application.Path
-	if request.CandidateRole == RoleCLI {
-		packagePath = PackageCLIPath(manifest.Platform, manifest.PackageKind)
-	}
-	if request.CandidateRole == RoleServer {
-		packagePath = manifest.Components.Server.Path
-	}
-	executable := installedComponentPath(request.InstallRoot, state.VersionPath, packagePath)
-	for _, missing := range inspection.Missing {
-		if !isAuxiliaryPath(missing) || missing == strings.TrimPrefix(packagePath, "bundle/") {
-			return errors.New("target app/runtime is incomplete")
-		}
-	}
-	_ = os.Remove(request.ReadyPath)
-	environment := authoritativeApplyEnvironment(os.Environ(), map[string]string{
-		"HEADROOM_INSTALL_ROOT": request.InstallRoot, "HEADROOM_LAUNCHER_PATH": request.EntryPath,
-		"HEADROOM_PACKAGE_VERSION": state.ActiveVersion, "HEADROOM_READY_NONCE": request.Nonce,
-	})
-	arguments := append([]string{executable}, request.RelaunchArguments...)
-	arguments = append(arguments, "--headroom-update-restart", "--headroom-ready-file", request.ReadyPath)
-	process, err := os.StartProcess(executable, arguments, &os.ProcAttr{Env: environment, Files: []*os.File{nil, nil, nil}})
-	if err != nil {
-		return err
-	}
-	token, tokenErr := captureProcessToken(process.Pid, executable)
-	if tokenErr != nil {
-		_ = process.Kill()
-		_, _ = process.Wait()
-		return tokenErr
-	}
-	done := make(chan error, 1)
-	go func() { _, waitErr := process.Wait(); done <- waitErr }()
-	if onLaunch != nil {
-		if err = onLaunch(process.Pid, executable, token); err != nil {
-			_ = process.Kill()
-			<-done
-			return err
-		}
-	}
-	deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
-	for time.Now().Before(deadline) {
-		select {
-		case waitErr := <-done:
-			return fmt.Errorf("replacement app exited before readiness: %v", waitErr)
-		default:
-		}
-		data, readErr := readBoundedFile(request.ReadyPath, 4096)
-		if readErr == nil {
-			var ready struct {
-				Nonce      string `json:"nonce"`
-				PID        int    `json:"pid"`
-				Version    string `json:"version"`
-				Executable string `json:"executable"`
-			}
-			if json.Unmarshal(data, &ready) == nil && ready.Nonce == request.Nonce && ready.PID == process.Pid && ready.Version == state.ActiveVersion && samePath(ready.Executable, executable) {
-				select {
-				case waitErr := <-done:
-					return fmt.Errorf("replacement app exited during readiness: %v", waitErr)
-				case <-time.After(200 * time.Millisecond):
-					return nil
-				}
-			}
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	_ = process.Kill()
-	<-done
-	return errors.New("replacement app readiness timed out")
 }
 
 func hasManagedService(request ApplyRequest) bool {

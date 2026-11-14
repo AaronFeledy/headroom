@@ -19,6 +19,10 @@ func RecoverInstall(installRoot string) error {
 		return err
 	}
 	defer lock.Close()
+	return recoverInstallLocked(root)
+}
+
+func recoverInstallLocked(root string) error {
 	transactions := filepath.Join(root, "transactions")
 	entries, err := os.ReadDir(transactions)
 	if errors.Is(err, os.ErrNotExist) {

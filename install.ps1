@@ -71,6 +71,21 @@ function Save-HeadroomFile {
     throw 'Too many download redirects.'
 }
 
+function Invoke-HeadroomManager {
+    param([string[]]$Arguments)
+    $text = & $managerPath @Arguments
+    $exitCode = $LASTEXITCODE
+    $reply = ($text -join "`n") | ConvertFrom-Json
+    if ($exitCode -ne 0 -or $reply.ok -ne $true) {
+        if ($reply.error) { throw [string]$reply.error }
+        throw "Headroom package operation did not complete (exit code $exitCode)."
+    }
+    if ($reply.command -cne $Arguments[0] -or $null -eq $reply.result) {
+        throw 'Headroom package manager returned an invalid result.'
+    }
+    return $reply.result
+}
+
 function Read-ReleaseManifest {
     param([string]$Path)
     if ((Get-Item -LiteralPath $Path).Length -gt 4MB) { throw 'Release manifest is too large.' }
@@ -171,8 +186,15 @@ try {
             try { [System.IO.Path]::GetFullPath($_.Path) -eq [System.IO.Path]::GetFullPath($legacyExecutable) } catch { $false }
         } | Stop-Process -Force
         }
-        & $managerPath install --archive $localArchive --install-root $InstallRoot --entry-path $EntryPath --cli-entry-path $CLIEntryPath --version $manifest.version --platform windows --arch $contractArchitecture --asset $assetName
-        if ($LASTEXITCODE -ne 0) { throw "Headroom package manager failed with exit code $LASTEXITCODE." }
+        $installArguments = @('install', '--archive', $localArchive, '--install-root', $InstallRoot,
+            '--entry-path', $EntryPath, '--cli-entry-path', $CLIEntryPath, '--version', $manifest.version,
+            '--platform', 'windows', '--arch', $contractArchitecture, '--asset', $assetName)
+        if (-not $CLI -and -not $NoLaunch) { $installArguments += '--coordinate' }
+        Write-Host "Installing Headroom $($manifest.version)..."
+        $installed = Invoke-HeadroomManager -Arguments $installArguments
+        if ($installed.state.active_version -cne $manifest.version -or -not $installed.state.version_path) {
+            throw 'The installed generation does not match the requested package.'
+        }
         $cliDirectory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($CLIEntryPath))
         # [Environment]::GetEnvironmentVariable expands a REG_EXPAND_SZ Path and
         # [Environment]::SetEnvironmentVariable rewrites it as REG_SZ, which would
@@ -236,35 +258,22 @@ namespace HeadroomInstaller {
                 if ([System.IO.Path]::GetFullPath($legacy.TargetPath) -eq [System.IO.Path]::GetFullPath($legacyTarget)) { Remove-Item -LiteralPath $legacyShortcutPath }
             }
         } finally { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        $activation = $installed.activation
+        if ($null -eq $activation) {
+            $activateArguments = @('activate', '--install-root', $InstallRoot, '--version-path', $installed.state.version_path)
+            if ($NoLaunch) { $activateArguments += '--no-launch' }
+            $activation = Invoke-HeadroomManager -Arguments $activateArguments
+        }
+        if ($activation.version_path -cne $installed.state.version_path -or
+            @('ready', 'skipped', 'restart_required', 'unconfirmed') -cnotcontains $activation.status) {
+            throw 'Headroom package manager returned an invalid activation outcome.'
+        }
         Write-Host "Installed Headroom $($manifest.version) at $InstallRoot"
-        if ($NoLaunch) {
-            Write-Host "Quit any running Headroom window and launch $EntryPath to use the installed generation."
-        } else {
-            $readyPath = Join-Path $privateRoot 'installed-ready.json'
-            $nonce = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')).Substring(0, 48)
-            $priorNonce = [Environment]::GetEnvironmentVariable('HEADROOM_READY_NONCE', 'Process')
-            try {
-                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $nonce, 'Process')
-                $quotedReady = '"' + $readyPath.Replace('"', '\"') + '"'
-                Start-Process -FilePath $EntryPath -ArgumentList @('--headroom-installed-restart', '--headroom-ready-file', $quotedReady)
-            } finally {
-                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $priorNonce, 'Process')
-            }
-            $deadline = [DateTime]::UtcNow.AddSeconds(10)
-            $ready = $null
-            while ([DateTime]::UtcNow -lt $deadline) {
-                if ((Test-Path -LiteralPath $readyPath) -and (Get-Item -LiteralPath $readyPath).Length -gt 0) {
-                    try { $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json } catch { $ready = $null }
-                    if ($ready) { break }
-                }
-                Start-Sleep -Milliseconds 100
-            }
-            $state = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-state.json') -Raw | ConvertFrom-Json
-            $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot (Join-Path $state.version_path 'bin\headroom.exe')))
-            $readyMatches = $ready -and $ready.nonce -ceq $nonce -and $ready.version -ceq $state.active_version -and
-                [int64]$ready.pid -gt 0 -and [System.IO.Path]::GetFullPath([string]$ready.executable) -ieq $expectedExecutable
-            if ($readyMatches) { Write-Host 'Started the verified installed generation.' }
-            else { Write-Warning "The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch $EntryPath." }
+        switch -CaseSensitive ($activation.status) {
+            'ready' { Write-Host "Headroom $($manifest.version) is running." }
+            'skipped' { Write-Host "Launch skipped. Open $EntryPath when you are ready; quit any older Headroom window first." }
+            'restart_required' { Write-Warning "An earlier Headroom generation is still running. Quit it, then open $EntryPath." }
+            'unconfirmed' { Write-Warning "The package is installed, but startup could not be confirmed. Open $EntryPath and check Headroom diagnostics if it does not start." }
         }
     }
 } finally {

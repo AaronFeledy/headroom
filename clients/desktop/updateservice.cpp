@@ -251,22 +251,53 @@ void UpdateService::requestCLIUpdate(const QJsonObject &request, std::function<v
     // and kernel start identity before the desktop authorizes any process exit.
     m_autoStage = true;
     if (request.contains(QStringLiteral("prepared_stage"))) {
-        const auto stage = request.value(QStringLiteral("prepared_stage")).toObject();
-        handleUpdateResult(Operation::Stage, {{"status", "staged"}, {"current_version", m_options.packageVersion},
-            {"version", stage.value("version")}, {"platform", m_platform}, {"architecture", m_architecture},
-            {"asset_name", stage.value("package_asset")}, {"stage", stage}});
+        applyRequestedStage(request.value(QStringLiteral("prepared_stage")).toObject());
         return;
     }
     run(Operation::Check, QStringLiteral("check-update"));
 }
 
-void UpdateService::finishCLIRequest(const QString &status, bool ok) {
+void UpdateService::requestReinstall(const QJsonObject &request, std::function<void(const QJsonObject &)> reply) {
+    const QString nonce = request.value(QStringLiteral("request_nonce")).toString();
+    const auto reject = [&](const QString &reason) { reply({{"ok", false}, {"status", reason}, {"request_nonce", nonce}}); };
+    const QString prior = request.value(QStringLiteral("prior_state_sha256")).toString();
+    if (request.size() != 8 || request.value("schema") != QJsonValue(1) || request.value("product") != QJsonValue("Headroom")
+        || request.value("command") != QJsonValue("reinstall")
+        || !QRegularExpression(QStringLiteral("^[0-9a-f]{48}$")).match(nonce).hasMatch()
+        || !QRegularExpression(QStringLiteral("^[0-9a-f]{64}$")).match(prior).hasMatch()
+        || m_options.installRoot.isEmpty()
+        || cleanAbsolute(request.value("install_root").toString()) != cleanAbsolute(m_options.installRoot)
+        || !request.value("prepared_stage").isObject()) { reject(QStringLiteral("invalid_request")); return; }
+    if (!m_allowed || !m_official || m_options.systemManaged) { reject(QStringLiteral("unmanaged_installation")); return; }
+    if (busy()) { reject(QStringLiteral("busy")); return; }
+    if (!request.value("additional_processes").isArray() || !request.value("additional_processes").toArray().isEmpty()) {
+        reject(QStringLiteral("invalid_participants")); return;
+    }
+    m_cliReply = std::move(reply); m_cliRequestNonce = nonce; m_cliParticipants = {};
+    m_priorStateSha256 = prior;
+    m_autoPending = false; m_autoStage = false;
+    applyRequestedStage(request.value("prepared_stage").toObject());
+}
+
+void UpdateService::applyRequestedStage(const QJsonObject &stage) {
+    handleUpdateResult(Operation::Stage, {{"status", "staged"}, {"current_version", m_options.packageVersion},
+        {"version", stage.value("version")}, {"platform", m_platform}, {"architecture", m_architecture},
+        {"asset_name", stage.value("package_asset")}, {"stage", stage}});
+}
+
+void UpdateService::finishCLIRequest(const QString &status, bool ok, const QJsonObject &prepared) {
     if (!m_cliReply) return;
     auto reply = std::move(m_cliReply);
     const auto nonce = std::exchange(m_cliRequestNonce, {});
     m_cliParticipants = {};
-    reply({{"ok", ok}, {"status", status}, {"request_nonce", nonce},
-           {"version", m_latestVersion.isEmpty() ? m_options.packageVersion : m_latestVersion}});
+    const bool reinstall = !std::exchange(m_priorStateSha256, {}).isEmpty();
+    QJsonObject response{{"ok", ok}, {"status", status}, {"request_nonce", nonce},
+           {"version", m_latestVersion.isEmpty() ? m_options.packageVersion : m_latestVersion}};
+    if (reinstall && ok && status == QStringLiteral("accepted")) {
+        response.insert(QStringLiteral("transaction_directory"), prepared.value(QStringLiteral("transaction_directory")));
+        response.insert(QStringLiteral("nonce"), prepared.value(QStringLiteral("nonce")));
+    }
+    reply(response);
 }
 
 void UpdateService::stageUpdate() {
@@ -291,6 +322,7 @@ void UpdateService::restartToApply() {
         QStringLiteral("--entry-path"), m_options.launcherPath, QStringLiteral("--stage-record"), QDir::cleanPath(stageRecord),
         QStringLiteral("--current-pid"), QString::number(QCoreApplication::applicationPid()),
         QStringLiteral("--current-executable"), QCoreApplication::applicationFilePath()};
+    if (!m_priorStateSha256.isEmpty()) arguments << QStringLiteral("--prior-state-sha256") << m_priorStateSha256;
     if (m_ownedProcessProvider) {
         const auto owned = m_ownedProcessProvider();
         if (owned.first > 0 && !owned.second.isEmpty()) arguments << QStringLiteral("--owned-child-pid") << QString::number(owned.first)
@@ -521,7 +553,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         }
         m_status = QStringLiteral("Restarting into the verified Headroom package…"); emit changed();
         log(QStringLiteral("Update transaction accepted; restarting into the verified package."));
-        finishCLIRequest(QStringLiteral("accepted"), true);
+        finishCLIRequest(QStringLiteral("accepted"), true, result);
         emit applyPrepared(); return;
     }
     if (operation == Operation::Inspect) handleInspection(result); else handleUpdateResult(operation, result);
@@ -571,7 +603,8 @@ bool UpdateService::authorizePreparedApply(const QJsonObject &result) const {
         || !equalsPath(requestObject.value(QStringLiteral("current_executable")).toString(), QCoreApplication::applicationFilePath())
         || !equalsPath(requestObject.value(QStringLiteral("acknowledgement_path")).toString(), acknowledgement)
         || !equalsPath(requestObject.value(QStringLiteral("commit_path")).toString(), commit)
-        || requestObject.value(QStringLiteral("nonce")).toString() != nonce) return false;
+        || requestObject.value(QStringLiteral("nonce")).toString() != nonce
+        || (!m_priorStateSha256.isEmpty() && requestObject.value(QStringLiteral("prior_state_sha256")) != QJsonValue(m_priorStateSha256))) return false;
     const auto captured = requestObject.value(QStringLiteral("additional_processes")).toArray();
     if (captured.size() < m_cliParticipants.size() || captured.size() > 4
         || captured.size() > m_cliParticipants.size() + 2) return false;
