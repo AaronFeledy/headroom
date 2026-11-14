@@ -29,7 +29,9 @@ func Test_Client_loadCredentials_discovers_configured_native_wsl_then_opencode(t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// When
-			got, err := New(tt.opts).loadCredentials(context.Background())
+			client := New(tt.opts)
+			client.goos = "windows"
+			got, err := client.loadCredentials(context.Background())
 
 			// Then
 			if err != nil {

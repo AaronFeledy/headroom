@@ -38,7 +38,7 @@ func (c *Client) candidates(ctx context.Context) []credential {
 			}
 			continue
 		}
-		result = append(result, readCredential(ctx, candidate))
+		result = append(result, c.discovery.readCredential(ctx, candidate))
 	}
 	browserFiles := c.discovery.browserFiles()
 	changed := c.discovery.Now().Sub(c.browserScanned) >= 5*time.Minute || c.browserScanned.IsZero()

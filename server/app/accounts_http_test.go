@@ -41,14 +41,14 @@ func (s accountFetchSignal) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func writeHTTPAccountConfig(t *testing.T, id, credentialsPath string) string {
+func writeHTTPAccountConfig(t *testing.T, id, configDir string) string {
 	t.Helper()
 	// Marshal the path as a YAML scalar to preserve Windows separators and quotes.
-	pathValue, err := yaml.Marshal(credentialsPath)
+	pathValue, err := yaml.Marshal(configDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := "providers:\n  claude:\n    enabled: false\n    accounts:\n      - id: " + id + "\n        label: Work\n        credentials_path: " + string(pathValue)
+	body := "providers:\n  claude:\n    enabled: false\n    accounts:\n      - id: " + id + "\n        label: Work\n        config_dir: " + string(pathValue)
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -62,8 +62,8 @@ func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *test
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", home)
 	t.Setenv("APPDATA", home)
-	credentialsPath := filepath.Join(home, "claude-work", ".credentials.json")
-	path := writeHTTPAccountConfig(t, "work", credentialsPath)
+	configDir := filepath.Join(home, "claude-work")
+	path := writeHTTPAccountConfig(t, "work", configDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	listenerReady := make(chan net.Listener, 1)
@@ -143,19 +143,13 @@ func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *test
 		t.Fatalf("account identity = %+v", row)
 	}
 	wantMessage := "Not signed in."
-	var wantCommand *string
-	if runtime.GOOS == "darwin" {
-		wantMessage = "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet."
-	} else {
-		dir := filepath.Dir(credentialsPath)
-		command := "CLAUDE_CONFIG_DIR=" + dir + " claude auth login"
-		if runtime.GOOS == "windows" {
-			command = "$previous = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR = '" + strings.ReplaceAll(dir, "'", "''") + "'; try { claude auth login } finally { $env:CLAUDE_CONFIG_DIR = $previous }"
-		} else if strings.ContainsAny(dir, " '\t") {
-			command = "CLAUDE_CONFIG_DIR='" + strings.ReplaceAll(dir, "'", `'\''`) + "' claude auth login"
-		}
-		wantCommand = &command
+	command := "CLAUDE_CONFIG_DIR=" + configDir + " claude auth login"
+	if runtime.GOOS == "windows" {
+		command = "$previous = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR = '" + strings.ReplaceAll(configDir, "'", "''") + "'; try { claude auth login } finally { $env:CLAUDE_CONFIG_DIR = $previous }"
+	} else if strings.ContainsAny(configDir, " '\t") {
+		command = "CLAUDE_CONFIG_DIR='" + strings.ReplaceAll(configDir, "'", `'\''`) + "' claude auth login"
 	}
+	wantCommand := &command
 	if row.Error == nil || *row.Error != wantMessage || !row.NeedsReauth || row.Success || row.Auth.State != "signed_out" {
 		t.Fatalf("sign-in row = %+v, want %q", row, wantMessage)
 	}
@@ -180,7 +174,7 @@ func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *test
 }
 
 func Test_Run_invalid_account_rejected_before_listen(t *testing.T) {
-	path := writeHTTPAccountConfig(t, "Bad ID", filepath.Join(t.TempDir(), ".credentials.json"))
+	path := writeHTTPAccountConfig(t, "Bad ID", filepath.Join(t.TempDir(), "work"))
 	listened := false
 	err := runContext(context.Background(), []string{"-config", path, "-listen-addr", "127.0.0.1:0"}, disabledProviderEnv(), discardLogger(), desktopSessionOptions{
 		listen: func(network, address string) (net.Listener, error) {

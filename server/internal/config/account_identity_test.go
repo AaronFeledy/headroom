@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,9 +39,9 @@ func Test_Load_account_identity_shared_fixture(t *testing.T) {
 		invalid                    bool
 	}
 	type accountYAML struct {
-		ID              string `yaml:"id"`
-		Label           string `yaml:"label"`
-		CredentialsPath string `yaml:"credentials_path"`
+		ID        string `yaml:"id"`
+		Label     string `yaml:"label"`
+		ConfigDir string `yaml:"config_dir"`
 	}
 	var cases []identityCase
 	for i, id := range fixture.IDs.Valid {
@@ -65,7 +64,7 @@ func Test_Load_account_identity_shared_fixture(t *testing.T) {
 				} `yaml:"providers"`
 			}{Providers: map[string]struct {
 				Accounts []accountYAML `yaml:"accounts"`
-			}{"claude": {Accounts: []accountYAML{{tc.id, tc.label, filepath.Join(t.TempDir(), ".credentials.json")}}}}}
+			}{"claude": {Accounts: []accountYAML{{tc.id, tc.label, t.TempDir()}}}}}
 			encoded, err := yaml.Marshal(body)
 			if err != nil {
 				t.Fatal(err)

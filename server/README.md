@@ -327,8 +327,11 @@ Claude account). Each usage entry also includes an always-present `auth` object:
 (`signed_in`, `signed_out`, or `expired`), nullable `{kind, name}` `source`,
 nullable `sign_in_command` and `sign_in_url`, `accepts_browser_credentials`, and
 an array `checked` (up to 12 `{kind, name, status}` entries). Only Cursor accepts
-browser credentials and populates `checked`. A signed-in credential can coexist
-with a network or upstream error. Existing fields remain unchanged; Cursor's
+browser credentials. Cursor and Claude populate `checked`; source kinds include
+`cli`, `app`, `browser`, `desktop`, and `keychain`. Claude lists examined sources
+in discovery order through the selected source, with status `signed_in`,
+`signed_out`, `locked`, `unreadable`, or `expired`. A signed-in credential can
+coexist with a network or upstream error. Existing fields remain unchanged; Cursor's
 `needs_reauth` is true when signed out or expired, and `reauth_command` mirrors
 its sign-in command.
 
@@ -539,12 +542,12 @@ ssh_access: false
 providers:
   claude:
     enabled: true
-    credentials_path: ~/.claude/.credentials.json
+    # credentials_path: ~/.claude/.credentials.json  # optional; reads only this file
     # Optional extra Claude accounts (YAML only):
     # accounts:
     #   - id: work                                 # required, ^[a-z0-9][a-z0-9_-]{0,31}$
     #     label: Work                              # optional, default = id (1-32 chars)
-    #     credentials_path: ~/.claude-work/.credentials.json  # required, absolute or ~/
+    #     config_dir: ~/.claude-work               # required, absolute or ~/
     #     enabled: true                            # optional, default true
   codex:
     enabled: true
@@ -561,19 +564,23 @@ providers:
     credentials_path: ""
 ```
 
-All five providers are enabled by default; Claude defaults to
-`~/.claude/.credentials.json`, and the others discover credentials automatically
-when no path is set. For OpenCode Go, `credentials_path` may point at either the
+All five providers are enabled by default and discover credentials automatically
+when no path is set. Claude checks, in order: Claude Code's macOS Keychain item
+(macOS only), `~/.claude/.credentials.json`, the same file in the WSL home (native
+Windows only), then OpenCode's `auth.json`. An explicit Claude `credentials_path`
+reads only that file. For OpenCode Go, `credentials_path` may point at either the
 OpenCode SQLite database or an `auth.json`-format file; an empty path uses
-discovery.
-Disable unwanted providers with `enabled: false` or
+discovery. Disable unwanted providers with `enabled: false` or
 `USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
 retained while Headroom displays it as ChatGPT.
 
-On a macOS server, Claude Code usually keeps its sign-in in the Keychain, which
-Headroom can't read yet ([#64](https://github.com/AaronFeledy/headroom/issues/64)).
-There, Claude usage works only with OpenCode credentials or a
-`.credentials.json` file.
+On macOS, Claude Code keeps its sign-in in the login Keychain. Headroom reads it
+with `/usr/bin/security` and never writes, deletes, or unlocks Keychain items. If
+the Keychain is locked, Headroom uses the next credential source; with none, the
+card says the Keychain is locked. Claude Code refreshes Keychain sign-ins itself,
+so when the short-lived access token runs out while Claude Code is idle, the card
+says the sign-in expired. Use Claude Code once, or run the sign-in command it
+shows.
 
 ### Multiple Claude accounts
 
@@ -583,7 +590,7 @@ Claude Code config directory and list it under `providers.claude.accounts`:
 1. Sign in to the extra account with a separate config directory:
 
    ```bash
-   # Linux / WSL
+   # macOS / Linux / WSL
    CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
    ```
 
@@ -602,7 +609,7 @@ Claude Code config directory and list it under `providers.claude.accounts`:
        accounts:
          - id: work
            label: Work
-           credentials_path: ~/.claude-work/.credentials.json
+           config_dir: ~/.claude-work
    ```
 
 3. Restart the server; configuration is read only at startup. If Headroom
@@ -613,21 +620,28 @@ card says `Not signed in.` and shows the exact sign-in command for that account.
 Extra accounts never fall back to `~/.claude`, WSL, or OpenCode credentials, and
 they keep running when `providers.claude.enabled` is false.
 
-macOS servers can't read extra accounts yet: Claude Code keeps macOS sign-ins in
-the Keychain, and Headroom reads only `.credentials.json`
-([#64](https://github.com/AaronFeledy/headroom/issues/64)). The card says so
-instead of offering a sign-in command that wouldn't help.
+On macOS, an extra account is read from its Claude Code Keychain item, then from
+`<config_dir>/.credentials.json`. Claude Code names that Keychain item after the
+exact `CLAUDE_CONFIG_DIR` value it received, so set `config_dir` to the same text
+as you typed it at sign-in. A trailing-slash difference is tolerated: if the exact
+item is missing, Headroom tries adding one slash or removing trailing slashes.
+Other spellings must match. Headroom expands a leading `~` to the server user's
+home and keeps the rest as written; file access uses the cleaned path. The card's
+sign-in command uses the same spelling. The server ignores `CLAUDE_CONFIG_DIR` in
+its own environment; the default account is always Claude Code's default sign-in.
 
 Accounts are YAML-only (no env vars or CLI flags). Each entry needs a stable `id`
 (`^[a-z0-9][a-z0-9_-]{0,31}$`), an optional `label` (1–32 Unicode characters
-after trim, no control characters; defaults to `id`), a `credentials_path`
+after trim, no control characters; defaults to `id`), a required `config_dir`
 (absolute, or starting with `~`, `~/`, or `~\`), and an optional `enabled`
 (default true). At most eight accounts. These fail startup with
 `config: invalid`: accounts under another provider, duplicate ids or
 case-insensitive labels (including disabled accounts), and two enabled entries
-that point at the same credentials file, including the default Claude file while
-the default account is enabled. Symlinks and hard links to the same existing file
-count as the same file; a missing file is valid configuration.
+that point at the same config directory or credentials file, including the
+default Claude file while the default account is enabled. File access and
+uniqueness checks use cleaned paths. Symlinked directories and symlinks or hard
+links to the same existing credentials file count as duplicates; a missing
+directory or file is valid configuration.
 
 In `GET /api/v1/usage`, account rows follow all default rows and carry
 `provider_type` `Claude` and `account` `{"id":"work","label":"Work"}`. Request one
@@ -647,6 +661,12 @@ path replaces only CLI-file discovery. On WSL it also checks Windows profiles
 (preferring `$USER`, respecting the automount root in `/etc/wsl.conf`); native
 Windows checks WSL homes without running Windows executables. Cross-kernel
 source names include `(Windows)` or `(WSL)`.
+
+Current Cursor apps encrypt the sign-in they keep in `state.vscdb`. A native
+Windows server decrypts it with the current user's Windows data protection key.
+Elsewhere, including WSL reading Windows profiles, and whenever decryption fails,
+`checked` reports the app as `encrypted` and discovery continues with the next
+source.
 
 Firefox profiles are searched default-first. Chrome, Edge, Brave, and Chromium
 are detected but their cookies are never decrypted; `checked` can report

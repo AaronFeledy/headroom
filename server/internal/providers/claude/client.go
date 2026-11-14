@@ -5,15 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -39,6 +34,8 @@ const (
 
 type Options struct {
 	CredentialsPath string
+	ConfigDir       string
+	Keychain        Keychain
 	HomeDir         string
 	WSLHomeDir      string
 	OpenCodePath    string
@@ -64,10 +61,12 @@ type Client struct {
 	signInCommand *string
 	paths         discoveryOptions
 	goos          string
+	keychain      Keychain
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex
 	loaded             *credentials
+	checked            []usage.AuthChecked
 	bankMu             sync.Mutex
 	bank               bankCache
 	resetMu            sync.Mutex
@@ -76,66 +75,6 @@ type Client struct {
 	emberMu            sync.Mutex
 	emberToken         string
 	emberUntil         time.Time
-}
-
-func New(opts Options) *Client {
-	client := opts.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: defaultTimeout}
-	}
-	usageURL := opts.UsageURL
-	if usageURL == "" {
-		usageURL = defaultUsageURL
-	}
-	tokenURL := opts.TokenURL
-	if tokenURL == "" {
-		tokenURL = defaultTokenURL
-	}
-	apiBaseURL := strings.TrimRight(opts.APIBaseURL, "/")
-	if apiBaseURL == "" {
-		apiBaseURL = "https://api.anthropic.com"
-	}
-	resetStateDir := opts.ResetStateDir
-	if resetStateDir != "" {
-		resetStateDir = filepath.Clean(resetStateDir)
-	}
-	name := strings.TrimSpace(opts.Name)
-	if name == "" {
-		name = providerName
-	}
-	account := opts.Account.Clone()
-	// Banked-reset consumption is default-account-only: never give an extra
-	// account a reset state directory even if a caller passes one.
-	if account != nil {
-		resetStateDir = ""
-	}
-	command := reauthCommandText
-	signInCommand := &command
-	if account != nil {
-		signInCommand = nil
-		credPath := expandHome(opts.CredentialsPath, opts.HomeDir)
-		if filepath.Base(credPath) == ".credentials.json" {
-			command = accountSignInCommand(runtime.GOOS, filepath.Dir(credPath))
-			signInCommand = &command
-		}
-	}
-	return &Client{
-		client:        client,
-		goos:          runtime.GOOS,
-		usageURL:      usageURL,
-		tokenURL:      tokenURL,
-		apiBaseURL:    apiBaseURL,
-		name:          name,
-		account:       account,
-		signInCommand: signInCommand,
-		resetStateDir: resetStateDir,
-		paths: discoveryOptions{
-			configuredPath: opts.CredentialsPath,
-			homeDir:        opts.HomeDir,
-			wslHomeDir:     opts.WSLHomeDir,
-			openCodePath:   opts.OpenCodePath,
-		},
-	}
 }
 
 func (c *Client) Name() string { return c.name }
@@ -156,7 +95,7 @@ func (c *Client) Account() *usage.Account { return c.account.Clone() }
 
 func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
 	authExpired := false
-	credentialsMissing := false
+	commandless := false
 	var epoch *string
 	var failure *usage.FetchFailure
 	defer func() {
@@ -165,43 +104,20 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		result.ProviderName = c.name
 		result.ProviderType = providerName
 		result.Account = c.account.Clone()
-		c.stateMu.Lock()
-		creds := c.loaded
-		c.stateMu.Unlock()
-		state := "signed_out"
-		var source *usage.AuthSource
-		if creds != nil {
-			name := "Claude Code"
-			if creds.source == credentialSourceOpenCode {
-				name = "OpenCode"
-			}
-			if strings.HasPrefix(creds.path, `\\wsl.`) {
-				name += " (WSL)"
-			}
-			source = &usage.AuthSource{Kind: "cli", Name: name}
-			state = "signed_in"
-			if result.NeedsReauth || authExpired {
-				state = "expired"
-			}
-		}
-		auth := usage.NewAuth(providerName, state, source)
-		if c.account != nil && auth.SignInCommand != nil {
-			auth.SignInCommand = c.signInCommand
-		}
-		if c.goos == "darwin" && credentialsMissing {
-			auth.SignInCommand = nil
-			result.ReauthCommand = nil
-		}
-		result.Auth = auth
+		c.attachAuth(&result, authExpired, commandless)
 	}()
 	creds, err := c.currentCredentials(ctx)
 	if err != nil {
-		credentialsMissing = errors.Is(err, ErrCredentialsMissing)
+		commandless = keychainAccessError(err)
 		return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		ready, refreshErr := c.ensureFreshCredentials(ctx, creds)
 		if refreshErr != nil {
+			commandless = keychainAccessError(refreshErr)
+			if isCredentialError(refreshErr) {
+				return c.reauthUsageData(c.credentialErrorMessage(refreshErr)), nil
+			}
 			if errors.Is(refreshErr, ErrInvalidGrant) {
 				return c.reauthUsageData("AUTH_EXPIRED"), nil
 			}
@@ -242,6 +158,10 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			}
 			if refreshErr := c.refreshCredentials(ctx, creds, refreshModeForced); refreshErr != nil {
 				failure = nil
+				commandless = keychainAccessError(refreshErr)
+				if isCredentialError(refreshErr) {
+					return c.reauthUsageData(c.credentialErrorMessage(refreshErr)), nil
+				}
 				if errors.Is(refreshErr, ErrInvalidGrant) {
 					return c.reauthUsageData("AUTH_EXPIRED"), nil
 				}
@@ -249,7 +169,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 			}
 			creds, err = c.currentCredentials(ctx)
 			if err != nil {
-				credentialsMissing = errors.Is(err, ErrCredentialsMissing)
+				commandless = keychainAccessError(err)
 				return c.reauthUsageData(formatCredentialError(err, c.goos)), nil
 			}
 			continue
@@ -269,41 +189,6 @@ func (c *Client) applyPlanSubtitle(ctx context.Context, creds *credentials, data
 	}
 	plan := c.bank.planName
 	data.Subtitle = &plan
-}
-
-func (c *Client) currentCredentials(ctx context.Context) (*credentials, error) {
-	c.stateMu.Lock()
-	loaded := c.loaded
-	c.stateMu.Unlock()
-	if loaded != nil {
-		return loaded, nil
-	}
-	return c.loadCredentials(ctx)
-}
-
-func (c *Client) ensureFreshCredentials(ctx context.Context, creds *credentials) (*credentials, error) {
-	currentInfo, err := os.Stat(creds.path)
-	if err != nil {
-		return nil, credentialsError{path: creds.path, err: fmt.Errorf("stat: %w", err)}
-	}
-	decision := credstore.ShouldRefresh(time.Now().UTC(), credstore.RefreshState{
-		Snapshot:       creds.snapshot,
-		CurrentModTime: currentInfo.ModTime(),
-		ExpiresAt:      creds.expiresAt.Add(-expirySkew),
-	})
-	switch decision {
-	case credstore.RefreshDecisionUseSnapshot:
-		return creds, nil
-	case credstore.RefreshDecisionReload:
-		return c.loadCredentials(ctx)
-	case credstore.RefreshDecisionRefresh:
-		if err := c.refreshCredentials(ctx, creds, refreshModeProactive); err != nil {
-			return nil, err
-		}
-		return c.currentCredentials(ctx)
-	default:
-		return nil, fmt.Errorf("unknown refresh decision %d", decision)
-	}
 }
 
 func (c *Client) reauthUsageData(message string) usage.UsageData {

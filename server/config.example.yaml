@@ -4,10 +4,10 @@ poll_interval: 60s
 providers:
   claude:
     enabled: true
-    credentials_path: ~/.claude/.credentials.json
+    # credentials_path: ~/.claude/.credentials.json  # optional; reads only this file
     # Optional extra Claude accounts (YAML only; no env/flags).
     # accounts:
     #   - id: work
     #     label: Work
-    #     credentials_path: ~/.claude-work/.credentials.json
+    #     config_dir: ~/.claude-work
     #     enabled: true

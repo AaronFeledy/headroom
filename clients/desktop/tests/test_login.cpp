@@ -79,7 +79,7 @@ private slots:
         auto row = provider("signed_out", "cli", "Claude");
         row["provider_name"] = "Claude (Work)";
         row["account"] = QVariantMap{{"id", "work"}, {"label", "Work"}};
-        const QString explanation = "Claude Code keeps this sign-in in the macOS Keychain, which Headroom can't read yet.";
+        const QString explanation = "The macOS Keychain is locked. Unlock it so Headroom can read your Claude Code sign-in.";
         const QString first = "Headroom couldn't find a Claude (Work) sign-in.";
         row["error"] = explanation;
         auto auth = row["auth"].toMap();
@@ -102,6 +102,38 @@ private slots:
         auth["state"] = "signed_out"; auth["sign_in_command"] = "claude auth login"; row["auth"] = auth;
         QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(),
             (QStringList{"Headroom couldn't find a Claude sign-in.", "Run claude auth login on this computer."}));
+    }
+    void keychainNotes_data() {
+        QTest::addColumn<QString>("state"); QTest::addColumn<QString>("status");
+        QTest::addColumn<QString>("command"); QTest::addColumn<QStringList>("expected");
+        QTest::newRow("locked") << QString("signed_out") << QString("locked") << QString()
+            << (QStringList{"Headroom couldn't find a Claude sign-in.",
+                "Unlock the macOS Keychain so Headroom can read the Claude Code sign-in."});
+        QTest::newRow("unreadable") << QString("signed_out") << QString("unreadable") << QString("claude auth login")
+            << (QStringList{"Headroom couldn't find a Claude sign-in.", "Run claude auth login on this computer.",
+                "Headroom couldn't read the Claude Code sign-in from the macOS Keychain."});
+        QTest::newRow("expired") << QString("expired") << QString("expired") << QString("claude auth login")
+            << (QStringList{"Your Claude Code login on this computer expired.", "Run claude auth login on this computer.",
+                "Claude Code renews this Keychain sign-in when it runs, so using Claude Code once also works."});
+    }
+    void keychainNotes() {
+        QFETCH(QString, state); QFETCH(QString, status); QFETCH(QString, command); QFETCH(QStringList, expected);
+        auto row = provider(state, "cli", "Claude Code"); row["provider_name"] = "Claude";
+        auto auth = row["auth"].toMap(); auth["sign_in_command"] = command;
+        auth["checked"] = QVariantList{QVariantMap{{"kind", "keychain"}, {"name", "Claude Code"}, {"status", status}},
+            QVariantMap{{"kind", "cli"}, {"name", "Claude Code"}, {"status", status}}}; row["auth"] = auth;
+        const auto copy = LoginCopy::compose(row, "local", "disabled");
+        QCOMPARE(copy["lines"].toStringList(), expected);
+        QCOMPARE(copy["command"].toString(), command);
+    }
+    void helperNotesKeepCommandlessExplanation() {
+        auto row = provider("signed_out", "cli", "Claude Code"); row["provider_name"] = "Claude";
+        auto auth = row["auth"].toMap();
+        auth["checked"] = QVariantList{QVariantMap{{"kind", "keychain"}, {"name", "Claude Code"}, {"status", "signed_out"}}};
+        row["auth"] = auth;
+        const QVariantList helper{QVariantMap{{"name", "Firefox"}, {"status", "unreadable"}}};
+        QCOMPARE(LoginCopy::compose(row, "local", "disabled", helper)["lines"].toStringList(),
+            (QStringList{"Headroom couldn't find a Claude sign-in.", "Headroom couldn't read Firefox.", "Synthetic error"}));
     }
     void proofVerification() {
         const QByteArray nonce(64, 'a'), token("synthetic-token");
@@ -299,19 +331,21 @@ private slots:
         QCOMPARE(copy["command"].toString(), QStringLiteral("cursor-agent login"));
     }
     void checkedNotes_data() {
+        QTest::addColumn<QString>("entryKind");
         QTest::addColumn<QString>("status"); QTest::addColumn<QString>("expected");
-        QTest::newRow("encrypted") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server is signed in, but Headroom can't read its cookies.");
-        QTest::newRow("locked") << QStringLiteral("locked") << QStringLiteral("Close Chrome on the server so Headroom can read its sign-in, or use another browser.");
-        QTest::newRow("expired") << QStringLiteral("expired") << QStringLiteral("Your Chrome on the server sign-in also expired.");
-        QTest::newRow("unreadable") << QStringLiteral("unreadable") << QStringLiteral("Headroom couldn't read Chrome on the server.");
+        QTest::newRow("encrypted") << QStringLiteral("browser") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server is signed in, but Headroom can't read its cookies.");
+        QTest::newRow("encrypted-app") << QStringLiteral("app") << QStringLiteral("encrypted") << QStringLiteral("Chrome on the server has an encrypted sign-in that Headroom can't read.");
+        QTest::newRow("locked") << QStringLiteral("browser") << QStringLiteral("locked") << QStringLiteral("Close Chrome on the server so Headroom can read its sign-in, or use another browser.");
+        QTest::newRow("expired") << QStringLiteral("browser") << QStringLiteral("expired") << QStringLiteral("Your Chrome on the server sign-in also expired.");
+        QTest::newRow("unreadable") << QStringLiteral("browser") << QStringLiteral("unreadable") << QStringLiteral("Headroom couldn't read Chrome on the server.");
     }
     void checkedNotes() {
-        QFETCH(QString, status); QFETCH(QString, expected);
+        QFETCH(QString, entryKind); QFETCH(QString, status); QFETCH(QString, expected);
         auto p = provider(); auto auth = p["auth"].toMap();
         auth["checked"] = QVariantList{QVariantMap{{"kind", "cli"}, {"name", "cursor-agent"}, {"status", "expired"}},
             QVariantMap{{"kind", "browser"}, {"name", "Firefox"}, {"status", "signed_in"}},
             QVariantMap{{"kind", "browser"}, {"name", "Edge"}, {"status", "signed_out"}},
-            QVariantMap{{"kind", "browser"}, {"name", "Chrome"}, {"status", status}}}; p["auth"] = auth;
+            QVariantMap{{"kind", entryKind}, {"name", "Chrome"}, {"status", status}}}; p["auth"] = auth;
         const QVariantList helper{QVariantMap{{"name", "Brave"}, {"status", "unreadable"}}, QVariantMap{{"name", "Edge"}, {"status", "locked"}}};
         auto lines = LoginCopy::compose(p, "remote", "available", helper)["lines"].toStringList();
         QCOMPARE(lines.size(), 3); QCOMPARE(lines[1], expected); QCOMPARE(lines[2], QStringLiteral("Headroom couldn't read Brave."));
