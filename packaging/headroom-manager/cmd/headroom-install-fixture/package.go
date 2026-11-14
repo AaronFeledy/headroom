@@ -74,6 +74,18 @@ func buildPackage(args []string) error {
 			return err
 		}
 	}
+	if platform == "macos" && *kind != contract.PackageKindCLI {
+		framework := filepath.Join(root, "bundle/Headroom.app/Contents/Frameworks/QtCore.framework")
+		for name, target := range map[string]string{
+			"QtCore":           "Versions/Current/QtCore",
+			"Resources":        "Versions/Current/Resources",
+			"Versions/Current": "A",
+		} {
+			if err = os.Symlink(target, filepath.Join(framework, name)); err != nil {
+				return err
+			}
+		}
+	}
 	qt := "6.12.0"
 	if *kind == contract.PackageKindCLI {
 		qt = ""
