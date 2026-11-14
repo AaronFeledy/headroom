@@ -173,8 +173,15 @@ The manager also accounts for a Windows console wrapper before replacing it.
 
 An external installer also verifies which immutable generation actually starts.
 It launches the stable entry with a private readiness nonce and accepts only a
-marker whose executable and compiled version match the newly selected install
-state. A process already owning the normal settings scope is left running; in
+marker with that nonce, a positive integer PID, and an executable and compiled
+version matching the newly selected install state. Both installers wait up to
+10 seconds using an elapsed-time clock, checking the complete marker on every
+poll. Missing, malformed, or mismatching markers do not end the wait early.
+The package manager additionally requires its exact child PID and confirms that
+the child stays alive before completing an update. Shared fixtures exercise the
+marker contract in the manager and both installers.
+
+A process already owning the normal settings scope is left running; in
 that case the installer reports that the on-disk install succeeded and asks the
 user to quit the old window and relaunch the stable entry. `--no-launch` and
 `-NoLaunch` skip activation and print that restart instruction.
@@ -315,6 +322,15 @@ stopped and removed afterward. Linux CLI jobs run this fixture on isolated CI
 runner accounts; it does not enable a service on a user's machine.
 
 ## Reusable release recipe
+
+Linux dependency setup runs in separate steps with a 15-minute limit, leaving
+the package smoke test its full five-minute budget. APT uses three download
+retries and 30-second HTTP/HTTPS inactivity timeouts. Updating package indexes
+and downloading dependencies share a four-minute attempt, repeated once only
+after a graceful timeout. A forced kill or ordinary APT error fails the step.
+Installing the downloaded packages has a separate five-minute limit and is
+never retried. Each command timeout allows 15 seconds for termination before
+forcing a stop.
 
 `.github/workflows/headroom-packages.yml` accepts one validated version and
 builds the same five desktop and six CLI packages for pull requests, main-branch releases
