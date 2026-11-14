@@ -90,13 +90,26 @@ func TestPublicInstallerActivation(t *testing.T) {
 			if test.kind == PackageKindCLI {
 				args = append(args, cliFlag)
 			}
+			runInstaller := func() ([]byte, error) {
+				command := exec.Command(shell, args...)
+				if runtime.GOOS == "windows" {
+					// Let Windows PowerShell rebuild its module path instead of inheriting pwsh's.
+					for _, variable := range os.Environ() {
+						name, _, _ := strings.Cut(variable, "=")
+						if !strings.EqualFold(name, "PSModulePath") {
+							command.Env = append(command.Env, variable)
+						}
+					}
+				}
+				return command.CombinedOutput()
+			}
 			runs := 1
 			if test.name == "coordinated ready" {
 				runs = 2
 			}
 			var generations, executables []string
 			for i := 0; i < runs; i++ {
-				output, err := exec.Command(shell, args...).CombinedOutput()
+				output, err := runInstaller()
 				if err != nil || !strings.Contains(string(output), expected) {
 					t.Fatalf("public installer = %s, %v", output, err)
 				}
@@ -121,7 +134,7 @@ func TestPublicInstallerActivation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				output, err := exec.Command(shell, args...).CombinedOutput()
+				output, err := runInstaller()
 				if err == nil || strings.Contains(string(output), "Installed Headroom") {
 					t.Fatalf("failed reinstall announced success: %s, %v", output, err)
 				}
