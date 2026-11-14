@@ -346,21 +346,34 @@ else
   nonce=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
   HEADROOM_READY_NONCE=$nonce "$entry_path" --headroom-installed-restart --headroom-ready-file "$ready" >/dev/null 2>&1 &
   ready_ok=0
-  attempts=0
-  while [ "$attempts" -lt 100 ]; do
-    if [ -s "$ready" ] && python3 - "$ready" "$install_root" "$nonce" "$platform" <<'PY'
-import json, os, sys
-marker=json.load(open(sys.argv[1], encoding='utf-8'))
-state=json.load(open(os.path.join(sys.argv[2], 'install-state.json'), encoding='utf-8'))
+  if python3 - "$ready" "$install_root" "$nonce" "$platform" <<'PY'
+import json, os, sys, time
+with open(os.path.join(sys.argv[2], 'install-state.json'), encoding='utf-8') as source:
+    state=json.load(source)
 app_path=('Headroom.app', 'Contents', 'MacOS', 'headroom') if sys.argv[4]=='macos' else ('bin','headroom')
 expected=os.path.realpath(os.path.join(sys.argv[2], state['version_path'], *app_path))
-actual=os.path.realpath(marker.get('executable',''))
-if marker.get('nonce') != sys.argv[3] or marker.get('version') != state.get('active_version') or actual != expected or not isinstance(marker.get('pid'), int) or marker['pid'] <= 0:
-    raise SystemExit(1)
+version=state['active_version']
+deadline=time.monotonic() + 10
+while time.monotonic() < deadline:
+    try:
+        with open(sys.argv[1], 'rb') as source:
+            data=source.read(4097)
+        marker=json.loads(data) if len(data) <= 4096 else None
+        matches=(type(marker) is dict and type(marker.get('nonce')) is str and marker['nonce'] == sys.argv[3]
+                and type(marker.get('version')) is str and marker['version'] == version
+                and type(marker.get('pid')) is int and marker['pid'] > 0
+                and type(marker.get('executable')) is str and os.path.isabs(marker['executable'])
+                and os.path.realpath(marker['executable']) == expected)
+    except (OSError, ValueError):
+        matches=False
+    if matches:
+        raise SystemExit(0)
+    remaining=deadline-time.monotonic()
+    if remaining > 0:
+        time.sleep(min(0.1, remaining))
+raise SystemExit(1)
 PY
-    then ready_ok=1; break; fi
-    attempts=$((attempts + 1)); sleep 0.1
-  done
+  then ready_ok=1; fi
   if [ "$ready_ok" -eq 1 ]; then
     printf 'Started the verified installed generation.\n'
   else

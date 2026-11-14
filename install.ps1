@@ -71,6 +71,42 @@ function Save-HeadroomFile {
     throw 'Too many download redirects.'
 }
 
+function Wait-HeadroomReady {
+    param([string]$Path, $Expected)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -lt 10) {
+        $readyMatches = $false
+        try {
+            $input = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+            try {
+                $buffer = New-Object byte[] 4097
+                $length = 0
+                while ($length -lt $buffer.Length) {
+                    $read = $input.Read($buffer, $length, $buffer.Length - $length)
+                    if ($read -eq 0) { break }
+                    $length += $read
+                }
+            } finally { $input.Dispose() }
+            if ($length -gt 0 -and $length -le 4096) {
+                $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $length).TrimStart()
+                if (-not $text.StartsWith('{')) { throw 'Readiness marker must be a JSON object.' }
+                $ready = $text | ConvertFrom-Json
+                $readyMatches = $ready -is [pscustomobject] -and
+                    $ready.nonce -is [string] -and $ready.nonce -ceq $Expected.nonce -and
+                    $ready.version -is [string] -and $ready.version -ceq $Expected.version -and
+                    ($ready.pid -is [int32] -or $ready.pid -is [int64]) -and $ready.pid -gt 0 -and
+                    $ready.executable -is [string] -and [System.IO.Path]::IsPathRooted($ready.executable) -and
+                    ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or [System.IO.Path]::GetPathRoot($ready.executable).Length -gt 2) -and
+                    [System.IO.Path]::GetFullPath($ready.executable) -ieq $Expected.executable
+            }
+        } catch { $readyMatches = $false }
+        if ($readyMatches) { return $true }
+        $remaining = 10000 - $clock.Elapsed.TotalMilliseconds
+        if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Min(100, [Math]::Ceiling($remaining))) }
+    }
+    return $false
+}
+
 function Read-ReleaseManifest {
     param([string]$Path)
     if ((Get-Item -LiteralPath $Path).Length -gt 4MB) { throw 'Release manifest is too large.' }
@@ -242,6 +278,12 @@ namespace HeadroomInstaller {
         } else {
             $readyPath = Join-Path $privateRoot 'installed-ready.json'
             $nonce = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')).Substring(0, 48)
+            $state = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-state.json') -Raw | ConvertFrom-Json
+            $expected = [pscustomobject]@{
+                nonce = $nonce
+                version = $state.active_version
+                executable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot (Join-Path $state.version_path 'bin\headroom.exe')))
+            }
             $priorNonce = [Environment]::GetEnvironmentVariable('HEADROOM_READY_NONCE', 'Process')
             try {
                 [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $nonce, 'Process')
@@ -250,19 +292,7 @@ namespace HeadroomInstaller {
             } finally {
                 [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $priorNonce, 'Process')
             }
-            $deadline = [DateTime]::UtcNow.AddSeconds(10)
-            $ready = $null
-            while ([DateTime]::UtcNow -lt $deadline) {
-                if ((Test-Path -LiteralPath $readyPath) -and (Get-Item -LiteralPath $readyPath).Length -gt 0) {
-                    try { $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json } catch { $ready = $null }
-                    if ($ready) { break }
-                }
-                Start-Sleep -Milliseconds 100
-            }
-            $state = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-state.json') -Raw | ConvertFrom-Json
-            $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot (Join-Path $state.version_path 'bin\headroom.exe')))
-            $readyMatches = $ready -and $ready.nonce -ceq $nonce -and $ready.version -ceq $state.active_version -and
-                [int64]$ready.pid -gt 0 -and [System.IO.Path]::GetFullPath([string]$ready.executable) -ieq $expectedExecutable
+            $readyMatches = Wait-HeadroomReady $readyPath $expected
             if ($readyMatches) { Write-Host 'Started the verified installed generation.' }
             else { Write-Warning "The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch $EntryPath." }
         }
