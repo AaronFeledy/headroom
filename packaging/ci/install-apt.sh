@@ -25,15 +25,28 @@ case "${1:-}" in
 esac
 
 for attempt in 1 2; do
+  started=$SECONDS
+  printf 'Headroom dependencies: phase=prepare attempt=%s event=start\n' "$attempt" >&2
   if timeout --kill-after=15s 4m bash "$0" --download "$@"; then
+    printf 'Headroom dependencies: phase=prepare attempt=%s event=complete elapsed_seconds=%s\n' "$attempt" "$((SECONDS - started))" >&2
     break
   else
     status=$?
+    printf 'Headroom dependencies: phase=prepare attempt=%s event=failed status=%s elapsed_seconds=%s\n' "$attempt" "$status" "$((SECONDS - started))" >&2
     if [[ "$status" -ne 124 || "$attempt" -eq 2 ]]; then
       exit "$status"
     fi
+    printf 'Headroom dependencies: retrying download preparation after its deadline.\n' >&2
   fi
 done
 
 # Package mutation is never retried, even after a graceful timeout.
-timeout --kill-after=15s 5m bash "$0" --install "$@"
+started=$SECONDS
+printf 'Headroom dependencies: phase=install event=start\n' >&2
+if timeout --kill-after=15s 5m bash "$0" --install "$@"; then
+  printf 'Headroom dependencies: phase=install event=complete elapsed_seconds=%s\n' "$((SECONDS - started))" >&2
+else
+  status=$?
+  printf 'Headroom dependencies: phase=install event=failed status=%s elapsed_seconds=%s\n' "$status" "$((SECONDS - started))" >&2
+  exit "$status"
+fi

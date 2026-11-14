@@ -1,8 +1,8 @@
-import os
 from functools import cached_property
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Final
 import unittest
@@ -13,7 +13,7 @@ HELPER: Final = ROOT / "packaging/ci/install-apt.sh"
 FIXTURES: Final = Path(__file__).resolve().parent / "fixtures/ci-apt"
 
 
-@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires bash")
+@unittest.skipUnless(sys.platform == "linux" and shutil.which("bash"), "requires Linux and bash")
 class CIAptTests(unittest.TestCase):
     @cached_property
     def root(self) -> Path:
@@ -63,6 +63,7 @@ class CIAptTests(unittest.TestCase):
         self.assertEqual(self.lines("installed"), ["fixture-package", "another-package"])
         self.assertEqual(self.lines("operations"), ["update", "download", "install"])
         self.assertEqual(self.lines("deadlines"), ["download", "install"])
+        self.assertRegex(result.stderr, r"phase=install event=complete elapsed_seconds=\d+")
 
     def test_preparation_failure_propagates_without_mutation(self) -> None:
         for phase in ("update", "download"):
@@ -74,6 +75,7 @@ class CIAptTests(unittest.TestCase):
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertEqual(self.lines("installed"), [])
                     self.assertNotIn("install", self.lines("operations"))
+                    self.assertIn(f"phase=prepare attempt=1 event=failed status={status}", result.stderr)
                     self.statuses(phase, (0,))
 
     def test_graceful_preparation_timeout_recovers_once(self) -> None:
@@ -86,6 +88,7 @@ class CIAptTests(unittest.TestCase):
         self.assertEqual(self.lines("operations"),
                          ["update", "download", "update", "download", "install"])
         self.assertEqual(self.lines("deadlines"), ["download", "download", "install"])
+        self.assertIn("phase=prepare attempt=2 event=complete", result.stderr)
 
     def test_timeout_exhaustion_and_monitor_errors_stop_preparation(self) -> None:
         for statuses in ((124, 124), (137,), (100,), (127,), (130,), (143,)):
@@ -110,6 +113,7 @@ class CIAptTests(unittest.TestCase):
                 self.assertEqual(result.returncode, status, result.stderr)
                 self.assertEqual(self.lines("installed"), [])
                 self.assertEqual(self.lines("operations"), ["update", "download", "install"])
+                self.assertIn(f"phase=install event=failed status={status}", result.stderr)
 
     def test_real_gnu_timeout_terminates_disposable_apt_without_mutation_retry(self) -> None:
         timeout = shutil.which("timeout")
