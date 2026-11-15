@@ -56,10 +56,8 @@ jobs:
           HEADROOM_PROPER_LOCKFILE_FIXTURE: '1'
         run: go test -count=1 -run LockfileInterop ./internal/providers/claude
 
-  # Native Windows packages. accountconfig, browsercookie, config, and
-  # tlsidentity fail on windows-latest for pre-existing reasons outside this
-  # job: Unix permission-bit assertions (accountconfig, browsercookie,
-  # tlsidentity, config) and a Unix HOME-derived TLS directory (config).
+  # Native Windows coverage for the whole server module. Tests assert Unix
+  # permission bits only where the platform has them.
   windows-test:
     name: Test (Windows)
     runs-on: windows-latest
@@ -75,26 +73,8 @@ jobs:
           cache-dependency-path: server/go.sum
       - name: Vet
         run: go vet ./...
-      - name: Test native Windows packages
-        shell: bash
-        run: |
-          go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' \
-            ./cmd/usage-server \
-            ./app \
-            ./internal/api \
-            ./internal/credstore \
-            ./internal/poller \
-            ./internal/providers/claude \
-            ./internal/providers/codex \
-            ./internal/providers/cursor \
-            ./internal/providers/grok \
-            ./internal/providers/opencodego \
-            ./internal/resetauto \
-            ./internal/safestorage \
-            ./internal/server \
-            ./internal/sshaccess \
-            ./internal/usage \
-            ./internal/winprofile
+      - name: Test
+        run: go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 
   artifacts:
     name: Build ${{ matrix.asset }}
