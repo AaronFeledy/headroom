@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -13,7 +14,6 @@ const (
 	oauthClientID       = "app_EMoamEEZ73f0CkXaXp7hrann"
 	oauthScope          = "openid profile email"
 	userAgent           = "ClaudeUsageWidget"
-	refreshWindow       = 8 * 24 * time.Hour
 	defaultHTTPTimeout  = 10 * time.Second
 	tokenRequestTimeout = 30 * time.Second
 )
@@ -24,6 +24,7 @@ type Options struct {
 	TokenURL        string
 	HTTPClient      *http.Client
 	Discovery       DiscoveryOptions
+	Logger          *slog.Logger
 }
 
 type CredentialSource int

@@ -90,8 +90,8 @@ func Test_Client_proactive_refresh_keeps_token_when_store_unwritable(t *testing.
 	if os.Geteuid() == 0 {
 		t.Skip("permission tests skip when euid 0")
 	}
-	// Given: expired tokens (NeedsRefresh) on a read-only file
-	path := writeAuth(t, `{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"acct"},"last_refresh":"2000-01-01T00:00:00Z"}`)
+	// Given: an OpenCode-style expiry that has passed (NeedsRefresh) on a read-only file
+	path := writeAuth(t, `{"openai":{"access":"access","refresh":"refresh","accountId":"acct","expires":1}}`)
 	if err := os.Chmod(path, 0o400); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -108,6 +108,7 @@ func Test_Client_proactive_refresh_keeps_token_when_store_unwritable(t *testing.
 	}))
 	t.Cleanup(server.Close)
 	provider := New(Options{CredentialsPath: path, UsageURL: server.URL + "/usage", TokenURL: server.URL + "/token", HTTPClient: server.Client()})
+	provider.store.source = CredentialSourceOpenCode
 
 	// When
 	data, err := provider.Fetch(context.Background())
@@ -161,7 +162,7 @@ func Test_Client_unauthorized_refresh_reports_expired_when_store_unwritable(t *t
 	if !data.NeedsReauth {
 		t.Fatal("NeedsReauth = false, want true")
 	}
-	if data.Error == nil || !strings.Contains(*data.Error, "Headroom can't save a refreshed sign-in") || !strings.Contains(*data.Error, "codex") {
+	if data.Error == nil || !strings.Contains(*data.Error, "Headroom can't save a refreshed one because the credentials file is read-only") || !strings.Contains(*data.Error, "codex") {
 		t.Fatalf("Error = %v, want unwritable message", data.Error)
 	}
 	assertOwnerRestored(t, path)

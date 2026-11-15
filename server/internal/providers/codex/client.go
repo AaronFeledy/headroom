@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,6 +20,8 @@ type Client struct {
 	http               *http.Client
 	usageURL           string
 	tokenURL           string
+	logger             *slog.Logger
+	refusalLog         credstore.RefusalLog
 	refreshMu          sync.Mutex
 	resetMu            sync.Mutex
 	resetAttemptID     string
@@ -45,12 +48,19 @@ func New(opts Options) *Client {
 	if opts.CredentialsPath != "" {
 		discovery.ConfiguredPath = opts.CredentialsPath
 	}
-	return &Client{
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	provider := &Client{
 		store:    NewCredentialStore(CredentialOptions{Path: opts.CredentialsPath, Discovery: discovery}),
 		http:     client,
 		usageURL: usageURL,
 		tokenURL: tokenURL,
+		logger:   logger,
 	}
+	provider.store.warn = provider.warnUnsaveable
+	return provider
 }
 
 func (c *Client) Name() string { return providerName }
@@ -110,7 +120,7 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 				data.Error = &message
 				return data, nil
 			}
-			creds, err = c.store.Current(ctx)
+			creds, err = c.store.Load(ctx)
 			if err != nil {
 				return data, err
 			}
@@ -125,35 +135,26 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		if err := drainAndCloseResponseBody(resp, "close codex unauthorized response body"); err != nil {
 			return data, err
 		}
-		reloaded, reloadErr := c.store.ReloadIfChanged(ctx)
-		if reloadErr != nil {
-			return data, reloadErr
+		// The rejected pair goes through RefreshTokens: a pair another writer
+		// already replaced is adopted without an exchange.
+		result, refreshErr := c.refresh(ctx, creds)
+		if refreshErr != nil {
+			if errors.Is(refreshErr, credstore.ErrNotWritable) {
+				return unwritableReauthUsage(refreshErr), nil
+			}
+			return data, refreshErr
 		}
-		if reloaded {
-			creds, err = c.store.Current(ctx)
-			if err != nil {
-				return data, err
-			}
-		} else {
-			result, refreshErr := c.refresh(ctx, creds)
-			if refreshErr != nil {
-				if errors.Is(refreshErr, credstore.ErrNotWritable) {
-					return unwritableReauthUsage(), nil
-				}
-				return data, refreshErr
-			}
-			if result == usage.RefreshInvalidGrant {
-				return reauthUsage(), nil
-			}
-			if result != usage.RefreshSuccess {
-				message := "Token refresh failed. Will retry."
-				data.Error = &message
-				return data, nil
-			}
-			creds, err = c.store.Current(ctx)
-			if err != nil {
-				return data, err
-			}
+		if result == usage.RefreshInvalidGrant {
+			return reauthUsage(), nil
+		}
+		if result != usage.RefreshSuccess {
+			message := "Token refresh failed. Will retry."
+			data.Error = &message
+			return data, nil
+		}
+		creds, err = c.store.Load(ctx)
+		if err != nil {
+			return data, err
 		}
 		epoch = usage.CredentialEpoch(providerName, creds.Path, fmt.Sprint(creds.Source), creds.AccessToken, creds.AccountID)
 		resp, err = c.sendUsage(ctx, creds)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -67,9 +68,9 @@ func reauthUsage() usage.UsageData {
 	return data
 }
 
-func unwritableReauthUsage() usage.UsageData {
+func unwritableReauthUsage(cause error) usage.UsageData {
 	data := baseUsage()
-	message := "Sign-in expired. Headroom can't save a refreshed sign-in; run `codex` to refresh it."
+	message := "Sign-in expired, and Headroom can't save a refreshed one because " + credstore.NotWritablePhrase(cause) + ". Run `codex` to refresh it."
 	data.Error = &message
 	data.NeedsReauth = true
 	return data

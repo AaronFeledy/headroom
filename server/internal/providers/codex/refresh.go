@@ -11,23 +11,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 func (c *Client) refresh(ctx context.Context, creds Credentials) (usage.RefreshResult, error) {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
-	current, err := c.store.Current(ctx)
-	if err != nil {
-		return usage.RefreshFailed, err
-	}
-	if current.AccessToken != creds.AccessToken || current.RefreshToken != creds.RefreshToken {
-		return usage.RefreshSuccess, nil
-	}
-	if creds.RefreshToken == "" {
+	if strings.TrimSpace(creds.RefreshToken) == "" {
 		return usage.RefreshInvalidGrant, nil
 	}
-	return c.doRefresh(ctx, creds)
+	result, err := c.doRefresh(ctx, creds)
+	if err != nil && errors.Is(err, credstore.ErrNotWritable) {
+		c.recordRefusal(err, creds)
+	}
+	if err == nil {
+		c.refusalLog.Saved()
+	}
+	return result, err
 }
 
 func (c *Client) doRefresh(ctx context.Context, stale Credentials) (usage.RefreshResult, error) {

@@ -154,13 +154,6 @@ func assertDiscovered(t *testing.T, opts DiscoveryOptions, wantPath string, want
 
 func writeAuth(t *testing.T, content string) string {
 	t.Helper()
-	// Fetch tests used a fixed July 2026 last_refresh. After that date plus
-	// refreshWindow (8 days), NeedsRefresh becomes true and Fetch refreshes
-	// before the usage request, so the httptest server is never hit.
-	const staleLastRefresh = `"last_refresh":"2026-07-12T00:00:00Z"`
-	if strings.Contains(content, staleLastRefresh) {
-		content = strings.ReplaceAll(content, staleLastRefresh, `"last_refresh":"`+time.Now().UTC().Format(time.RFC3339)+`"`)
-	}
 	path := filepath.Join(t.TempDir(), "auth.json")
 	writeFile(t, path, content)
 	return path
