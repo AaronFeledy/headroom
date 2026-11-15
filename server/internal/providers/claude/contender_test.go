@@ -91,10 +91,13 @@ func startContender(t *testing.T, argv []string, args ...string) *contender {
 		c.wait <- command.Wait()
 	}()
 	t.Cleanup(func() {
-		if !c.done {
-			_ = c.cmd.Process.Kill()
-			<-c.wait
+		if c.done {
+			return
 		}
+		if err := c.cmd.Process.Kill(); err != nil {
+			t.Logf("kill contender in cleanup: %v", err)
+		}
+		<-c.wait
 	})
 	return c
 }
