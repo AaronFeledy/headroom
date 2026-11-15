@@ -35,8 +35,11 @@ func Test_Identity_create_reuse_rotate_and_private_modes(t *testing.T) {
 	}
 	for path, mode := range map[string]os.FileMode{options.Directory: 0o700, filepath.Join(options.Directory, "key.pem"): 0o600} {
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != mode {
-			t.Fatalf("mode=%v err=%v", info, err)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if !modeMatches(info.Mode(), mode) {
+			t.Fatalf("mode of %s = %v, want %v", path, info.Mode().Perm(), mode)
 		}
 	}
 	leaf, err := x509.ParseCertificate(first.Certificate[0])

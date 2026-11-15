@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -147,6 +148,9 @@ func Test_Snapshot_skips_oversized_database(t *testing.T) {
 }
 
 func Test_Browser_locked_status_for_permission_blocked_fixture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not block reads through chmod")
+	}
 	// Given
 	path, _ := databaseFixture(t, `CREATE TABLE moz_cookies(host TEXT,name TEXT,value TEXT,expiry INTEGER,lastAccessed INTEGER)`)
 	if err := os.Chmod(path, 0); err != nil {
