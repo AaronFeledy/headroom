@@ -30,6 +30,11 @@ jobs:
           go-version-file: server/go.mod
           cache: true
           cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: server/internal/providers/claude/testdata/lockfile-interop/package-lock.json
       - name: Check formatting
         run: |
           files="$(gofmt -l .)"
@@ -43,6 +48,53 @@ jobs:
         run: go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
       - name: Build packages
         run: go build ./...
+      - name: Install Claude Code lock contender
+        working-directory: server/internal/providers/claude/testdata/lockfile-interop
+        run: npm ci --ignore-scripts
+      - name: Claude Code lock interop
+        env:
+          HEADROOM_PROPER_LOCKFILE_FIXTURE: '1'
+        run: go test -count=1 -run LockfileInterop ./internal/providers/claude
+
+  # Native Windows packages. accountconfig, browsercookie, config, and
+  # tlsidentity fail on windows-latest for pre-existing reasons outside this
+  # job: Unix permission-bit assertions (accountconfig, browsercookie,
+  # tlsidentity, config) and a Unix HOME-derived TLS directory (config).
+  windows-test:
+    name: Test (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test native Windows packages
+        shell: bash
+        run: |
+          go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' \
+            ./cmd/usage-server \
+            ./app \
+            ./internal/api \
+            ./internal/credstore \
+            ./internal/poller \
+            ./internal/providers/claude \
+            ./internal/providers/codex \
+            ./internal/providers/cursor \
+            ./internal/providers/grok \
+            ./internal/providers/opencodego \
+            ./internal/resetauto \
+            ./internal/safestorage \
+            ./internal/server \
+            ./internal/sshaccess \
+            ./internal/usage \
+            ./internal/winprofile
 
   artifacts:
     name: Build ${{ matrix.asset }}
