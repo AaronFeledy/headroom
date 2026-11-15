@@ -32,7 +32,7 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 	names := []string{}
 	for name, providerCfg := range cfg.Providers {
 		if providerCfg.Enabled {
-			provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir)
+			provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir, logger)
 			if err != nil {
 				return nil, nil, nil, nil, nil, nil, err
 			}
@@ -66,6 +66,7 @@ func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, 
 			}
 			extra := claude.New(claude.Options{
 				SignInCommand: managedAccountSignIn(env, account.ID),
+				Logger:        logger,
 				ConfigDir:     account.ConfigDir,
 				Keychain:      claudeKeychain(),
 				Name:          "Claude (" + account.Label + ")",
@@ -93,16 +94,16 @@ func managedAccountSignIn(env []string, id string) string {
 	return ""
 }
 
-func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string) (usage.Provider, error) {
+func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string, logger *slog.Logger) (usage.Provider, error) {
 	switch strings.ToLower(name) {
 	case "claude":
-		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, Keychain: claudeKeychain(), ResetStateDir: resetStateDir}), nil
+		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, Keychain: claudeKeychain(), ResetStateDir: resetStateDir, Logger: logger}), nil
 	case "codex":
-		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
+		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath, Logger: logger}), nil
 	case "cursor":
 		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, BrowserCredentials: &providerCfg.BrowserCredentials}), nil
 	case "grok":
-		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath})
+		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath, Logger: logger})
 	case "opencodego":
 		return opencodego.NewProvider(opencodego.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	default:
