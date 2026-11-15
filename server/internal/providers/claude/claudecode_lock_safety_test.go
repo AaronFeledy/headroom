@@ -22,7 +22,9 @@ func Test_acquireClaudeCodeLock_keeps_foreign_files_symlinks_and_nonempty_dirs(t
 				}
 			case "symlink":
 				if err := os.Symlink(home, lockPath); err != nil {
-					t.Fatal(err)
+					// Some Windows runners withhold the symlink privilege; that is
+					// an environment limit, not a lock behavior.
+					t.Skipf("symlinks unavailable: %v", err)
 				}
 			case "nonempty":
 				if err := os.Mkdir(lockPath, 0o700); err != nil {
