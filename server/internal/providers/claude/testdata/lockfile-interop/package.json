@@ -1,0 +1,9 @@
+{
+  "name": "headroom-lockfile-interop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned proper-lockfile contender for the Claude Code refresh-lock interop fixture.",
+  "dependencies": {
+    "proper-lockfile": "4.1.2"
+  }
+}
