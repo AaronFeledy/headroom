@@ -16,7 +16,7 @@ func sameMountAsDir(target, dir string) error {
 		return fmtStatErr(target, err)
 	}
 	if targetSt.Dev != dirSt.Dev {
-		return wrapNotWritable(target, fmt.Errorf("credential file and directory are on different devices"))
+		return notWritable(target, ReasonSeparateMount, fmt.Errorf("credential file and directory are on different devices"))
 	}
 	return nil
 }

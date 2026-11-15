@@ -2,12 +2,16 @@ package credstore
 
 import (
 	"errors"
-	"fmt"
 	"os"
 )
 
-func wrapNotWritable(path string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrNotWritable, path, err)
+// creationNotWritable maps a failed lock or temp creation to a typed refusal.
+func creationNotWritable(path string, err error) error {
+	reason := ReasonCannotCreateFiles
+	if isReadOnlyFilesystemError(err) {
+		reason = ReasonReadOnlyFilesystem
+	}
+	return notWritable(path, reason, err)
 }
 
 func isNotWritableFSError(err error) bool {

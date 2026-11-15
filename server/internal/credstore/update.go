@@ -67,7 +67,8 @@ func UpdateFile(ctx context.Context, path string, newMode os.FileMode, mutator M
 	if err != nil {
 		return err
 	}
-	return commitPreparedTemp(tmp, target, updated, snapshot.Mode, func() error {
+	_, err = commitPreparedTemp(tmp, target, updated, snapshot.Mode, func() error {
 		return ensureSameTarget(path, target, "before rename")
 	})
+	return err
 }

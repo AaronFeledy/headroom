@@ -7,12 +7,18 @@ import (
 	"path/filepath"
 )
 
+var (
+	replaceCredential       = replaceExisting
+	syncCredentialDirectory = syncDirectory
+)
+
 func replaceAtomically(path string, data []byte, mode os.FileMode) error {
 	tmp, err := createTempFile(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return err
 	}
-	return commitPreparedTemp(tmp, path, data, mode, nil)
+	_, err = commitPreparedTemp(tmp, path, data, mode, nil)
+	return err
 }
 
 func createTempFile(dir, base string) (*os.File, error) {
@@ -36,7 +42,11 @@ func writeTempContents(tmp *os.File, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func commitPreparedTemp(tmp *os.File, path string, data []byte, mode os.FileMode, beforeRename func() error) (err error) {
+// commitPreparedTemp writes data through tmp, closes it, and renames over path.
+// It reports whether the rename happened; a false report leaves the temp
+// removed. A true report with an error means the new bytes are visible but
+// durability or cleanup failed.
+func commitPreparedTemp(tmp *os.File, path string, data []byte, mode os.FileMode, beforeRename func() error) (renamed bool, err error) {
 	tmpName := tmp.Name()
 	open := true
 	committed := false
@@ -49,23 +59,23 @@ func commitPreparedTemp(tmp *os.File, path string, data []byte, mode os.FileMode
 		}
 	}()
 	if err := writeTempContents(tmp, data, mode); err != nil {
-		return err
+		return false, err
 	}
 	open = false
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp credential file: %w", err)
+		return false, fmt.Errorf("close temp credential file: %w", err)
 	}
 	if beforeRename != nil {
 		if err := beforeRename(); err != nil {
-			return err
+			return false, err
 		}
 	}
-	if err := replaceExisting(tmpName, path); err != nil {
-		return fmt.Errorf("replace credential file: %w", err)
+	if err := replaceCredential(tmpName, path); err != nil {
+		return false, fmt.Errorf("replace credential file: %w", err)
 	}
 	committed = true
-	if err := syncDirectory(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("sync credential directory: %w", err)
+	if err := syncCredentialDirectory(filepath.Dir(path)); err != nil {
+		return true, fmt.Errorf("sync credential directory: %w", err)
 	}
-	return nil
+	return true, nil
 }

@@ -19,7 +19,7 @@ func sameMountAsDir(target, dir string) error {
 	if targetErr == nil && dirErr == nil &&
 		targetSX.Mask&unix.STATX_MNT_ID != 0 && dirSX.Mask&unix.STATX_MNT_ID != 0 {
 		if targetSX.Mnt_id != dirSX.Mnt_id {
-			return wrapNotWritable(target, fmt.Errorf("credential file and directory are on different mounts"))
+			return notWritable(target, ReasonSeparateMount, fmt.Errorf("credential file and directory are on different mounts"))
 		}
 		return nil
 	}
@@ -32,7 +32,7 @@ func sameMountAsDir(target, dir string) error {
 		return fmtStatErr(target, err)
 	}
 	if targetSt.Dev != dirSt.Dev {
-		return wrapNotWritable(target, fmt.Errorf("credential file and directory are on different devices"))
+		return notWritable(target, ReasonSeparateMount, fmt.Errorf("credential file and directory are on different devices"))
 	}
 	return nil
 }

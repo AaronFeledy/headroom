@@ -14,6 +14,11 @@ var probeDeleteAccess = windows.CreateFile
 var closeDeleteProbe = windows.CloseHandle
 
 func isPlatformNotWritable(err error) bool {
+	return errors.Is(err, windows.ERROR_WRITE_PROTECT) ||
+		errors.Is(err, windows.ERROR_ACCESS_DENIED)
+}
+
+func isReadOnlyFilesystemError(err error) bool {
 	return errors.Is(err, windows.ERROR_WRITE_PROTECT)
 }
 
@@ -21,12 +26,12 @@ func preflightReplaceable(target string) error {
 	info, err := os.Stat(target)
 	if err != nil {
 		if isNotWritableFSError(err) {
-			return wrapNotWritable(target, err)
+			return notWritable(target, ReasonReadOnlyFile, err)
 		}
 		return err
 	}
 	if info.Mode().Perm()&0o200 == 0 {
-		return wrapNotWritable(target, errors.New("read-only attribute"))
+		return notWritable(target, ReasonReadOnlyFile, errors.New("read-only attribute"))
 	}
 
 	pathPtr, err := windows.UTF16PtrFromString(target)
@@ -46,8 +51,11 @@ func preflightReplaceable(target string) error {
 		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			return fmt.Errorf("credential file is busy: %w", err)
 		}
-		if isNotWritableFSError(err) {
-			return wrapNotWritable(target, err)
+		if errors.Is(err, windows.ERROR_WRITE_PROTECT) {
+			return notWritable(target, ReasonReadOnlyFilesystem, err)
+		}
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return notWritable(target, ReasonReplacementDenied, err)
 		}
 		return err
 	}
