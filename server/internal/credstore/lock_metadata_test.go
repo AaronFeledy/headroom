@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
-func Test_AtomicUpdate_writes_PID_and_UNIX_seconds_to_lock_file(t *testing.T) {
+func Test_Refresh_writes_PID_and_UNIX_seconds_to_lock_file(t *testing.T) {
 	// Given
 	path := writeCreds(t, `{"sentinel":"keep"}`, 0o600)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -22,21 +23,30 @@ func Test_AtomicUpdate_writes_PID_and_UNIX_seconds_to_lock_file(t *testing.T) {
 	releaseLock := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- credstore.AtomicUpdate(ctx, path, func(current []byte) ([]byte, error) {
+		done <- credstore.Refresh(ctx, path, func(current []byte) (credstore.Mutator, error) {
 			close(lockHeld)
 			<-releaseLock
-			return current, nil
+			return func(latest []byte) ([]byte, error) {
+				return latest, nil
+			}, nil
 		})
 	}()
 	<-lockHeld
 
-	// When
-	metadata, err := os.ReadFile(filepath.Clean(path) + ".lock")
+	// When: Windows holds a mandatory byte-range lock, so the metadata is only
+	// readable once Refresh releases it. Unix can read it while the lock is held.
+	var metadata []byte
+	var err error
+	if runtime.GOOS != "windows" {
+		metadata, err = os.ReadFile(filepath.Clean(path) + ".lock")
+	}
 	close(releaseLock)
 
-	// Then
 	if updateErr := <-done; updateErr != nil {
-		t.Fatalf("AtomicUpdate: %v", updateErr)
+		t.Fatalf("Refresh: %v", updateErr)
+	}
+	if runtime.GOOS == "windows" {
+		metadata, err = os.ReadFile(filepath.Clean(path) + ".lock")
 	}
 	if err != nil {
 		t.Fatalf("read lock metadata: %v", err)

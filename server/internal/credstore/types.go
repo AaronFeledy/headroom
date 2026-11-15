@@ -9,6 +9,7 @@ import (
 var (
 	ErrInvalidJSON = errors.New("credstore: invalid json")
 	ErrNilMutator  = errors.New("credstore: nil mutator")
+	ErrNotWritable = errors.New("credstore: credentials cannot be written")
 )
 
 type Snapshot struct {

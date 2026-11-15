@@ -1,87 +1,35 @@
 package credstore
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
-func AtomicUpdate(ctx context.Context, path string, mutator Mutator) error {
-	if mutator == nil {
-		return ErrNilMutator
+var (
+	replaceCredential       = replaceExisting
+	syncCredentialDirectory = syncDirectory
+)
+
+func replaceAtomically(path string, data []byte, mode os.FileMode) error {
+	tmp, err := createTempFile(filepath.Dir(path), filepath.Base(path))
+	if err != nil {
+		return err
 	}
-	return lockedReplace(ctx, path, nil, func(current []byte) ([]byte, error) {
-		if !json.Valid(current) {
-			return nil, fmt.Errorf("current credentials %s: %w", path, ErrInvalidJSON)
-		}
-		updated, err := mutator(current)
-		if err != nil {
-			return nil, fmt.Errorf("mutate credentials %s: %w", path, err)
-		}
-		if !json.Valid(updated) {
-			return nil, fmt.Errorf("updated credentials %s: %w", path, ErrInvalidJSON)
-		}
-		return updated, nil
-	})
+	_, err = commitPreparedTemp(tmp, path, data, mode, nil)
+	return err
 }
 
-// lockedReplace holds path+".lock", passes a copy of the current bytes to
-// mutator, and atomically replaces path. A missing file is an error unless
-// missingMode is set, in which case mutator receives nil and the new file uses
-// that mode.
-func lockedReplace(ctx context.Context, path string, missingMode *os.FileMode, mutator Mutator) (err error) {
-	lock, err := acquireFileLock(ctx, path+".lock")
+func createTempFile(dir, base string) (*os.File, error) {
+	tmp, err := os.CreateTemp(dir, "."+base+".tmp-*")
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("create temp credential file: %w", err)
 	}
-	defer func() {
-		err = errors.Join(err, lock.Close())
-	}()
-
-	snapshot, err := LoadSnapshot(ctx, path)
-	if errors.Is(err, os.ErrNotExist) && missingMode != nil {
-		snapshot = Snapshot{Mode: *missingMode}
-	} else if err != nil {
-		return err
-	}
-	current := snapshot.Data
-	if current != nil {
-		current = append([]byte(nil), current...)
-	}
-	updated, err := mutator(current)
-	if err != nil {
-		return err
-	}
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("commit credentials canceled: %w", ctx.Err())
-	default:
-	}
-	return replaceAtomically(path, updated, snapshot.Mode)
+	return tmp, nil
 }
 
-func replaceAtomically(path string, data []byte, mode os.FileMode) (err error) {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp credential file: %w", err)
-	}
-	tmpName := tmp.Name()
-	tmpOpen := true
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, os.Remove(tmpName))
-		}
-	}()
-	defer func() {
-		if tmpOpen {
-			err = errors.Join(err, tmp.Close())
-		}
-	}()
-
+func writeTempContents(tmp *os.File, data []byte, mode os.FileMode) error {
 	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("chmod temp credential file: %w", err)
 	}
@@ -91,15 +39,43 @@ func replaceAtomically(path string, data []byte, mode os.FileMode) (err error) {
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("sync temp credential file: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp credential file: %w", err)
-	}
-	tmpOpen = false
-	if err := replaceExisting(tmpName, path); err != nil {
-		return fmt.Errorf("replace credential file: %w", err)
-	}
-	if err := syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync credential directory: %w", err)
-	}
 	return nil
+}
+
+// commitPreparedTemp writes data through tmp, closes it, and renames over path.
+// It reports whether the rename happened; a false report leaves the temp
+// removed. A true report with an error means the new bytes are visible but
+// durability or cleanup failed.
+func commitPreparedTemp(tmp *os.File, path string, data []byte, mode os.FileMode, beforeRename func() error) (renamed bool, err error) {
+	tmpName := tmp.Name()
+	open := true
+	committed := false
+	defer func() {
+		if open {
+			err = errors.Join(err, tmp.Close())
+		}
+		if !committed {
+			err = errors.Join(err, os.Remove(tmpName))
+		}
+	}()
+	if err := writeTempContents(tmp, data, mode); err != nil {
+		return false, err
+	}
+	open = false
+	if err := tmp.Close(); err != nil {
+		return false, fmt.Errorf("close temp credential file: %w", err)
+	}
+	if beforeRename != nil {
+		if err := beforeRename(); err != nil {
+			return false, err
+		}
+	}
+	if err := replaceCredential(tmpName, path); err != nil {
+		return false, fmt.Errorf("replace credential file: %w", err)
+	}
+	committed = true
+	if err := syncCredentialDirectory(filepath.Dir(path)); err != nil {
+		return true, fmt.Errorf("sync credential directory: %w", err)
+	}
+	return true, nil
 }

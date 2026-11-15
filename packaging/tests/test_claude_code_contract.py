@@ -27,6 +27,10 @@ EXCERPTS = {
     "keychain read argv": b'["find-generic-password","-a",account,"-w","-s",service]',
     "plaintext credentials file": b'".credentials.json"',
     "keychain fallback composition": b'`${primary.name}-with-${fallback.name}-fallback`',
+    "refresh lock options": b'{lockfilePath:join(dir,".oauth_refresh.lock"),realpath:!1,stale:60000,update:5000,onCompromised:report}',
+    "refresh legacy lock": b'async function legacy(dir){return`${await resolve(dir).catch(()=>dir)}.lock`}',
+    "lock staleness": b'return stat.mtime.getTime()<Date.now()-options.stale}',
+    "refresh adopts changed token": b'log("tengu_oauth_token_refresh_race_resolved",{})',
 }
 BLOB = b"\x00".join(EXCERPTS.values())
 
@@ -51,7 +55,7 @@ class ClaudeCodeContractTests(unittest.TestCase):
 
     def test_minified_identifier_renames_preserve_markers(self):
         renamed = re.sub(
-            rb'\b(config|suffix|hash|os|account|service|primary)\b',
+            rb'\b(config|suffix|hash|os|account|service|primary|join|dir|resolve|stat|options)\b',
             b"x", BLOB,
         ).replace(b"${fallback.name}", b"${y.name}")
         self.assertEqual(MODULE.missing_markers(io.BytesIO(renamed)), ())
@@ -70,7 +74,7 @@ class ClaudeCodeContractTests(unittest.TestCase):
                     if status:
                         self.assertIn("keychain read argv", result.stderr)
                     else:
-                        self.assertIn("all 10 markers found", result.stdout)
+                        self.assertIn(f"all {len(MODULE.MARKERS)} markers found", result.stdout)
 
 
 if __name__ == "__main__":

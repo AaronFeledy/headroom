@@ -19,6 +19,9 @@ func Test_systemKeychain_reads_disposable_native_keychain(t *testing.T) {
 	if os.Getenv("HEADROOM_KEYCHAIN_FIXTURE") != "1" {
 		t.Skip("set HEADROOM_KEYCHAIN_FIXTURE=1 to use a disposable macOS Keychain")
 	}
+	// security reads the user's keychain search list and default keychain from
+	// HOME; this fixture saves and restores both itself.
+	t.Setenv("HOME", realUserHome)
 	// Given: only synthetic items in a private keychain, never the login keychain.
 	searchList := keychainFixturePaths(t, keychainFixtureCommand(t, "list-keychains", "-d", "user"))
 	defaultList := keychainFixturePaths(t, keychainFixtureCommand(t, "default-keychain", "-d", "user"))

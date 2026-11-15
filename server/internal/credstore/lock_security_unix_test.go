@@ -10,7 +10,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
-func Test_AtomicUpdate_rejects_symlink_lock_without_modifying_target(t *testing.T) {
+func Test_Refresh_rejects_symlink_lock_without_modifying_target(t *testing.T) {
 	// Given
 	path := writeCreds(t, `{"sentinel":"keep"}`, 0o600)
 	sentinelPath := path + ".sentinel"
@@ -23,24 +23,26 @@ func Test_AtomicUpdate_rejects_symlink_lock_without_modifying_target(t *testing.
 	}
 
 	// When
-	err := credstore.AtomicUpdate(context.Background(), path, func(current []byte) ([]byte, error) {
-		return current, nil
+	err := credstore.Refresh(context.Background(), path, func(current []byte) (credstore.Mutator, error) {
+		return func(latest []byte) ([]byte, error) {
+			return latest, nil
+		}, nil
 	})
 
 	// Then
 	if err == nil {
-		t.Error("AtomicUpdate returned nil error for a symlink lock")
+		t.Error("Refresh returned nil error for a symlink lock")
 	}
 	gotSentinel, readErr := os.ReadFile(sentinelPath)
 	if readErr != nil {
 		t.Fatalf("read sentinel: %v", readErr)
 	}
 	if string(gotSentinel) != string(wantSentinel) {
-		t.Errorf("sentinel bytes = %q, want %q", gotSentinel, wantSentinel)
+		t.Fatalf("sentinel bytes = %q, want %q", gotSentinel, wantSentinel)
 	}
 }
 
-func Test_AtomicUpdate_rejects_hard_link_lock_without_modifying_target(t *testing.T) {
+func Test_Refresh_rejects_hard_link_lock_without_modifying_target(t *testing.T) {
 	// Given
 	path := writeCreds(t, `{"sentinel":"keep"}`, 0o600)
 	sentinelPath := path + ".sentinel"
@@ -53,19 +55,21 @@ func Test_AtomicUpdate_rejects_hard_link_lock_without_modifying_target(t *testin
 	}
 
 	// When
-	err := credstore.AtomicUpdate(context.Background(), path, func(current []byte) ([]byte, error) {
-		return current, nil
+	err := credstore.Refresh(context.Background(), path, func(current []byte) (credstore.Mutator, error) {
+		return func(latest []byte) ([]byte, error) {
+			return latest, nil
+		}, nil
 	})
 
 	// Then
 	if err == nil {
-		t.Error("AtomicUpdate returned nil error for a hard-linked lock")
+		t.Error("Refresh returned nil error for a hard-linked lock")
 	}
 	gotSentinel, readErr := os.ReadFile(sentinelPath)
 	if readErr != nil {
 		t.Fatalf("read sentinel: %v", readErr)
 	}
 	if string(gotSentinel) != string(wantSentinel) {
-		t.Errorf("sentinel bytes = %q, want %q", gotSentinel, wantSentinel)
+		t.Fatalf("sentinel bytes = %q, want %q", gotSentinel, wantSentinel)
 	}
 }

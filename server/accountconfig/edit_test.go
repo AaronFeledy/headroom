@@ -54,8 +54,11 @@ func Test_Add_creates_missing_file_and_private_parent(t *testing.T) {
 		mode os.FileMode
 	}{{target.Path, 0o600}, {filepath.Dir(target.Path), 0o700}} {
 		info, err := os.Stat(tt.path)
-		if err != nil || info.Mode().Perm() != tt.mode {
-			t.Fatalf("mode=%v err=%v", info, err)
+		if err != nil {
+			t.Fatalf("stat %s: %v", tt.path, err)
+		}
+		if !modeMatches(info.Mode(), tt.mode) {
+			t.Fatalf("mode of %s = %v, want %v", tt.path, info.Mode().Perm(), tt.mode)
 		}
 	}
 	accounts, err := accountconfig.List(context.Background(), target)
@@ -176,7 +179,10 @@ func Test_Add_writes_through_config_symlink(t *testing.T) {
 		t.Fatalf("link lost: %v %v", info, err)
 	}
 	info, err = os.Stat(real)
-	if err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("mode changed: %v %v", info, err)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if !modeMatches(info.Mode(), 0o640) {
+		t.Fatalf("mode changed: %v", info.Mode().Perm())
 	}
 }

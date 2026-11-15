@@ -583,6 +583,31 @@ so when the short-lived access token runs out while Claude Code is idle, the car
 says the sign-in expired. Use Claude Code once, or run the sign-in command it
 shows.
 
+### Credential refresh
+
+Headroom reuses the sign-ins your tools already have. When one runs out, it
+refreshes the sign-in and saves the new tokens back to that tool's file, writing
+through symlinks. It saves them only while the file still holds the sign-in it
+refreshed, so a sign-in another tool wrote in the meantime wins. If saving fails,
+Headroom retries briefly; if it still can't, the server logs `refreshed sign-in
+could not be saved` and you may need to sign in again.
+
+Before refreshing, Headroom checks that it can save the result. It never
+refreshes a read-only file or folder, a file mounted on its own, a file with
+other hard links, or, from native Windows, a file inside WSL (Windows can't lock
+files there). It keeps using the current token until it expires, then shows the
+sign-in as expired with the reason, and the server logs `credential refresh
+refused` once. Use the tool named on the card, or give the server its own
+sign-in as shown for [systemd](#raspberry-pi-systemd-sample) and [Docker](#docker).
+
+Claude Code files are refreshed under Claude Code's own refresh lock
+(`.oauth_refresh.lock` in the credentials directory, plus the legacy
+`<directory>.lock`), so the two never refresh the same sign-in at once. The
+ChatGPT and Grok CLIs share no lock, so Headroom refreshes their sign-ins only
+after they expire: Codex sign-ins without a recorded expiry only when ChatGPT
+rejects the token. An active CLI usually refreshes first; the overlap is reduced,
+not eliminated, and one usage request can fail at expiry before the refresh.
+
 ### Multiple Claude accounts
 
 To watch more than one Claude subscription, add each extra account with the
@@ -844,7 +869,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now claude-usage-widget-server
 ```
 
-Copy provider credential files with owner `usagewidget` and mode `600`. For
+Sign each provider in as `usagewidget` rather than copying your own credential
+files. A copied sign-in shares its refresh token with the original, so whichever
+copy refreshes first signs the other out. With each CLI installed where that user
+can run it:
+
+```bash
+sudo -u usagewidget env CLAUDE_CONFIG_DIR=/var/lib/claude-usage-widget/.claude claude auth login
+sudo -u usagewidget env CODEX_HOME=/var/lib/claude-usage-widget/.codex codex login
+sudo -u usagewidget -H grok login
+```
+
+If you copy a file anyway, stop using the original sign-in. For
 OpenCode Go, don't copy the OpenCode database: it holds every session the CLI
 has recorded and can grow to many gigabytes, and copying a live database file by
 file can produce an inconsistent copy. Instead, create
@@ -863,8 +899,30 @@ The image default still binds to loopback inside the container, which is not use
 docker build -t headroom-usage-server ./server
 docker run --rm -p 7823:7823 \
   -e USAGE_AUTH_TOKEN='replace-with-a-long-random-token' \
-  -v "$HOME/.claude/.credentials.json:/home/nonroot/.claude/.credentials.json:ro" \
+  -v "$HOME/.claude:/home/nonroot/.claude:ro" \
   headroom-usage-server --listen-addr 0.0.0.0:7823
 ```
 
-Add read-only credential mounts as needed. All five providers are enabled by default, so Grok and OpenCode Go only need their credential files made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs). For OpenCode Go, mount a file containing only its key, in the format shown in the systemd sample, rather than the OpenCode database, and set `-e USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=...` to the mount path.
+Mount the Claude directory rather than the file: a single-file bind mount
+can't be replaced and keeps showing the old file after the host's Claude Code
+replaces it. With `:ro`, Headroom never refreshes; it uses the host's sign-in
+until it expires, and the host's Claude Code refreshes it when it runs. The
+mount exposes everything else in `~/.claude` to the container, read-only.
+
+On a Linux host you can give the container its own sign-in instead, which
+Headroom refreshes without touching yours:
+
+```bash
+mkdir -p ~/.config/headroom-docker/claude
+CLAUDE_CONFIG_DIR=~/.config/headroom-docker/claude claude auth login
+docker run --rm -p 7823:7823 --user "$(id -u):$(id -g)" \
+  -e USAGE_AUTH_TOKEN='replace-with-a-long-random-token' \
+  -e USAGE_PROVIDER_CLAUDE_CREDENTIALS_PATH=/claude/.credentials.json \
+  -v ~/.config/headroom-docker/claude:/claude \
+  headroom-usage-server --listen-addr 0.0.0.0:7823
+```
+
+On macOS, `claude auth login` keeps that sign-in in the Keychain instead of a
+file, so use the read-only mount.
+
+Add read-only credential mounts as needed. All five providers are enabled by default, so Grok and OpenCode Go only need their credential files made available—for example, mount the `~/.grok` directory, for the same reason as `~/.claude`, so `auth.json` lands at the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs). For OpenCode Go, mount a file containing only its key, in the format shown in the systemd sample, rather than the OpenCode database, and set `-e USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=...` to the mount path.

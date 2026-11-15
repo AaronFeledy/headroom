@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -14,16 +15,27 @@ func keychainAccessError(err error) bool {
 
 func isCredentialError(err error) bool {
 	var credentialErr credentialsError
-	return errors.As(err, &credentialErr) || errors.Is(err, ErrCredentialsMissing) || errors.Is(err, ErrCredentialsMalformed) || errors.Is(err, ErrKeychainExpired) || keychainAccessError(err)
+	return errors.As(err, &credentialErr) || errors.Is(err, ErrCredentialsMissing) || errors.Is(err, ErrCredentialsMalformed) || errors.Is(err, ErrRefreshUnavailable) || keychainAccessError(err)
 }
 
 func (c *Client) credentialErrorMessage(err error) string {
-	if errors.Is(err, ErrKeychainExpired) {
+	if errors.Is(err, ErrRefreshUnavailable) {
 		command := reauthCommandText
 		if c.signInCommand != nil {
 			command = *c.signInCommand
 		}
-		return "Claude Code refreshes this sign-in when it runs. Use Claude Code once, or run `" + command + "`."
+		name := "Claude Code"
+		c.stateMu.Lock()
+		loaded := c.loaded
+		c.stateMu.Unlock()
+		if loaded != nil && loaded.source == credentialSourceOpenCode {
+			name = "OpenCode"
+		}
+		var refused *credstore.NotWritableError
+		if errors.As(err, &refused) {
+			return "Sign-in expired, and Headroom can't save a refreshed one because " + refused.Reason.Phrase() + ". Use " + name + " once, or run `" + command + "`."
+		}
+		return name + " refreshes this sign-in when it runs. Use " + name + " once, or run `" + command + "`."
 	}
 	return formatCredentialError(err, c.goos)
 }

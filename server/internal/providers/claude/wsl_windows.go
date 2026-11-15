@@ -10,7 +10,15 @@ import (
 	"time"
 )
 
+// wslHomeDiscoveryEnabled lets tests keep native Windows discovery away from
+// the developer's real WSL home. Tests disable it in TestMain; production
+// always leaves it enabled.
+var wslHomeDiscoveryEnabled = true
+
 func defaultWSLHome() string {
+	if !wslHomeDiscoveryEnabled {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "wsl.exe", "sh", "-lc", "printf '%s\n%s' \"$WSL_DISTRO_NAME\" \"$HOME\"")

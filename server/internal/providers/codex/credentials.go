@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +18,7 @@ type CredentialStore struct {
 	creds     Credentials
 	snapshot  credstore.Snapshot
 	loaded    bool
+	warn      func(path string, err error)
 }
 
 func NewCredentialStore(opts CredentialOptions) *CredentialStore {
@@ -51,59 +51,79 @@ func (s *CredentialStore) Current(ctx context.Context) (Credentials, error) {
 	return s.creds, nil
 }
 
+// NeedsRefresh reports an OpenCode-style expiry that has already passed. Codex
+// source tokens carry no expiry, so they refresh only after a 401 or 403.
 func (s *CredentialStore) NeedsRefresh(now time.Time) bool {
 	s.mu.RLock()
 	creds := s.creds
-	loaded := s.loaded
 	s.mu.RUnlock()
-	if !loaded || strings.TrimSpace(creds.RefreshToken) == "" {
+	if creds.RefreshToken == "" || creds.ExpiresAt == nil {
 		return false
 	}
-	if creds.ExpiresAt != nil {
-		return !now.Before(creds.ExpiresAt.Add(-5 * time.Minute))
-	}
-	return creds.LastRefresh == nil || now.Sub(*creds.LastRefresh) > refreshWindow
+	return !now.Before(*creds.ExpiresAt)
 }
 
-func (s *CredentialStore) ReloadIfChanged(ctx context.Context) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.loaded {
-		_, err := s.loadLocked(ctx)
-		return true, err
-	}
-	info, err := os.Stat(s.path)
+// Refresh spends the caller's token pair through credstore.RefreshTokens. A
+// store that already holds a different pair is adopted without an exchange, so
+// a rejected pair only reaches the token endpoint while it is still current.
+func (s *CredentialStore) Refresh(ctx context.Context, stale Credentials, exchange func(Credentials) (RefreshedTokens, error)) error {
+	path, source, err := s.target(ctx)
 	if err != nil {
-		return false, fmt.Errorf("stat codex credentials %s: %w", s.path, ErrCredentialsMissing)
+		return err
 	}
-	if info.ModTime().Equal(s.snapshot.ModTime) {
-		return false, nil
-	}
-	_, err = s.loadLocked(ctx)
-	return true, err
-}
-
-func (s *CredentialStore) SaveRefreshed(ctx context.Context, tokens RefreshedTokens) error {
-	s.mu.Lock()
-	path := s.path
-	source := s.source
-	s.mu.Unlock()
-	if path == "" {
-		if _, err := s.Load(ctx); err != nil {
-			return err
+	codec := tokenCodec(path, source, s.warn)
+	_, _, err = credstore.RefreshTokens(ctx, path, tokenPair(stale), codec, func(file []byte) (RefreshedTokens, error) {
+		current, parseErr := parseCredentials(file, path, source)
+		if parseErr != nil {
+			return RefreshedTokens{}, parseErr
 		}
-		s.mu.RLock()
-		path = s.path
-		source = s.source
-		s.mu.RUnlock()
-	}
-	if err := credstore.AtomicUpdate(ctx, path, func(current []byte) ([]byte, error) {
-		return mutateCredentials(current, source, tokens)
-	}); err != nil {
+		return exchange(current)
+	})
+	if err != nil {
 		return fmt.Errorf("save codex credentials: %w", err)
 	}
-	_, err := s.Load(ctx)
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer cancel()
+	_, err = s.Load(loadCtx)
 	return err
+}
+
+func (s *CredentialStore) target(ctx context.Context) (string, CredentialSource, error) {
+	s.mu.RLock()
+	path, source, loaded := s.path, s.source, s.loaded
+	s.mu.RUnlock()
+	if loaded {
+		return path, source, nil
+	}
+	if _, err := s.Load(ctx); err != nil {
+		return "", CredentialSourceCodex, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.path, s.source, nil
+}
+
+func tokenPair(creds Credentials) credstore.TokenPair {
+	return credstore.TokenPair{Access: creds.AccessToken, Refresh: creds.RefreshToken}
+}
+
+func tokenCodec(path string, source CredentialSource, warn func(path string, err error)) credstore.TokenCodec[RefreshedTokens] {
+	return credstore.TokenCodec[RefreshedTokens]{
+		Pair: func(file []byte) (credstore.TokenPair, error) {
+			creds, err := parseCredentials(file, path, source)
+			if err != nil {
+				return credstore.TokenPair{}, err
+			}
+			return tokenPair(creds), nil
+		},
+		Apply: func(file []byte, tokens RefreshedTokens) ([]byte, error) {
+			return mutateCredentials(file, source, tokens)
+		},
+		Of: func(tokens RefreshedTokens) credstore.TokenPair {
+			return credstore.TokenPair{Access: tokens.AccessToken, Refresh: tokens.RefreshToken}
+		},
+		Warn: func(err error) { warn(path, err) },
+	}
 }
 
 func (s *CredentialStore) loadLocked(ctx context.Context) (Credentials, error) {

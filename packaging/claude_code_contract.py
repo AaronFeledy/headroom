@@ -23,8 +23,9 @@ from typing import BinaryIO, Final
 PACKAGE: Final = "@anthropic-ai/claude-code-darwin-arm64"
 CHUNK_SIZE: Final = 1024 * 1024
 OVERLAP: Final = 8192
-# Only what Headroom reads today: Keychain service and account naming, the read
-# command, and the Keychain-then-file order. Match literals and bounded syntax,
+# Only what Headroom relies on today: Keychain service and account naming, the
+# read command, the Keychain-then-file order, and the refresh lock Headroom
+# shares when it refreshes a file sign-in. Match literals and bounded syntax,
 # never the names assigned by the minifier.
 MARKERS: Final = {
     "service credentials suffix": rb'"-credentials"',
@@ -37,6 +38,10 @@ MARKERS: Final = {
     "keychain read argv": rb'\["find-generic-password","-a",[^,\n]{1,256},"-w","-s",',
     "plaintext credentials file": rb'"\.credentials\.json"',
     "keychain fallback composition": rb'`\$\{[^{}\n]{1,256}\.name\}-with-\$\{[^{}\n]{1,256}\.name\}-fallback`',
+    "refresh lock options": rb'lockfilePath:[^;{}\n]{1,64}"\.oauth_refresh\.lock"\),realpath:!1,stale:(?:60000|6e4),update:(?:5000|5e3)\b',
+    "refresh legacy lock": rb'`\$\{await [^`\n]{1,256}\.catch\(\(\)=>[^`\n]{1,64}\)\}\.lock`',
+    "lock staleness": rb'\.mtime\.getTime\(\)<Date\.now\(\)-[^;\n]{1,64}\.stale',
+    "refresh adopts changed token": rb'"tengu_oauth_token_refresh_race_resolved"',
 }
 
 

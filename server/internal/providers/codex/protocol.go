@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -62,6 +63,14 @@ func baseUsage() usage.UsageData {
 func reauthUsage() usage.UsageData {
 	data := baseUsage()
 	message := "AUTH_EXPIRED"
+	data.Error = &message
+	data.NeedsReauth = true
+	return data
+}
+
+func unwritableReauthUsage(cause error) usage.UsageData {
+	data := baseUsage()
+	message := "Sign-in expired, and Headroom can't save a refreshed one because " + credstore.NotWritablePhrase(cause) + ". Run `codex` to refresh it."
 	data.Error = &message
 	data.NeedsReauth = true
 	return data
@@ -148,13 +157,6 @@ func windowRoleOf(window *whamWindow) windowRole {
 	default:
 		return windowRoleUnknown
 	}
-}
-
-func credsExpiresAt(creds Credentials) time.Time {
-	if creds.ExpiresAt != nil {
-		return *creds.ExpiresAt
-	}
-	return time.Time{}
 }
 
 type refreshRequest struct {

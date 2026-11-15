@@ -175,6 +175,10 @@ an HTTPS server with a verified certificate, or an SSH connection. See the
 - **Claude says its sign-in expired on macOS:** Headroom reads Claude Code's
   Keychain sign-in but leaves refreshing it to Claude Code. Use Claude Code once,
   or run `claude auth login`.
+- **A card says Headroom can't save a refreshed sign-in:** the server can read
+  that sign-in but not write it back, for example through a read-only Docker
+  mount, or from Windows into WSL. Use the tool named on the card once, or give
+  the server [its own sign-in](server/README.md#credential-refresh).
 - **No usage in the terminal:** open the desktop or start `headroom serve`, then
   check the provider sign-in status.
 - **The desktop can't connect:** check Settings and diagnostics. An official

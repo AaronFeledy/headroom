@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 func New(opts Options) *Client {
@@ -52,6 +54,7 @@ func New(opts Options) *Client {
 	}
 	return &Client{
 		client:        client,
+		refreshLog:    credstore.RefreshLog{Logger: opts.Logger},
 		goos:          runtime.GOOS,
 		keychain:      opts.Keychain,
 		usageURL:      usageURL,
@@ -61,6 +64,7 @@ func New(opts Options) *Client {
 		account:       account,
 		signInCommand: signInCommand,
 		resetStateDir: resetStateDir,
+		lockConfig:    defaultClaudeCodeLockConfig(),
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
 			configDir:      expandConfigDir(opts.ConfigDir, opts.HomeDir),

@@ -30,6 +30,12 @@ jobs:
           go-version-file: server/go.mod
           cache: true
           cache-dependency-path: server/go.sum
+      - name: Set up Node.js for lockfile fixture
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.1'
+          cache: npm
+          cache-dependency-path: server/internal/providers/claude/testdata/lockfile-interop/package-lock.json
       - name: Check formatting
         run: |
           files="$(gofmt -l .)"
@@ -43,6 +49,31 @@ jobs:
         run: go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
       - name: Build packages
         run: go build ./...
+      - name: Install lockfile fixture dependencies
+        working-directory: server/internal/providers/claude/testdata/lockfile-interop
+        run: npm ci --ignore-scripts
+      - name: Test Claude Code lock interoperability
+        env:
+          HEADROOM_PROPER_LOCKFILE_FIXTURE: '1'
+        run: go test -count=1 -run LockfileInterop ./internal/providers/claude
+
+  windows-test:
+    name: Test (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 
   artifacts:
     name: Build ${{ matrix.asset }}

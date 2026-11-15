@@ -16,18 +16,16 @@ func Test_Check_matches_Load_with_effective_overrides(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	data := []byte("poll_interval: 2m\nproviders:\n  claude:\n    enabled: false\n    accounts:\n      - id: work\n        config_dir: ~/.claude\n")
-	path := filepath.Join(t.TempDir(), "config.yaml")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	relative, err := filepath.Rel(cwd, path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A relative --config must resolve against the working directory. Change
+	// into the config's directory: on Windows the checkout and the temp
+	// directory can sit on different drives, with no relative path between.
+	t.Chdir(dir)
+	relative := "config.yaml"
 	for _, enable := range []string{"false", "true"} {
 		t.Run(enable, func(t *testing.T) {
 			opts := config.LoadOptions{Args: []string{"--config", relative, "--poll-interval", "3m"}, Env: []string{"HOME=" + home, "USAGE_PROVIDER_CLAUDE_ENABLED=" + enable, "USAGE_POLL_INTERVAL=4m"}}

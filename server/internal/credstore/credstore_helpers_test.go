@@ -64,8 +64,8 @@ func assertFileBytesAndMode(t *testing.T, path string, wantBytes []byte, wantMod
 	if err != nil {
 		t.Fatalf("stat credentials: %v", err)
 	}
-	if info.Mode().Perm() != wantMode {
-		t.Fatalf("mode = %v, want %v", info.Mode().Perm(), wantMode)
+	if !modeMatches(info.Mode(), wantMode) {
+		t.Fatalf("mode = %v, want %v", info.Mode().Perm(), wantMode.Perm())
 	}
 }
 

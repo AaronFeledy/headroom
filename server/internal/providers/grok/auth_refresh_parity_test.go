@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 func Test_Provider_refresh_adopts_completed_sibling_rotation_without_token_call(t *testing.T) {
@@ -35,9 +33,7 @@ func Test_Provider_refresh_adopts_completed_sibling_rotation_without_token_call(
 		t.Fatalf("NewProvider: %v", err)
 	}
 	rotatedJSON := `{"https://auth.x.ai/oauth2/token":{"key":"rotated-token","refresh_token":"rotated-refresh","expires_at":1800000000000}}`
-	if err := credstore.AtomicUpdate(context.Background(), authPath, func(_ []byte) ([]byte, error) {
-		return []byte(rotatedJSON), nil
-	}); err != nil {
+	if err := os.WriteFile(authPath, []byte(rotatedJSON), 0o600); err != nil {
 		t.Fatalf("sibling credential rotation: %v", err)
 	}
 
@@ -213,14 +209,14 @@ func Test_credentials_needsRefresh_uses_30_day_create_time_fallback(t *testing.T
 	}
 
 	// When
-	beforeWindow := creds.needsRefresh(created.Add(30*24*time.Hour - refreshBuffer - time.Second))
-	atWindow := creds.needsRefresh(created.Add(30*24*time.Hour - refreshBuffer))
+	beforeWindow := creds.needsRefresh(created.Add(30*24*time.Hour - time.Second))
+	atWindow := creds.needsRefresh(created.Add(30 * 24 * time.Hour))
 
 	// Then
 	if beforeWindow {
-		t.Fatalf("needsRefresh before fallback window = true, want false")
+		t.Fatalf("needsRefresh before fallback expiry = true, want false")
 	}
 	if !atWindow {
-		t.Fatalf("needsRefresh at fallback window = false, want true")
+		t.Fatalf("needsRefresh at fallback expiry = false, want true")
 	}
 }
