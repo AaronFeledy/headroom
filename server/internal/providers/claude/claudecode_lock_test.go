@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -134,6 +135,9 @@ func Test_claudeCodeLock_heartbeatStep_advances_mtime_and_foreign_mtime_is_stick
 func Test_acquireClaudeCodeLock_permission_on_new_lock_is_not_writable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission tests skip when euid 0")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows directory permissions do not block creating the lock")
 	}
 	// Given: read-only parent so mkdir fails
 	home := t.TempDir()
