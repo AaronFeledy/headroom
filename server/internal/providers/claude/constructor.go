@@ -1,11 +1,12 @@
 package claude
 
 import (
-	"log/slog"
 	"net/http"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 func New(opts Options) *Client {
@@ -51,13 +52,9 @@ func New(opts Options) *Client {
 			signInCommand = &command
 		}
 	}
-	logger := opts.Logger
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	return &Client{
 		client:        client,
-		logger:        logger,
+		refreshLog:    credstore.RefreshLog{Logger: opts.Logger},
 		goos:          runtime.GOOS,
 		keychain:      opts.Keychain,
 		usageURL:      usageURL,

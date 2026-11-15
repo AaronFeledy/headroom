@@ -60,8 +60,7 @@ type Provider struct {
 	webBillingURL   string
 	tokenURL        string
 	now             func() time.Time
-	logger          *slog.Logger
-	refusalLog      credstore.RefusalLog
+	refreshLog      credstore.RefreshLog
 	store           credentialStore
 	webMu           sync.RWMutex
 	webCookie       string
@@ -78,10 +77,6 @@ func NewProvider(opts Options) (*Provider, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
-	logger := opts.Logger
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	provider := &Provider{
 		credentialsPath: path,
 		httpClient:      client,
@@ -90,7 +85,7 @@ func NewProvider(opts Options) (*Provider, error) {
 		webBillingURL:   defaultString(opts.WebBillingURL, webBillingURL),
 		tokenURL:        defaultString(opts.TokenURL, tokenURL),
 		now:             opts.Now,
-		logger:          logger,
+		refreshLog:      credstore.RefreshLog{Logger: opts.Logger},
 	}
 	if provider.now == nil {
 		provider.now = func() time.Time { return time.Now().UTC() }

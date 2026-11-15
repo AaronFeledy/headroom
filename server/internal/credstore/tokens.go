@@ -3,6 +3,7 @@ package credstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -14,8 +15,8 @@ type TokenPair struct {
 
 // TokenCodec describes one store's token pair. Pair and Apply are pure and must
 // not write the store; Of maps a refresh result to the pair the store will
-// carry. Warn, when set, receives a commit error whose write may still have
-// landed so a provider can log that a refreshed sign-in was lost.
+// carry. Warn, when set, receives the error from a commit whose refreshed
+// tokens reached the file anyway (for example, the directory sync failed).
 type TokenCodec[T any] struct {
 	Pair  func(file []byte) (TokenPair, error)
 	Apply func(file []byte, tokens T) ([]byte, error)
@@ -34,8 +35,13 @@ const (
 	Saved
 )
 
-// ErrTokenCodec reports a TokenCodec missing a required function.
-var ErrTokenCodec = errors.New("credstore: incomplete token codec")
+var (
+	// ErrTokenCodec reports a TokenCodec missing a required function.
+	ErrTokenCodec = errors.New("credstore: incomplete token codec")
+	// ErrRefreshNotSaved marks an exchange that succeeded but whose tokens
+	// never reached the file; the spent sign-in may now be invalid.
+	ErrRefreshNotSaved = errors.New("credstore: refreshed sign-in was not saved")
+)
 
 // RefreshTokens refreshes path when it still holds spent and saves the result
 // through codec. It is the one owner of the spent-pair rule: exchange runs at
@@ -97,5 +103,5 @@ func RefreshTokens[T any](ctx context.Context, path string, spent TokenPair, cod
 			return result, Saved, nil
 		}
 	}
-	return result, Adopted, err
+	return result, Adopted, fmt.Errorf("%w: %w", ErrRefreshNotSaved, err)
 }

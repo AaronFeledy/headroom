@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,8 +19,7 @@ type Client struct {
 	http               *http.Client
 	usageURL           string
 	tokenURL           string
-	logger             *slog.Logger
-	refusalLog         credstore.RefusalLog
+	refreshLog         credstore.RefreshLog
 	refreshMu          sync.Mutex
 	resetMu            sync.Mutex
 	resetAttemptID     string
@@ -48,18 +46,14 @@ func New(opts Options) *Client {
 	if opts.CredentialsPath != "" {
 		discovery.ConfiguredPath = opts.CredentialsPath
 	}
-	logger := opts.Logger
-	if logger == nil {
-		logger = slog.New(slog.DiscardHandler)
-	}
 	provider := &Client{
-		store:    NewCredentialStore(CredentialOptions{Path: opts.CredentialsPath, Discovery: discovery}),
-		http:     client,
-		usageURL: usageURL,
-		tokenURL: tokenURL,
-		logger:   logger,
+		store:      NewCredentialStore(CredentialOptions{Path: opts.CredentialsPath, Discovery: discovery}),
+		http:       client,
+		usageURL:   usageURL,
+		tokenURL:   tokenURL,
+		refreshLog: credstore.RefreshLog{Logger: opts.Logger},
 	}
-	provider.store.warn = provider.warnUnsaveable
+	provider.store.warn = provider.refreshLog.SavedWithError
 	return provider
 }
 

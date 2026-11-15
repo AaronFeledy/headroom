@@ -70,13 +70,14 @@ func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mod
 	})
 	if err != nil {
 		if errors.Is(err, credstore.ErrNotWritable) {
-			c.recordRefusal(creds.path, err, spent)
+			c.refreshLog.Refused(creds.path, err, spent)
 			return c.handleUnwritableRefresh(ctx, creds, mode, err)
 		}
+		c.refreshLog.NotSaved(creds.path, err)
 		return err
 	}
 	if outcome == credstore.Saved {
-		c.refusalLog.Saved()
+		c.refreshLog.Saved()
 	}
 
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)

@@ -22,11 +22,13 @@ func (c *Client) refresh(ctx context.Context, creds Credentials) (usage.RefreshR
 		return usage.RefreshInvalidGrant, nil
 	}
 	result, err := c.doRefresh(ctx, creds)
-	if err != nil && errors.Is(err, credstore.ErrNotWritable) {
-		c.recordRefusal(err, creds)
-	}
-	if err == nil {
-		c.refusalLog.Saved()
+	switch {
+	case err == nil:
+		c.refreshLog.Saved()
+	case errors.Is(err, credstore.ErrNotWritable):
+		c.refreshLog.Refused(creds.Path, err, tokenPair(creds))
+	default:
+		c.refreshLog.NotSaved(creds.Path, err)
 	}
 	return result, err
 }

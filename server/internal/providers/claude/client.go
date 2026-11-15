@@ -69,8 +69,7 @@ type Client struct {
 	goos          string
 	keychain      Keychain
 	lockConfig    claudeCodeLockConfig
-	logger        *slog.Logger
-	refusalLog    credstore.RefusalLog
+	refreshLog    credstore.RefreshLog
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex

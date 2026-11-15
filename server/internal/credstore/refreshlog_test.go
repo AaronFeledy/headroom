@@ -2,6 +2,8 @@ package credstore_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -33,39 +35,58 @@ func (h *captureHandler) count() int {
 	return len(h.records)
 }
 
-func Test_RefusalLog_reports_once_per_episode_and_resets(t *testing.T) {
+func Test_RefreshLog_reports_refusals_once_per_episode_and_resets(t *testing.T) {
 	// Given
 	handler := &captureHandler{}
-	logger := slog.New(handler)
-	var log credstore.RefusalLog
+	log := credstore.RefreshLog{Logger: slog.New(handler)}
 	path := "/tmp/credentials.json"
 	pair := credstore.TokenPair{Access: "old", Refresh: "old-r"}
+	readOnly := &credstore.NotWritableError{Path: path, Reason: credstore.ReasonReadOnlyFile}
+	cannotCreate := &credstore.NotWritableError{Path: path, Reason: credstore.ReasonCannotCreateFiles}
 
 	// When / Then
-	log.Record(logger, path, credstore.ReasonReadOnlyFile, pair)
-	log.Record(logger, path, credstore.ReasonReadOnlyFile, pair)
+	log.Refused(path, readOnly, pair)
+	log.Refused(path, readOnly, pair)
 	if got := handler.count(); got != 1 {
 		t.Fatalf("records after duplicate refusal = %d, want 1", got)
 	}
 
 	// An external sign-in change starts a new episode.
-	log.Record(logger, path, credstore.ReasonReadOnlyFile, credstore.TokenPair{Access: "external", Refresh: "external-r"})
+	log.Refused(path, readOnly, credstore.TokenPair{Access: "external", Refresh: "external-r"})
 	if got := handler.count(); got != 2 {
 		t.Fatalf("records after pair change = %d, want 2", got)
 	}
 
 	// A successful save resets the episode for the same pair.
 	log.Saved()
-	log.Record(logger, path, credstore.ReasonReadOnlyFile, pair)
+	log.Refused(path, readOnly, pair)
 	if got := handler.count(); got != 3 {
 		t.Fatalf("records after save reset = %d, want 3", got)
 	}
 
 	// A different reason is its own episode.
-	log.Record(logger, path, credstore.ReasonCannotCreateFiles, pair)
+	log.Refused(path, cannotCreate, pair)
 	if got := handler.count(); got != 4 {
 		t.Fatalf("records after reason change = %d, want 4", got)
 	}
 
-	log.Record(nil, path, credstore.ReasonCannotCreateFiles, pair)
+	var discard credstore.RefreshLog
+	discard.Refused(path, cannotCreate, pair)
+}
+
+func Test_RefreshLog_reports_lost_refreshes_every_time(t *testing.T) {
+	// Given
+	handler := &captureHandler{}
+	log := credstore.RefreshLog{Logger: slog.New(handler)}
+	lost := fmt.Errorf("%w: rename failed", credstore.ErrRefreshNotSaved)
+
+	// When
+	log.NotSaved("/tmp/credentials.json", lost)
+	log.NotSaved("/tmp/credentials.json", lost)
+	log.NotSaved("/tmp/credentials.json", errors.New("token endpoint unavailable"))
+
+	// Then
+	if got := handler.count(); got != 2 {
+		t.Fatalf("records = %d, want 2 (only unsaved refreshes, not deduplicated)", got)
+	}
 }

@@ -202,11 +202,13 @@ func (p *Provider) refresh(ctx context.Context, stale credentials, reason refres
 	})
 	if err != nil {
 		if errors.Is(err, credstore.ErrNotWritable) {
-			p.recordRefusal(err, spent)
+			p.refreshLog.Refused(p.credentialsPath, err, spent)
+		} else {
+			p.refreshLog.NotSaved(p.credentialsPath, err)
 		}
 		return credentials{}, err
 	}
-	p.refusalLog.Saved()
+	p.refreshLog.Saved()
 	loadCtx, loadCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
 	defer loadCancel()
 	return p.loadCredentials(loadCtx)
@@ -227,6 +229,6 @@ func (p *Provider) credentialCodec() credstore.TokenCodec[credentials] {
 		Of: func(refreshed credentials) credstore.TokenPair {
 			return credstore.TokenPair{Access: refreshed.accessToken, Refresh: refreshed.refreshToken}
 		},
-		Warn: p.warnUnsaveable,
+		Warn: func(err error) { p.refreshLog.SavedWithError(p.credentialsPath, err) },
 	}
 }

@@ -18,7 +18,7 @@ type CredentialStore struct {
 	creds     Credentials
 	snapshot  credstore.Snapshot
 	loaded    bool
-	warn      func(error)
+	warn      func(path string, err error)
 }
 
 func NewCredentialStore(opts CredentialOptions) *CredentialStore {
@@ -108,7 +108,7 @@ func tokenPair(creds Credentials) credstore.TokenPair {
 	return credstore.TokenPair{Access: creds.AccessToken, Refresh: creds.RefreshToken}
 }
 
-func tokenCodec(path string, source CredentialSource, warn func(error)) credstore.TokenCodec[RefreshedTokens] {
+func tokenCodec(path string, source CredentialSource, warn func(path string, err error)) credstore.TokenCodec[RefreshedTokens] {
 	return credstore.TokenCodec[RefreshedTokens]{
 		Pair: func(file []byte) (credstore.TokenPair, error) {
 			creds, err := parseCredentials(file, path, source)
@@ -123,7 +123,7 @@ func tokenCodec(path string, source CredentialSource, warn func(error)) credstor
 		Of: func(tokens RefreshedTokens) credstore.TokenPair {
 			return credstore.TokenPair{Access: tokens.AccessToken, Refresh: tokens.RefreshToken}
 		},
-		Warn: warn,
+		Warn: func(err error) { warn(path, err) },
 	}
 }
 

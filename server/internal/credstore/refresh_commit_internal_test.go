@@ -166,8 +166,8 @@ func Test_Refresh_gives_up_after_commit_retry_bound(t *testing.T) {
 		})
 
 	// Then
-	if err == nil {
-		t.Fatal("RefreshTokens succeeded despite failed renames")
+	if !errors.Is(err, ErrRefreshNotSaved) {
+		t.Fatalf("RefreshTokens error = %v, want ErrRefreshNotSaved", err)
 	}
 	if calls != 5 || edits != 5 {
 		t.Fatalf("rename calls = %d, edit calls = %d, want 5 and 5", calls, edits)
