@@ -189,8 +189,11 @@ write, refresh, or rotate that store. Each poll makes one
 redirect to another origin. Reported percentages are already 0-100 and are never
 scaled. Its `session` (`5-Hour`), `weekly`, and `monthly` meters carry no
 reported window start, so clients assume five hours, seven days, and the calendar
-month ending at the reset. It has no browser-credential push, credential route,
-SSH forward, usage details, or resets; do not add them without an explicit task.
+month ending at the reset. A reset derived from `resetInSec` keeps the first
+reported time for the same bucket and credential while later polls land within a
+minute of it, so clients see one window. It has no browser-credential push,
+credential route, SSH forward, usage details, or resets; do not add them without
+an explicit task.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider

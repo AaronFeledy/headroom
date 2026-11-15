@@ -762,6 +762,11 @@ database is read without the migration check. For a service or container, point
 it at a small file holding only the key, as shown in the
 [systemd sample](#raspberry-pi-systemd-sample).
 
+When OpenCode Go reports a window as seconds until its reset, each poll would
+produce a slightly different `resets_at`. The provider keeps the reset time it
+first reported for that window while later polls land within a minute of it, for
+the same key, so clients see one stable window for warning tiers and reminders.
+
 ## HTTPS identity and verification
 
 TLS-enabled standalone servers accept both HTTP and HTTPS on the same port;
