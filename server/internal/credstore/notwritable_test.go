@@ -36,6 +36,7 @@ func Test_NotWritableReason_phrases_are_distinct(t *testing.T) {
 		credstore.ReasonSeparateMount,
 		credstore.ReasonHardLinks,
 		credstore.ReasonReplacementDenied,
+		credstore.ReasonLockUnsupported,
 	}
 	seen := map[string]bool{}
 	for _, reason := range reasons {

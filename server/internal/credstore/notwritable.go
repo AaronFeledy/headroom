@@ -16,6 +16,7 @@ const (
 	ReasonSeparateMount      NotWritableReason = "separate mount"
 	ReasonHardLinks          NotWritableReason = "other hard links"
 	ReasonReplacementDenied  NotWritableReason = "replacement denied"
+	ReasonLockUnsupported    NotWritableReason = "file locking unsupported"
 )
 
 // Phrase is the short user-facing explanation for a refusal.
@@ -33,6 +34,8 @@ func (r NotWritableReason) Phrase() string {
 		return "the credentials file has other hard links"
 	case ReasonReplacementDenied:
 		return "replacing the credentials file is not permitted"
+	case ReasonLockUnsupported:
+		return "Windows can't lock files in this location"
 	default:
 		return "the credentials file cannot be replaced"
 	}

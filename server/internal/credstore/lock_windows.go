@@ -17,6 +17,8 @@ const (
 	lockfileFailImmediately = 0x00000001
 	errorLockViolation      = syscall.Errno(33)
 	errorSharingViolation   = syscall.Errno(32)
+	errorInvalidFunction    = syscall.Errno(1)  // ERROR_INVALID_FUNCTION
+	errorNotSupported       = syscall.Errno(50) // ERROR_NOT_SUPPORTED
 )
 
 type fileLock struct{ file *os.File }
@@ -73,6 +75,11 @@ func acquireFileLock(ctx context.Context, path string) (fileLock, error) {
 			}
 			return fileLock{file: file}, nil
 		}
+		if isLockUnsupported(err) {
+			closeErr := file.Close()
+			unsupported := fmt.Errorf("%w: %w", errLockUnsupported, err)
+			return fileLock{}, fmt.Errorf("lock credentials: %w", errorsJoin(unsupported, closeErr))
+		}
 		if !isLockContention(err) {
 			closeErr := file.Close()
 			return fileLock{}, fmt.Errorf("lock credentials: %w", errorsJoin(err, closeErr))
@@ -122,6 +129,12 @@ func lockFileEx(handle syscall.Handle, flags uint32, overlapped *syscall.Overlap
 
 func isLockContention(err error) bool {
 	return errors.Is(err, errorLockViolation) || errors.Is(err, errorSharingViolation)
+}
+
+// isLockUnsupported reports a file system that cannot take byte-range locks,
+// such as the 9P share behind \\wsl.localhost.
+func isLockUnsupported(err error) bool {
+	return errors.Is(err, errorInvalidFunction) || errors.Is(err, errorNotSupported)
 }
 
 func unlockFileEx(handle syscall.Handle, overlapped *syscall.Overlapped) error {
