@@ -189,14 +189,14 @@ private slots:
         });
         QTemporaryDir dir; Controller controller(dir.filePath("settings.json"), nullptr, false, {}, {}, {}, false);
         const auto url = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
-        QVERIFY(controller.saveSettings("remote", url, "synthetic-token", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"token", "synthetic-token"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_VERIFY2(controller.state()["status"].toString() == QStringLiteral("ready"), qPrintable(controller.diagnosticText()));
         QCOMPARE(proofs, 1); QCOMPARE(usage, 1); QCOMPARE(controller.backendUrl(), url);
         QVERIFY(!controller.remoteVerificationPending());
         controller.refresh(); QTRY_COMPARE(usage, 2); QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(proofs, 1);
-        QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(usage, 3); QCOMPARE(proofs, 1);
-        QVERIFY(controller.saveSettings("remote", url, "synthetic-token2", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"token", "synthetic-token2"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(usage, 4); QCOMPARE(proofs, 2);
     }
     void upgradeAndUntrustedHttps_data() {

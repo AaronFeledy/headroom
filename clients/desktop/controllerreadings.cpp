@@ -52,6 +52,7 @@ void Controller::invalidateConnection() {
     // be published anywhere until the new peer answers. Only a new accepted
     // snapshot restores them.
     markBackendUnavailable(false, connectionReset);
+    m_tray = {};
     m_transientSince.clear();
     m_diagnosticAttempts.clear();
     m_recovery.stop(); m_recoveryStep = 0; m_refreshBaseline.clear(); m_refreshAcceptedAt = 0;

@@ -389,15 +389,19 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
     return true;
 }
 
+QString Usage::remainingText(qint64 seconds) {
+    const qint64 minutes = (seconds + 59) / 60;
+    if (minutes >= 1440) return QString("%1d %2h").arg(minutes / 1440).arg((minutes % 1440) / 60);
+    if (minutes >= 60) return QString("%1h %2m").arg(minutes / 60).arg(minutes % 60);
+    return QString("%1m").arg(minutes);
+}
+
 QString Usage::countdown(const QString &timestamp) {
     const auto when = QDateTime::fromString(timestamp, Qt::ISODateWithMs);
     if (!when.isValid()) return "No scheduled reset";
     const auto seconds = QDateTime::currentDateTimeUtc().secsTo(when);
     if (seconds <= 0) return "Reset pending";
-    const auto minutes = (seconds + 59) / 60;
-    if (minutes >= 1440) return QString("Resets in %1d %2h").arg(minutes / 1440).arg((minutes % 1440) / 60);
-    if (minutes >= 60) return QString("Resets in %1h %2m").arg(minutes / 60).arg(minutes % 60);
-    return QString("Resets in %1m").arg(minutes);
+    return "Resets in " + remainingText(seconds);
 }
 
 QString Usage::resetTimeLabel(const QString &timestamp, const QDateTime &now, const QLocale &locale) {

@@ -140,7 +140,7 @@ private slots:
         bool reachable = true;
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(200, TestUsage::richSnapshot()) : QByteArray{}; };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, TestUsage::disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Cursor", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QVERIFY(!controller.providers()[0].toMap()["usage_details"].isNull());
         reachable = false; controller.refresh();
@@ -154,7 +154,7 @@ private slots:
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         ScriptedBackend other; QVERIFY(other.listen());
         other.respond = [](const QByteArray &) { return QByteArray{}; };
-        QVERIFY(controller.saveSettings("remote", other.url(), "", 60, false, "Cursor", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", other.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         for (const auto &p : controller.providers()) QVERIFY(p.toMap()["usage_details"].isNull());
         for (const auto &p : controller.displayProviders()) QVERIFY(p.toMap()["usage_details"].isNull());
     }
@@ -178,7 +178,7 @@ private slots:
             if (measurement.isValid() && !measurement.isNull()) {
                 QCOMPARE(Usage::concern("Cursor", b)["severity"].toInt(), 0);
                 QVERIFY(Usage::notches("Cursor", b).isEmpty());
-                const auto tray = TrayVisual::build({{"status", "ready"}}, {QVariantMap{{"provider_name", "Cursor"}, {"is_success", true}, {"buckets", QVariantList{b}}}}, "Cursor",
+                const auto tray = TrayVisual::build({{"status", "ready"}}, {QVariantMap{{"provider_name", "Cursor"}, {"is_success", true}, {"buckets", QVariantList{b}}}}, "Cursor", {},
                     [](const QString &name, const QVariantMap &bucket) { return Usage::concern(name, bucket); });
                 QCOMPARE(tray.kind, TrayVisual::Kind::Idle);
             }

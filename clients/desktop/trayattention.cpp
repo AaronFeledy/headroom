@@ -9,6 +9,10 @@ void TrayAttentionState::update(const TrayVisual::Model &model, qint64 now, bool
     if (m_provider != model.provider) acknowledge();
     m_provider = model.provider;
     const bool meter = model.kind == TrayVisual::Kind::Usage || model.kind == TrayVisual::Kind::Exhausted;
+    const bool wasCritical = m_critical.value(model.provider, false);
+    // Providers the tray isn't showing still advance their episodes, so one that
+    // recovers off the tray can alert again when it is shown in Critical.
+    for (auto it = model.critical.cbegin(); it != model.critical.cend(); ++it) m_critical.insert(it.key(), it.value());
     if (!meter || model.provider.isEmpty()) {
         acknowledge();
         return;
@@ -16,12 +20,17 @@ void TrayAttentionState::update(const TrayVisual::Model &model, qint64 now, bool
     // Both the main ring and secondary badge use the shared warning machine.
     const bool critical = model.level == Usage::WarningLevel::Critical
         || model.secondary == Usage::WarningLevel::Critical;
-    const bool entered = critical && !m_critical.value(model.provider, false);
-    // A snapshot may rename providers, so cap the episode map at the per-response
-    // provider limit. Dropping stale names can only re-arm a provider that is no
-    // longer reported; the current episode is already resolved above.
-    if (m_critical.size() >= MaxTrackedProviders && !m_critical.contains(model.provider)) m_critical.clear();
+    const bool entered = critical && !wasCritical;
     m_critical.insert(model.provider, critical);
+    // A snapshot may rename providers, so bound the episode map by the
+    // per-response provider limit. Dropping names the snapshot no longer reports
+    // can only re-arm a provider that disappeared; the shown episode is resolved above.
+    if (m_critical.size() > MaxTrackedProviders) {
+        for (auto it = m_critical.begin(); it != m_critical.end();) {
+            if (model.critical.contains(it.key()) || it.key() == model.provider) ++it;
+            else it = m_critical.erase(it);
+        }
+    }
     if (!critical || engaged) acknowledge();
     else if (entered) m_started = now;
 }

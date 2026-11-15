@@ -16,6 +16,7 @@
 #include "sshnetwork.h"
 #include "tlsproof.h"
 #include "resetpolicy.h"
+#include "trayvisual.h"
 
 class Controller : public QObject {
     Q_OBJECT
@@ -30,6 +31,9 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QVariantMap resetAction READ resetAction NOTIFY changed)
     Q_PROPERTY(QVariantMap browserChecked READ browserChecked NOTIFY providersChanged)
+    // Provider name the tray meter shows: the first provider, or the one
+    // closest to a limit when Settings asks the tray to follow it.
+    Q_PROPERTY(QString trayProvider READ trayProvider NOTIFY changed)
 public:
     explicit Controller(const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
@@ -94,7 +98,11 @@ public:
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QVariantMap loginCopy(const QVariantMap &provider) const;
-    Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {}, bool shareBrowserSignIns = true);
+    // Keys: mode, url, token, interval, notifications, forgetToken, sshUrl,
+    // shareBrowserSignIns, trayProvider. Absent keys keep their
+    // values, except that an absent or empty token keeps the saved token only for
+    // the same address, so a token is never carried to another server.
+    Q_INVOKABLE QString saveSettings(const QVariantMap &patch);
     Q_INVOKABLE QVariantMap concern(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE bool isPercent(const QVariantMap &bucket) const;
     Q_INVOKABLE QStringList detailRows(const QVariantMap &provider) const;
@@ -106,6 +114,9 @@ public:
     Q_INVOKABLE void setPrimary(const QString &name);
     Q_INVOKABLE void copyText(const QString &text);
     QString primary() const;
+    QString trayProvider() const;
+    // Meter id the tray ring shows; empty shows the provider's first meter.
+    QString trayMeter() const;
     Q_INVOKABLE void moveProvider(const QString &source, const QString &target, bool after);
 signals:
     void changed();
@@ -130,6 +141,7 @@ private:
         quint64 snapshotSerial = 0; // last accepted snapshot in which the provider succeeded
     };
     void updateMeterStates();
+    void updateTrayProvider();
     void fail(const QString &message, const QString &kind = "network");
     void log(const QString &category, const QString &message);
     void resetRetry();
@@ -170,11 +182,10 @@ private:
     QNetworkRequest resetRouteRequest(const QString &provider, const QString &route) const;
     void cancelAutomationRequest();
     void finishAutomationRequest(QNetworkReply *reply, bool arming, const QString &provider);
-    QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns);
     Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
-    QString m_mode = "remote", m_url, m_token, m_sshUrl, m_primary = "Claude", m_message;
+    QString m_mode = "remote", m_url, m_token, m_sshUrl, m_message;
     ConnectionStatus m_status = ConnectionStatus::Setup;
     Request m_request = Request::None;
     int m_interval = 60, m_retryAttempt = 0;
@@ -202,6 +213,9 @@ private:
     using MeterKey = QPair<QString, QString>;
     QHash<MeterKey, Usage::WarningState> m_warningStates;
     QHash<MeterKey, QVariantMap> m_concerns;
+    // The row and meter the tray follows in "constrained" mode; an empty key
+    // shows the first provider.
+    TrayVisual::Selection m_tray;
     QNetworkAccessManager m_network;
     QNetworkAccessManager m_localNetwork;
     SshNetworkAccessManager m_sshNetwork;

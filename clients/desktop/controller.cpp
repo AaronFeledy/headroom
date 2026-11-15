@@ -29,7 +29,7 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     const auto &loaded = m_settingsService.value();
     m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token; m_sshUrl = loaded.sshUrl;
     m_interval = loaded.interval; m_notifications = loaded.notifications;
-    m_primary = loaded.primary; m_order = loaded.order;
+    m_order = loaded.order;
     if (!m_settingsService.loadError().isEmpty()) m_message = m_settingsService.loadError();
     log("App", "Usage monitor started.");
     if (!m_settingsService.migrationNotice().isEmpty()) log("Settings", m_settingsService.migrationNotice());
@@ -124,7 +124,8 @@ QVariantMap Controller::settings() const {
     else connectionStatus = m_token.isEmpty() ? QStringLiteral("Not encrypted.")
         : QStringLiteral("Not encrypted. Headroom switches to HTTPS automatically when the server supports it.");
     return {{"mode", m_mode}, {"url", m_url}, {"sshUrl", m_sshUrl}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
-        {"notifications", m_notifications}, {"primary", primary()}, {"connectionStatus", connectionStatus},
+        {"notifications", m_notifications},
+        {"trayProvider", m_settingsService.value().trayProvider}, {"primary", primary()}, {"connectionStatus", connectionStatus},
         {"shareBrowserSignIns", m_settingsService.value().shareBrowserSignIns}, {"browserSharingStatus", m_credentials.sharingStatus()}};
 }
 QString Controller::connectionStatusName(ConnectionStatus status) {
@@ -472,11 +473,34 @@ Controller::~Controller() {
     cancelResetRequest();
     cancelAutomationRequest();
 }
-QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl, bool shareBrowserSignIns) {
+QString Controller::saveSettings(const QVariantMap &patch) {
     if (m_resetBusy) return "Wait for the reset request to finish before changing connections.";
+    static const QHash<QString, int> types{{"mode", QMetaType::QString}, {"url", QMetaType::QString},
+        {"token", QMetaType::QString}, {"sshUrl", QMetaType::QString}, {"trayProvider", QMetaType::QString},
+        {"interval", QMetaType::Int}, {"notifications", QMetaType::Bool}, {"forgetToken", QMetaType::Bool},
+        {"shareBrowserSignIns", QMetaType::Bool}};
+    for (auto it = patch.cbegin(); it != patch.cend(); ++it) {
+        const int type = types.value(it.key(), QMetaType::UnknownType), actual = it->typeId();
+        // QML numbers may arrive as doubles; only whole numbers are intervals.
+        const bool valid = type == QMetaType::Int
+            ? (actual == QMetaType::Int || actual == QMetaType::LongLong || actual == QMetaType::Double)
+                && std::isfinite(it->toDouble()) && std::floor(it->toDouble()) == it->toDouble()
+            : actual == type;
+        if (type == QMetaType::UnknownType || !valid) return QStringLiteral("Unsupported setting: %1.").arg(it.key());
+    }
+    DesktopSettings updated = m_settingsService.value();
+    const QString mode = patch.value("mode", m_mode).toString();
+    QString url = patch.value("url", m_url).toString().trimmed();
+    QString token = patch.value("token").toString().trimmed();
+    const QString sshUrl = patch.value("sshUrl").toString().trimmed();
+    const double interval = patch.value("interval", m_interval).toDouble();
+    const bool notifications = patch.value("notifications", m_notifications).toBool();
+    const bool forgetToken = patch.value("forgetToken", false).toBool();
+    updated.shareBrowserSignIns = patch.value("shareBrowserSignIns", updated.shareBrowserSignIns).toBool();
+    updated.trayProvider = patch.value("trayProvider", updated.trayProvider).toString();
+    if (mode != "local" && mode != "remote" && mode != "ssh") return "Choose a Local, HTTP(S), or SSH connection.";
+    if (!SettingsService::validTrayProvider(updated.trayProvider)) return "Choose which provider the tray shows.";
     m_resetConfirmation.clear();
-    if (mode != "local" && mode != "remote" && mode != "ssh") mode = "remote";
-    url = url.trimmed(); token = token.trimmed(); sshUrl = sshUrl.trimmed();
     if (mode == QStringLiteral("ssh")) { url = m_url; token = m_token; }
     if (mode == "local") url = Usage::endpoint(m_url).isEmpty() ? QString() : m_url;
     if (mode == "remote" && Usage::endpoint(url).isEmpty()) return "Use an HTTP or HTTPS address without credentials, a query, or a fragment.";
@@ -487,11 +511,9 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
         : (token.isEmpty() && (mode != "remote" || url == m_url) ? m_token : token);
     const QString retainedSshUrl = sshUrl.isEmpty() && mode != "ssh" ? m_sshUrl : sshUrl;
     const bool connectionChanged = m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl;
-    for (const auto &value : m_providers) {
-        const auto row = value.toMap();
-        if (row["provider_name"].toString() == primary) { primary = Usage::rowKey(row); break; }
-    }
-    const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary, shareBrowserSignIns);
+    updated.connectionMode = mode; updated.url = url; updated.token = savedToken; updated.sshUrl = retainedSshUrl;
+    updated.interval = int(interval); updated.notifications = notifications; updated.order = m_order;
+    const QString error = m_settingsService.save(updated, true);
     if (!error.isEmpty()) return error;
     if (mode == "remote") QHostInfo::clearCache();
     cancel();
@@ -509,21 +531,13 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
         m_notificationCenter.resetAutomaticResetBaseline();
         cancelAutomationRequest();
     }
-    m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
+    m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = int(interval); m_notifications = notifications;
+    updateTrayProvider();
     m_server.configure(m_mode, m_token);
     syncConnection();
     m_status = ConnectionStatus::Connecting; m_message.clear(); resetRetry();
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
-}
-QString Controller::writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary, bool shareBrowserSignIns) {
-    DesktopSettings updated = m_settingsService.value();
-    updated.connectionMode = mode; updated.url = url; updated.token = token;
-    updated.sshUrl = sshUrl;
-    updated.shareBrowserSignIns = shareBrowserSignIns;
-    updated.interval = interval; updated.notifications = notifications;
-    updated.primary = primary; updated.order = m_order;
-    return m_settingsService.save(updated, true);
 }
 QVariantList Controller::providers() const {
     auto result = m_providers;
@@ -542,7 +556,7 @@ QVariantList Controller::providers() const {
 QString Controller::primary() const {
     const auto ordered = providers();
     if (!ordered.isEmpty()) return ordered.first().toMap()["provider_name"].toString();
-    if (m_order.isEmpty()) return m_primary;
+    if (m_order.isEmpty()) return m_settingsService.value().primary;
     // Without rows an account key ("Claude:work") has no label; the tray shows its provider type.
     return m_order.first().section(':', 0, 0);
 }
@@ -569,7 +583,7 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
         return;
     }
     log("Settings", "Provider order changed.");
-    m_primary = order.first(); emit settingsChanged(); emit providersChanged(); emit changed();
+    emit settingsChanged(); emit providersChanged(); emit changed();
 }
 
 QString Controller::providerTypeFor(const QString &name) const {
@@ -649,6 +663,30 @@ void Controller::updateMeterStates() {
             m_warningStates.remove(key); m_concerns.remove(key);
         }
     }
+    updateTrayProvider();
+}
+void Controller::updateTrayProvider() {
+    if (m_settingsService.value().trayProvider != QStringLiteral("constrained")) { m_tray = {}; return; }
+    // Masked rows during an outage carry no readings; keep the selection until
+    // the server answers again, like the warning tiers.
+    if (m_status != ConnectionStatus::Ready) return;
+    m_tray = TrayVisual::constrainedProvider(providers(), m_tray.key,
+        [this](const QString &provider, const QVariantMap &bucket) { return concern(provider, bucket); });
+}
+QString Controller::trayProvider() const {
+    if (!m_tray.key.isEmpty()) {
+        for (const auto &value : m_providers) {
+            const auto row = value.toMap();
+            if (Usage::rowKey(row) == m_tray.key) return row["provider_name"].toString();
+        }
+    }
+    return primary();
+}
+QString Controller::trayMeter() const {
+    if (m_tray.key.isEmpty()) return {};
+    for (const auto &value : m_providers)
+        if (Usage::rowKey(value.toMap()) == m_tray.key) return m_tray.meter;
+    return {};
 }
 QVariantList Controller::notches(const QString &provider, const QVariantMap &bucket) const { return Usage::notches(providerTypeFor(provider), bucket); }
 QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucket) const { return Usage::pacing(providerTypeFor(provider), bucket); }

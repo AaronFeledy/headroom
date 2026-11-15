@@ -28,7 +28,7 @@ private slots:
             return httpResponse(200, TestUsage::snapshotWithFetchStatus(fetchedAt, "epoch-a"));
         };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QCOMPARE(controller.refreshStatus()["retrySeconds"].toInt(), 0);
         QVERIFY(controller.refreshStatus()["notice"].toString().isEmpty());
@@ -70,12 +70,12 @@ private slots:
         controller.requestRefresh(); QTest::qWait(50);
         QCOMPARE(backend.count("POST /api/v1/usage/refresh "), 1);
         // Saving the same connection keeps the server's window; a changed connection starts over.
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 30, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 30}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QVERIFY(controller.refreshStatus()["retrySeconds"].toInt() > 0);
         // A coalesced acceptance behaves the same way and is reported as such.
         accepted = R"({"status":"coalesced","retry_after_seconds":1})";
-        QVERIFY(controller.saveSettings("remote", backend.url() + "/", "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url() + "/"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QCOMPARE(controller.refreshStatus()["retrySeconds"].toInt(), 0);
         controller.requestRefresh();
@@ -95,7 +95,7 @@ private slots:
             return httpResponse(200, TestUsage::snapshotWithFetchStatus(fetchedAt, "epoch-a"));
         };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         const int readsBefore = backend.count("GET /api/v1/usage ");
         controller.requestRefresh();
@@ -142,7 +142,7 @@ private slots:
             return httpResponse(200, TestUsage::snapshot());
         };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         const int readsBefore = backend.count("GET /api/v1/usage ");
         controller.requestRefresh();

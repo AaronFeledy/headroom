@@ -1379,6 +1379,80 @@ private slots:
             QCOMPARE(state.value("phase").toString(), reading.offered ? QString("choices") : QString("hidden"));
         }
     }
+    static QByteArray weeklyPayload(double claude, double codex) {
+        const auto reset = QDateTime::currentDateTimeUtc().addDays(6).toString(Qt::ISODate);
+        const auto session = QDateTime::currentDateTimeUtc().addSecs(4 * 3600).toString(Qt::ISODate);
+        QJsonArray rows;
+        for (const auto &[name, used] : {std::pair{QStringLiteral("Claude"), claude}, std::pair{QStringLiteral("Codex"), codex}})
+            rows.append(QJsonObject{{"provider_name", name}, {"error", QJsonValue::Null}, {"is_success", true},
+                {"needs_reauth", false}, {"buckets", QJsonArray{
+                    QJsonObject{{"id", "session"}, {"label", "5-Hour"}, {"utilization", 5}, {"resets_at", session}},
+                    QJsonObject{{"id", "weekly"}, {"label", "Weekly"}, {"utilization", used}, {"resets_at", reset}}}}});
+        return QJsonDocument(rows).toJson();
+    }
+    void trayFollowsTheProviderClosestToALimit() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        ControllerFixture controller(dir.filePath("settings.json"), weeklyPayload(20, 97));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("remoteUpdateService", &remoteUpdate);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty()); auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->show(); QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 2);
+        const auto glows = [&](const QString &name) {
+            const auto item = findItem(window->contentItem(), "trayMeterGlow_" + name + "_0");
+            return item && item->isVisible();
+        };
+        const auto menuText = [&](const QString &name) {
+            const auto header = findItem(window->contentItem(), "providerHeader_" + name);
+            const auto menu = header ? header->findChild<QObject *>("providerMenu_" + name) : nullptr;
+            QQuickItem *item = nullptr;
+            if (menu) QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem *, item), Q_ARG(int, 0));
+            return item ? item->property("text").toString() : QString();
+        };
+        // The default keeps the first provider even though ChatGPT is closer to its limit.
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Claude"));
+        QCOMPARE(controller.trayMeter(), QString());
+        QTRY_VERIFY(glows("Claude")); QVERIFY(!glows("Codex"));
+        QCOMPARE(menuText("Codex"), QStringLiteral("Move to top / use in tray"));
+
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        QVERIFY(QMetaObject::invokeMethod(panel, "open")); QTRY_VERIFY(panel->property("opened").toBool());
+        auto choice = findItem(window->contentItem(), "trayProvider"); QVERIFY(choice); QVERIFY(choice->isVisible());
+        QCOMPARE(choice->property("currentIndex").toInt(), 0);
+        QVERIFY(choice->setProperty("currentIndex", 1));
+        QVERIFY(QMetaObject::invokeMethod(panel, "saveAndConnect"));
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QCOMPARE(SettingsService(controller.settingsPath(), false).value().trayProvider, QStringLiteral("constrained"));
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Codex"));
+        QCOMPARE(controller.trayMeter(), QStringLiteral("weekly"));
+        QTRY_VERIFY(glows("Codex")); QVERIFY(!glows("Claude"));
+        QCOMPARE(menuText("Codex"), QStringLiteral("Move to top"));
+
+        controller.replaceSnapshot(weeklyPayload(99.6, 10));
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Claude"));
+        QTRY_VERIFY(glows("Claude")); QVERIFY(!glows("Codex"));
+
+        QVERIFY(QMetaObject::invokeMethod(panel, "open")); QTRY_VERIFY(panel->property("opened").toBool());
+        QCOMPARE(choice->property("currentIndex").toInt(), 1);
+        QVERIFY(choice->setProperty("currentIndex", 0));
+        QVERIFY(QMetaObject::invokeMethod(panel, "saveAndConnect"));
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        controller.replaceSnapshot(weeklyPayload(10, 99.6));
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Claude"));
+        QCOMPARE(controller.trayMeter(), QString());
+        QCOMPARE(menuText("Codex"), QStringLiteral("Move to top / use in tray"));
+    }
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile settings(dir.filePath("settings.json")); QVERIFY(settings.open(QIODevice::WriteOnly));
@@ -1997,7 +2071,7 @@ private slots:
         };
         CredentialServiceOptions credentials; credentials.enabled = false;
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, credentials);
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;
@@ -2039,7 +2113,7 @@ private slots:
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(200, TestUsage::snapshot()) : QByteArray(); };
         CredentialServiceOptions credentials; credentials.enabled = false;
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, credentials);
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
         QQmlApplicationEngine engine;

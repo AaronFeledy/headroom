@@ -19,15 +19,20 @@ Popup {
     }
     property int selectedInterval: 60
     property var intervalValues: [15, 30, 60, 120, 300]
+    readonly property var trayProviderValues: ["first", "constrained"]
     function intervalLabel(seconds) {
         if (seconds === 60) return "1 minute"
         if (seconds % 60 === 0) return (seconds / 60) + " minutes"
         return seconds + " seconds"
     }
     function saveAndConnect() {
-        error.text = backend.saveSettings(localMode.checked ? "local" : (sshMode.checked ? "ssh" : "remote"), url.text, token.text,
-                                          panel.selectedInterval, notifications.checked,
-                                          backend.settings.primary, forget.checked, sshUrl.text, shareBrowser.checked)
+        error.text = backend.saveSettings({
+            mode: localMode.checked ? "local" : (sshMode.checked ? "ssh" : "remote"),
+            url: url.text, token: token.text, forgetToken: forget.checked, sshUrl: sshUrl.text,
+            interval: panel.selectedInterval, notifications: notifications.checked,
+            shareBrowserSignIns: shareBrowser.checked,
+            trayProvider: panel.trayProviderValues[trayProvider.currentIndex]
+        })
         if (!error.text) { token.text = ""; panel.close() }
     }
     signal diagnosticsRequested()
@@ -51,6 +56,7 @@ Popup {
         if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
         interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
+        trayProvider.currentIndex = Math.max(0, trayProviderValues.indexOf(backend.settings.trayProvider))
         shareBrowser.checked = backend.settings.shareBrowserSignIns
         if (updatesRequested) {
             updatesRequested = false
@@ -84,6 +90,22 @@ Popup {
             Text { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: Theme.background; font.pixelSize: 13 }
         }
         contentItem: Text { text: check.text; font: check.font; color: Theme.foreground; leftPadding: 30; verticalAlignment: Text.AlignVCenter }
+    }
+    component Choice: ComboBox {
+        id: choice
+        implicitWidth: 140; implicitHeight: 40
+        background: Rectangle { radius: 8; color: Theme.surface; border.color: choice.activeFocus ? Theme.purple : Theme.selection }
+        contentItem: Text { text: choice.displayText; color: Theme.foreground; font.pixelSize: 12; leftPadding: 12; rightPadding: 28; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+        indicator: Text { x: choice.width - 23; y: 12; text: "⌄"; color: Theme.muted }
+        delegate: ItemDelegate {
+            required property string modelData; required property int index
+            width: choice.width; text: modelData
+            contentItem: Text { text: modelData; color: Theme.foreground; font.pixelSize: 12 }
+            background: Rectangle { color: parent.highlighted ? Theme.selection : Theme.inset }
+            highlighted: choice.highlightedIndex === index
+        }
+        popup.closePolicy: Popup.CloseOnPressOutside
+        popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
     }
     component Entry: TextField {
         Layout.fillWidth: true; implicitHeight: 44; color: Theme.foreground; font.pixelSize: 13; selectByMouse: true
@@ -148,24 +170,23 @@ Popup {
                 Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 6
                     Caption { text: "Refresh interval" }
-                    Text { text: "Fetch the latest backend readings"; color: Theme.muted; font.pixelSize: 11 }
+                    Text { text: "Fetch the latest backend readings"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true }
                 }
-                ComboBox {
+                Choice {
                     id: interval; objectName: "refreshInterval"; model: panel.intervalValues.map(value => panel.intervalLabel(value))
-                    implicitWidth: 140; implicitHeight: 40; Accessible.name: "Refresh interval"
-                    background: Rectangle { radius: 8; color: Theme.surface; border.color: interval.activeFocus ? Theme.purple : Theme.selection }
-                    contentItem: Text { text: interval.displayText; color: Theme.foreground; font.pixelSize: 12; leftPadding: 12; verticalAlignment: Text.AlignVCenter }
-                    indicator: Text { x: parent.width - 23; y: 12; text: "⌄"; color: Theme.muted }
-                    delegate: ItemDelegate {
-                        required property string modelData; required property int index
-                        width: interval.width; text: modelData
-                        contentItem: Text { text: modelData; color: Theme.foreground; font.pixelSize: 12 }
-                        background: Rectangle { color: parent.highlighted ? Theme.selection : Theme.inset }
-                        highlighted: interval.highlightedIndex === index
-                    }
-                    popup.closePolicy: Popup.CloseOnPressOutside
-                    popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
+                    Accessible.name: "Refresh interval"
                     onActivated: panel.selectedInterval = panel.intervalValues[currentIndex]
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true; visible: trayAvailable
+                ColumnLayout { Layout.fillWidth: true; spacing: 6
+                    Caption { text: "Tray icon" }
+                    Text { text: "Provider shown in the tray meter"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true }
+                }
+                Choice {
+                    id: trayProvider; objectName: "trayProvider"; model: ["First provider", "Nearest limit"]
+                    Accessible.name: "Provider shown in the tray"
                 }
             }
             Check { id: notifications; text: "Notify about usage, banked resets, and updates"; palette.windowText: Theme.foreground; font.pixelSize: 12 }

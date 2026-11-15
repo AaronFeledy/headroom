@@ -36,7 +36,7 @@ private slots:
         options.probeTimeoutMs = 8000; options.readinessProbeTimeoutMs = 750;
         options.readinessIntervalMs = 50; options.readinessAttempts = 30;
         Controller controller(dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
-        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(controller.state()["status"].toString(), QString("ready"), 15000);
         const auto named = [](const QVariantList &list, const QString &name) {
             for (const auto &value : list) if (value.toMap()["provider_name"].toString() == name) return value.toMap();
@@ -95,7 +95,7 @@ private slots:
         QByteArray body = TestUsage::snapshot();
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(status, status == 200 ? body : QByteArray("{}")) : QByteArray(); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         // A dead host is retried on the short network schedule: 5, 10, 20 seconds...
         reachable = false;
@@ -124,7 +124,7 @@ private slots:
         bool reachable = true;
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(200, TestUsage::snapshot()) : QByteArray(); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QCOMPARE(controller.providers().size(), 4);
         reachable = false; controller.refresh();
@@ -151,7 +151,7 @@ private slots:
         QByteArray body = TestUsage::snapshotWithFetchStatus(stamp(0), "epoch-a", {{"Claude", "transient"}});
         backend.respond = [&](const QByteArray &) { return httpResponse(200, body); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         // The server retries a transient provider failure itself; read its cache sooner, but never faster than 15 seconds.
         int retry = controller.state()["retrySeconds"].toInt();
@@ -171,7 +171,7 @@ private slots:
         int status = 200; bool reachable = true; QByteArray body = TestUsage::snapshot();
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(status, status == 200 ? body : QByteArray("{}")) : QByteArray(); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "synthetic-bearer", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"token", "synthetic-bearer"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         auto masked = [&](const QString &kind) {
             QTRY_VERIFY(!controller.state()["loading"].toBool());

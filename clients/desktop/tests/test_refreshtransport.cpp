@@ -35,7 +35,7 @@ private slots:
             return httpResponse(200, TestUsage::snapshot());
         };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         const int readsBefore = backend.count("GET /api/v1/usage ");
         controller.requestRefresh();
@@ -61,7 +61,7 @@ private slots:
             return httpResponse(200, TestUsage::snapshot());
         };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         controller.requestRefresh();
         QTRY_COMPARE(backend.count("POST /api/v1/usage/refresh "), 1);
@@ -93,7 +93,7 @@ private slots:
         QVERIFY(controller.refreshStatus()["retrySeconds"].toInt() > 0);
         QCOMPARE(controller.backendUrl(), QString("ssh://valid"));
         // The fixed receiver on an older server answers 400 "invalid request": read the cache and say so.
-        QVERIFY(controller.saveSettings("ssh", "", "", 60, false, "Claude", false, "ssh://legacy").isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "ssh"}, {"interval", 60}, {"notifications", false}, {"sshUrl", "ssh://legacy"}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QCOMPARE(controller.refreshStatus()["retrySeconds"].toInt(), 0);
         controller.requestRefresh();

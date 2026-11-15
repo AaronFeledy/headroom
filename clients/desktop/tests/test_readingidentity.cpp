@@ -24,7 +24,7 @@ private slots:
         QByteArray body = TestUsage::snapshot();
         backend.respond = [&](const QByteArray &) { return reachable ? httpResponse(status, status == 200 ? body : QByteArray("{}")) : QByteArray(); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         const auto live = controller.providers();
         reachable = false; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
@@ -62,12 +62,12 @@ private slots:
         // The other server reports the very same epoch string; it is still a different peer.
         second.respond = [&](const QByteArray &) { return httpResponse(200, TestUsage::snapshotWithFetchStatus(stamp, "epoch-a", {{"Claude", "transient"}})); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", first.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", first.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         body = TestUsage::snapshotWithFetchStatus(stamp, "epoch-a", {{"Claude", "transient"}});
         controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QVERIFY(controller.displayProviders().first().toMap()["stale"].toBool());
-        QVERIFY(controller.saveSettings("remote", second.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", second.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QVERIFY(controller.displayProviders().isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QCOMPARE(controller.displayProviders().size(), 4);
@@ -83,7 +83,7 @@ private slots:
         // The server's cache already held a five-minute-old reading when this session first read it.
         body = TestUsage::snapshotWithFetchStatus(stamp(fetched), "epoch-a");
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         auto read = [&](const QByteArray &payload) { body = payload; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool()); };
         auto claude = [&] { return controller.displayProviders().first().toMap(); };
@@ -130,7 +130,7 @@ private slots:
         };
         body = TestUsage::snapshotWithFetchStatus(stamp(0), "epoch-a");
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         auto read = [&](const QByteArray &payload) { body = payload; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool()); };
         auto claude = [&] { return controller.displayProviders().first().toMap(); };

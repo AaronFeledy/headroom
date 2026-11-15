@@ -55,6 +55,28 @@ private slots:
         state.update(stable, 100100);
         QVERIFY(!state.active(100100));
     }
+    void providersOffTheTrayKeepTheirEpisodes() {
+        // Codex goes Critical behind Claude and is acknowledged on arrival.
+        TrayAttentionState state;
+        auto claude = model(); claude.critical = {{"Claude", true}, {"Codex", true}};
+        state.update(claude, 0);
+        state.acknowledge();
+        auto codex = model(); codex.provider = "Codex"; codex.critical = claude.critical;
+        state.update(codex, 1000);
+        QVERIFY(!state.active(1000)); // Already seen while off the tray.
+        // A recovery observed off the tray re-arms the next Critical entry.
+        claude.critical["Codex"] = false;
+        state.update(claude, 2000);
+        codex.critical["Codex"] = true;
+        state.update(codex, 3000);
+        QVERIFY(state.active(3000));
+        // Missing data (a failed provider) is not a recovery.
+        state.acknowledge();
+        claude.critical.remove("Codex");
+        state.update(claude, 4000);
+        state.update(codex, 5000);
+        QVERIFY(!state.active(5000));
+    }
     void pollingAndAcknowledgementDoNotRestartTheEpisode() {
         TrayAttentionState state;
         state.update(model(), 0);

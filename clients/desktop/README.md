@@ -15,8 +15,8 @@ update checks for the same version/state do not notify again; warning transition
 continue to use the existing hysteresis rules.
 
 A cyan dot in the tray icon's upper-right corner means there are unseen
-notifications, including alerts from providers other than the tray's primary
-provider. It remains through usage refreshes, offline states, and the temporary
+notifications, including alerts from providers other than the one the tray
+shows. It remains through usage refreshes, offline states, and the temporary
 critical animation. Hovering or opening the tray menu does not clear it.
 
 Opening and activating the dashboard clears unseen notifications automatically
@@ -285,11 +285,24 @@ warning colors reserved for high usage and over-pace indicators. Hovering a
 provider highlights its border while preserving contrast with the meter tracks.
 Drag a provider panel onto another panel. Drop in the upper half to insert
 before it, or the lower half to insert after it. A line marks the insertion point.
-Rows read top to bottom. The first provider always supplies the tray meter and its card has a subtle glow; the full order
-is saved across restarts and polls. Right-click a provider icon or title to move a provider
-directly to the top. Orders are local to each client, and the default order is
-Claude, ChatGPT, Cursor, Grok, then OpenCode Go. A provider without usable
-data produces an unknown tray meter instead of silently switching providers.
+Rows read top to bottom, and the full order is saved across restarts and polls.
+Right-click a provider icon or title to move a provider directly to the top.
+Orders are local to each client, and the default order is Claude, ChatGPT,
+Cursor, Grok, then OpenCode Go. The provider shown in the tray has a subtle glow
+on its card.
+
+By default the first provider supplies the tray meter. A provider without usable
+data then produces an unknown tray meter instead of silently switching providers.
+Set **Tray icon** to **Nearest limit** in Settings to have the tray follow
+whichever provider is nearest a limit: the highest shared warning tier first,
+then the highest percent used. The ring then shows that provider's meter
+closest to its limit, such as Weekly, instead of its first meter. Only fresh
+percent meters count. Status-only meters, expired windows, failed providers, and
+the labelled stale readings kept during an error never take the tray. To avoid flapping between close providers, the tray
+switches only when another provider reaches a higher tier or leads by at least
+five percentage points in the same tier. While the server is unreachable, the
+tray keeps the provider it was showing. If no provider has a usable meter, the
+first provider is shown.
 
 On managed Windows installations, the stable launcher owns the tray icon with a
 persistent GUID, so versioned desktop updates keep the same Windows tray identity.
@@ -301,11 +314,12 @@ isolated sessions continue using Qt directly. Users may need to show the new
 stable icon once when upgrading from an older build; the app never rewrites
 Windows tray preferences.
 
-The tray shows the first provider's first usage bucket as a ring around a
-centered provider logo, without a numeric label. A white tick marks expected pace;
-a secondary dot shows the highest warning among that provider's other meters.
-The tooltip has two lines: provider/primary usage, then reset time and warning
-level when needed. Connection errors replace those details with a short status.
+The tray shows its provider's first usage meter, or with **Nearest limit** the
+meter closest to its limit, as a ring around a centered provider logo, without
+a numeric label. A white tick marks expected pace; a secondary dot shows the
+highest warning among that provider's other meters. The tooltip has two lines:
+provider, meter, and usage, then reset time and warning level when needed.
+Connection errors replace those details with a short status.
 When the server cannot be reached, a red X replaces the tray's provider logo.
 Offline dashboard cards, the empty connection panel, and the footer divider turn
 red while showing the last readings as labelled stale meters. Their normal
@@ -319,7 +333,10 @@ tray hover or icon geometry (Windows and supported X11 trays). KDE/Wayland trays
 use the other engagement actions because their protocol does not report hover.
 The static warning color remains until usage recovers. Polls and reconnects do
 not restart an acknowledged warning; a new transition into Critical can alert
-again. A focused dashboard suppresses the animation.
+again. Providers the tray isn't showing keep their own Critical episodes, so a
+provider that takes over the tray in Critical animates only if it hadn't already
+been Critical, and one that recovered off the tray can animate again. A focused
+dashboard suppresses the animation.
 
 Click the tray icon to open or hide the frameless dashboard beside it. The popup
 stays above ordinary windows and dismisses when focus moves outside the app;
