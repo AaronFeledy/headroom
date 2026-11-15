@@ -32,12 +32,17 @@ void ManagedServer::requestRestart(const QJsonObject &request, bool updateBusy,
         reply({{"ok", true}, {"result", "busy"}});
         return;
     }
-    if (m_mode != QStringLiteral("local") || !ownsProcess()) {
+    const QString requested = request.value("config_path").toString();
+    const bool owned = ownsProcess();
+    // With no child running and nothing attached, relaunching the server the
+    // desktop last started for this file cannot stop another server.
+    const bool relaunch = !owned && (m_state == State::Failed || m_state == State::Idle)
+        && sameConfig(m_lastOwnedConfigPath, requested);
+    if (m_mode != QStringLiteral("local") || (!owned && !relaunch)) {
         reply({{"ok", true}, {"result", "not_owner"}});
         return;
     }
-    const QString requested = request.value("config_path").toString();
-    if (!sameConfig(ownedConfigPath(), requested)) {
+    if (owned && !sameConfig(ownedConfigPath(), requested)) {
         reply({{"ok", true}, {"result", "other_config"}, {"config_path", ownedConfigPath()}});
         return;
     }
@@ -75,6 +80,6 @@ void ManagedServer::requestRestart(const QJsonObject &request, bool updateBusy,
         else finish({{"ok", false}, {"error", message}});
     });
     deadline->start(m_options.restartTimeoutMs);
-    stopOwned();
+    if (owned) stopOwned();
     ensureAvailable();
 }

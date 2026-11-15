@@ -92,6 +92,9 @@ private:
     State m_state = State::Remote;
     QString m_message;
     QString m_configPath;
+    // Kept after the child exits so a failed restart-server request can be
+    // followed by a relaunch for the same file.
+    QString m_lastOwnedConfigPath;
     QPointer<QObject> m_restartRequest;
     QByteArray m_identityOutput;
     QByteArray m_sessionNonce;

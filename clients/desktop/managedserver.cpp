@@ -485,6 +485,7 @@ void ManagedServer::finishIdentity()
     m_identityOutput.clear();
     m_sessionCertificate = certificates.first();
     m_configPath = object.value(QStringLiteral("config_path")).toString();
+    m_lastOwnedConfigPath = m_configPath;
     m_sessionUrl = QUrl(QStringLiteral("https://") + address + '/');
     m_network.clearConnectionCache();
     emit connectionChanged();

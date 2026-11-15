@@ -107,6 +107,31 @@ private slots:
         QCOMPARE(response.value("result").toString(), QString("not_owner"));
         QVERIFY(attached.isListening()); QVERIFY(server.isAttached());
     }
+    void relaunchesAfterFailedRestart() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath("config.yaml");
+        QFile config(path); QVERIFY(config.open(QIODevice::WriteOnly)); config.close();
+        qputenv("HEADROOM_FIXTURE_CONFIG_PATH", path.toUtf8());
+        ManagedServer server(options()); QSignalSpy ready(&server, &ManagedServer::available);
+        server.configure("local", {}); server.ensureAvailable();
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 15000);
+        const auto originalPid = server.ownedProcessId();
+        qputenv("HEADROOM_FIXTURE_MODE", "bad-nonce");
+        QJsonObject failed;
+        server.requestRestart(request(path), false, [&](const auto &value) { failed = value; });
+        QTRY_VERIFY_WITH_TIMEOUT(!failed.isEmpty(), 15000);
+        QCOMPARE(failed.value("ok").toBool(), false); QVERIFY(!server.ownsProcess());
+
+        qunsetenv("HEADROOM_FIXTURE_MODE");
+        QJsonObject other;
+        server.requestRestart(request(dir.filePath("other.yaml")), false, [&](const auto &value) { other = value; });
+        QCOMPARE(other.value("result").toString(), QString("not_owner")); QVERIFY(!server.ownsProcess());
+        QJsonObject relaunched;
+        server.requestRestart(request(path), false, [&](const auto &value) { relaunched = value; });
+        QTRY_VERIFY_WITH_TIMEOUT(!relaunched.isEmpty(), 15000);
+        QCOMPARE(relaunched.value("result").toString(), QString("restarted"));
+        QVERIFY(server.ownsProcess()); QVERIFY(server.ownedProcessId() != originalPid);
+    }
     void ownedRestart_data() {
         QTest::addColumn<QString>("scenario");
         for (const auto &name : {"restart", "canonical", "other", "unknown", "failed", "changed-config", "update-busy", "timeout"})
