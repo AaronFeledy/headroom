@@ -133,19 +133,23 @@ failed discovery: `keychain` or `cli`, with `signed_in`, `signed_out`, `locked`,
 `unreadable`, or selected `expired` status. Keychain access is read-only through
 `/usr/bin/security find-generic-password`: never write, delete, unlock, or
 change ACLs, and never refresh a Keychain token (Claude Code owns refresh and
-its write lock). File refreshes write through symlinks and reject known
-non-writable or non-replaceable stores before the token POST. Claude Code files
-take `.oauth_refresh.lock` in the credentials file's original directory, then
-the legacy resolved-directory `.lock`, with five-second heartbeats and 60-second
-staleness. Headroom writes no `.oauth_refresh.lock.owner` record, preventing
-Claude Code's dead-holder takeover; only the heartbeat prevents ordinary stale
-reclamation. Immediately before the POST it verifies and renews its locks.
-After a sent POST, refresh and write-back survive poll cancellation; the edit
-rechecks both tokens and preserves a concurrent sign-in, even if the Claude Code
-lock was lost. The final re-read preserves visible unrelated edits but is not
-compare-and-swap against writers outside Headroom's lock. Native Windows also
-takes the mkdir lock when refreshing the WSL home's file over 9P; this is not
-natively validated. Locked or unavailable Keychains
+its write lock). Every file refresh goes through `credstore.RefreshTokens`, the
+one owner of the spent-pair rule: a file that no longer holds the spent access
+and refresh tokens is adopted without an exchange, the exchange runs at most once,
+and the result is saved only while the file still holds that pair (a successor
+already on disk counts as saved; anything else is discarded). `credstore.Refresh`
+writes through symlinks, refuses known unsaveable stores with a typed
+`*NotWritableError` before any exchange, retries a failed commit up to four more
+times on freshly read bytes, and finishes a commit even after the poll is
+canceled; exchanges use detached bounded contexts. A refresh that still can't be
+saved is lost and logged as such; never log tokens. Claude Code files take
+`.oauth_refresh.lock` in the credentials file's own directory, then the legacy
+`<resolved directory>.lock`, with five-second heartbeats and 60-second staleness,
+and verify and renew them just before the POST. Headroom writes no
+`.oauth_refresh.lock.owner` record, so only its heartbeat prevents stale
+reclamation. Native Windows refuses to refresh files in WSL because 9P rejects
+byte-range locks. Codex and Grok refresh only after expiry (Codex-file tokens
+only on 401/403) because their CLIs share no lock with Headroom. Locked or unavailable Keychains
 carry no sign-in command; expired Keychain sign-ins keep their command and explain
 that Claude Code owns refresh. Tests use fake Keychains; the macOS-only native
 fixture requires `HEADROOM_KEYCHAIN_FIXTURE=1`, uses only disposable synthetic
@@ -354,6 +358,16 @@ resource-limited machine. Do not run the full suite unless explicitly requested;
 the package CI matrix owns comprehensive and native-platform validation. The
 [package guide](packaging/README.md#focused-installation-checks) lists the fast
 installation and activation checks.
+
+Credential write-back has two opt-in lock fixtures (documented at the top of
+each test file): `HEADROOM_PROPER_LOCKFILE_FIXTURE=1` runs Headroom's Claude Code
+lock against the pinned `proper-lockfile` package after `npm ci --ignore-scripts`
+in `server/internal/providers/claude/testdata/lockfile-interop`, and
+`HEADROOM_WSL_LOCK_FIXTURE=1` runs a Windows test binary from WSL against a
+`\\wsl.localhost` directory. From WSL, native Windows tests run as
+`GOOS=windows go test -c -o /mnt/c/<temp dir>/pkg.test.exe ./internal/<pkg>` and
+then the `.exe`. Claude tests' `TestMain` keeps discovery away from the real WSL
+home and user profile; keep new tests on temp paths.
 
 The complete CI verification inventory, from the repository root:
 
