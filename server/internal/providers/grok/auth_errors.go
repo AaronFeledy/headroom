@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -38,9 +39,9 @@ func reauth(data usage.UsageData) usage.UsageData {
 	return data
 }
 
-func unwritableReauth(data usage.UsageData) usage.UsageData {
+func unwritableReauth(data usage.UsageData, cause error) usage.UsageData {
 	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureAuth}
-	data.Error = strPtr("Sign-in expired. Headroom can't save a refreshed sign-in; run `grok login` to refresh it.")
+	data.Error = strPtr("Sign-in expired, and Headroom can't save a refreshed one because " + credstore.NotWritablePhrase(cause) + ". Run `grok login` to refresh it.")
 	data.NeedsReauth = true
 	return data
 }

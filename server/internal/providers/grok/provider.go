@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,7 +27,6 @@ const (
 	tokenAuthHeader     = "xai-grok-cli"
 	userAgent           = "ClaudeUsageWidget"
 	defaultHTTPTimeout  = 10 * time.Second
-	refreshBuffer       = 5 * time.Minute
 	tokenRequestTimeout = 30 * time.Second
 )
 
@@ -48,6 +48,8 @@ type Options struct {
 	AutoTopUpURL      string
 	ResetInventoryURL string
 	Now               func() time.Time
+	// Logger receives refusal and save-failure warnings; nil discards them.
+	Logger *slog.Logger
 }
 
 type Provider struct {
@@ -58,6 +60,8 @@ type Provider struct {
 	webBillingURL   string
 	tokenURL        string
 	now             func() time.Time
+	logger          *slog.Logger
+	refusalLog      credstore.RefusalLog
 	store           credentialStore
 	webMu           sync.RWMutex
 	webCookie       string
@@ -74,6 +78,10 @@ func NewProvider(opts Options) (*Provider, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	provider := &Provider{
 		credentialsPath: path,
 		httpClient:      client,
@@ -82,6 +90,7 @@ func NewProvider(opts Options) (*Provider, error) {
 		webBillingURL:   defaultString(opts.WebBillingURL, webBillingURL),
 		tokenURL:        defaultString(opts.TokenURL, tokenURL),
 		now:             opts.Now,
+		logger:          logger,
 	}
 	if provider.now == nil {
 		provider.now = func() time.Time { return time.Now().UTC() }
@@ -175,7 +184,7 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 		refreshed, err := p.refresh(ctx, creds, refreshReasonUnauthorized)
 		if err != nil {
 			if errors.Is(err, credstore.ErrNotWritable) {
-				return unwritableReauth(data), nil
+				return unwritableReauth(data, err), nil
 			}
 			return p.refreshError(data, err)
 		}

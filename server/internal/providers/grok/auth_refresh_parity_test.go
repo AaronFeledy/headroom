@@ -209,14 +209,14 @@ func Test_credentials_needsRefresh_uses_30_day_create_time_fallback(t *testing.T
 	}
 
 	// When
-	beforeWindow := creds.needsRefresh(created.Add(30*24*time.Hour - refreshBuffer - time.Second))
-	atWindow := creds.needsRefresh(created.Add(30*24*time.Hour - refreshBuffer))
+	beforeWindow := creds.needsRefresh(created.Add(30*24*time.Hour - time.Second))
+	atWindow := creds.needsRefresh(created.Add(30 * 24 * time.Hour))
 
 	// Then
 	if beforeWindow {
-		t.Fatalf("needsRefresh before fallback window = true, want false")
+		t.Fatalf("needsRefresh before fallback expiry = true, want false")
 	}
 	if !atWindow {
-		t.Fatalf("needsRefresh at fallback window = false, want true")
+		t.Fatalf("needsRefresh at fallback expiry = false, want true")
 	}
 }

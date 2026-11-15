@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -43,7 +44,7 @@ func (c credentials) needsRefresh(now time.Time) bool {
 	if c.refreshToken == "" || expiresAt.IsZero() {
 		return false
 	}
-	return !now.Before(expiresAt.Add(-refreshBuffer))
+	return !now.Before(expiresAt)
 }
 
 func (c credentials) effectiveExpiresAt() time.Time {
@@ -66,7 +67,7 @@ func (p *Provider) credentials(ctx context.Context) (credentials, error) {
 		if err != nil {
 			return credentials{}, fmt.Errorf("stat Grok auth: %w", err)
 		}
-		state := credstore.RefreshState{Snapshot: snapshot, CurrentModTime: info.ModTime(), ExpiresAt: creds.effectiveExpiresAt().Add(-refreshBuffer)}
+		state := credstore.RefreshState{Snapshot: snapshot, CurrentModTime: info.ModTime(), ExpiresAt: creds.effectiveExpiresAt()}
 		if credstore.ShouldRefresh(p.now(), state) != credstore.RefreshDecisionReload {
 			return creds, nil
 		}
@@ -170,49 +171,62 @@ func parseCredentialTime(raw json.RawMessage, field string) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
+// refresh spends the caller's token pair through credstore.RefreshTokens. A
+// file that already holds a different pair is adopted without an exchange.
 func (p *Provider) refresh(ctx context.Context, stale credentials, reason refreshReason) (credentials, error) {
 	p.store.refresh.Lock()
 	defer p.store.refresh.Unlock()
-	err := credstore.Refresh(ctx, p.credentialsPath, func(data []byte) (credstore.Mutator, error) {
-		current, err := parseCredentials(data)
+	if reason == refreshReasonProactive && !stale.needsRefresh(p.now()) {
+		return stale, nil
+	}
+	if strings.TrimSpace(stale.refreshToken) == "" {
+		return credentials{}, errInvalidGrant
+	}
+	spent := credstore.TokenPair{Access: stale.accessToken, Refresh: stale.refreshToken}
+	_, _, err := credstore.RefreshTokens(ctx, p.credentialsPath, spent, p.credentialCodec(), func(file []byte) (credentials, error) {
+		current, err := parseCredentials(file)
 		if err != nil {
-			return nil, err
-		}
-		if current.accessToken != stale.accessToken || current.refreshToken != stale.refreshToken {
-			return nil, nil
-		}
-		if reason == refreshReasonProactive && !current.needsRefresh(p.now()) {
-			return nil, nil
-		}
-		if current.refreshToken == "" {
-			return nil, errInvalidGrant
+			return credentials{}, err
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return credentials{}, err
 		}
 		exchangeCtx, exchangeCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
 		defer exchangeCancel()
 		refreshed, err := p.requestRefresh(exchangeCtx, current)
 		if err != nil {
-			return nil, err
+			return credentials{}, err
 		}
 		refreshed.entryKey = current.entryKey
-		spentAccess, spentRefresh := current.accessToken, current.refreshToken
-		return func(latest []byte) ([]byte, error) {
-			latestCreds, err := parseCredentials(latest)
-			if err != nil {
-				return nil, err
-			}
-			if latestCreds.accessToken != spentAccess || latestCreds.refreshToken != spentRefresh {
-				return latest, nil
-			}
-			return updateCredentialJSON(latest, refreshed)
-		}, nil
+		return refreshed, nil
 	})
 	if err != nil {
+		if errors.Is(err, credstore.ErrNotWritable) {
+			p.recordRefusal(err, spent)
+		}
 		return credentials{}, err
 	}
+	p.refusalLog.Saved()
 	loadCtx, loadCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
 	defer loadCancel()
 	return p.loadCredentials(loadCtx)
+}
+
+func (p *Provider) credentialCodec() credstore.TokenCodec[credentials] {
+	return credstore.TokenCodec[credentials]{
+		Pair: func(file []byte) (credstore.TokenPair, error) {
+			creds, err := parseCredentials(file)
+			if err != nil {
+				return credstore.TokenPair{}, err
+			}
+			return credstore.TokenPair{Access: creds.accessToken, Refresh: creds.refreshToken}, nil
+		},
+		Apply: func(file []byte, refreshed credentials) ([]byte, error) {
+			return updateCredentialJSON(file, refreshed)
+		},
+		Of: func(refreshed credentials) credstore.TokenPair {
+			return credstore.TokenPair{Access: refreshed.accessToken, Refresh: refreshed.refreshToken}
+		},
+		Warn: p.warnUnsaveable,
+	}
 }

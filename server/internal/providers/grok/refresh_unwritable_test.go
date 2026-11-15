@@ -116,7 +116,7 @@ func Test_Provider_unauthorized_refresh_reports_expired_when_store_unwritable(t 
 	if !data.NeedsReauth {
 		t.Fatal("NeedsReauth = false, want true")
 	}
-	if data.Error == nil || !strings.Contains(*data.Error, "Headroom can't save a refreshed sign-in") || !strings.Contains(*data.Error, "grok login") {
+	if data.Error == nil || !strings.Contains(*data.Error, "Headroom can't save a refreshed one because the credentials file is read-only") || !strings.Contains(*data.Error, "grok login") {
 		t.Fatalf("Error = %v, want unwritable message", data.Error)
 	}
 	assertOwnerRestored(t, authPath)
