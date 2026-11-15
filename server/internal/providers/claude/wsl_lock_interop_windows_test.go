@@ -21,7 +21,8 @@ package claude
 // WSLENV is required: WSL does not forward the Linux shell environment to a
 // native Windows process without it, and the /u flag excludes rather than
 // includes a variable. The node path must be absolute because a non-login
-// wsl.exe shell does not load nvm.
+// wsl.exe shell does not load nvm. The refusal tests only need
+// HEADROOM_WSL_DISTRO.
 //
 // The two kernels do not necessarily share a clock (WSL can drift ahead of the
 // Windows host by seconds), so the fixture measures the offset and derives a
@@ -31,6 +32,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,20 +42,15 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
-func requireWSLFixture(t *testing.T) (argv []string, distro, winDir, linuxDir string) {
+// requireWSLDir creates the directory shared with WSL over 9P. Tests that only
+// need the shared path use it directly; contender tests add the Node command.
+func requireWSLDir(t *testing.T) (distro, winDir, linuxDir string) {
 	t.Helper()
 	if os.Getenv(wslLockFixtureEnv) != "1" {
 		t.Skip("set " + wslLockFixtureEnv + "=1 to run the Windows-to-WSL lock fixture")
-	}
-	node := strings.TrimSpace(os.Getenv("HEADROOM_WSL_NODE_PATH"))
-	script := strings.TrimSpace(os.Getenv("HEADROOM_WSL_FIXTURE_SCRIPT"))
-	if node == "" || script == "" {
-		t.Fatal("HEADROOM_WSL_NODE_PATH and HEADROOM_WSL_FIXTURE_SCRIPT are required")
 	}
 	distro = strings.TrimSpace(os.Getenv("HEADROOM_WSL_DISTRO"))
 	if distro == "" {
@@ -69,6 +67,17 @@ func requireWSLFixture(t *testing.T) (argv []string, distro, winDir, linuxDir st
 			t.Errorf("remove fixture directory: %v", err)
 		}
 	})
+	return distro, winDir, linuxDir
+}
+
+func requireWSLFixture(t *testing.T) (argv []string, distro, winDir, linuxDir string) {
+	t.Helper()
+	distro, winDir, linuxDir = requireWSLDir(t)
+	node := strings.TrimSpace(os.Getenv("HEADROOM_WSL_NODE_PATH"))
+	script := strings.TrimSpace(os.Getenv("HEADROOM_WSL_FIXTURE_SCRIPT"))
+	if node == "" || script == "" {
+		t.Fatal("HEADROOM_WSL_NODE_PATH and HEADROOM_WSL_FIXTURE_SCRIPT are required")
+	}
 	return []string{"wsl.exe", "-d", distro, "--", node, script}, distro, winDir, linuxDir
 }
 
@@ -175,7 +184,7 @@ func Test_WSL_lock_interop_legacy_lock_through_symlinked_config_dir(t *testing.T
 	if info.Mode()&os.ModeSymlink == 0 {
 		// The 9P redirector marks the Linux symlink as a reparse point but does
 		// not expose its target, so a native Windows process cannot resolve it.
-		t.Skipf("9P hides Linux symlink targets from Windows, so the legacy lock path cannot match Claude Code's realpath for a symlinked WSL config dir")
+		t.Skipf("9P hides Linux symlink targets from Windows, so the legacy lock path cannot match Claude Code's realpath for a symlinked WSL config dir; refresh is refused on 9P anyway, so the legacy path is not used there")
 	}
 	lock, err := acquireClaudeCodeLock(context.Background(), configWin, interopLockConfig(stale, 0))
 	if err != nil {
@@ -197,41 +206,29 @@ func Test_WSL_lock_interop_legacy_lock_through_symlinked_config_dir(t *testing.T
 	}
 }
 
-func Test_WSL_lock_interop_credstore_replaces_file_over_9p(t *testing.T) {
-	_, _, winDir, _ := requireWSLFixture(t)
+func Test_WSL_lock_interop_credstore_refuses_unlockable_store(t *testing.T) {
+	_, winDir, _ := requireWSLDir(t)
 	path := filepath.Join(winDir, "credentials.json")
 	if err := os.WriteFile(path, []byte(`{"token":"old"}`), 0o600); err != nil {
 		t.Fatalf("write fixture credentials: %v", err)
 	}
+	prepared := false
 	err := credstore.Refresh(context.Background(), path, func(current []byte) (credstore.Mutator, error) {
-		if string(current) != `{"token":"old"}` {
-			t.Errorf("prepare saw %s", current)
-		}
-		return func(latest []byte) ([]byte, error) {
-			return []byte(`{"token":"new"}`), nil
-		}, nil
+		prepared = true
+		return nil, errors.New("prepare must not run")
 	})
-	if errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
-		t.Skipf("9P does not support LockFileEx, so a native Windows refresh cannot lock the WSL home yet: %v", err)
+	var refused *credstore.NotWritableError
+	if !errors.As(err, &refused) {
+		t.Fatalf("Refresh over 9P = %v, want NotWritableError", err)
 	}
-	if err != nil {
-		t.Fatalf("credstore.Refresh over 9P: %v", err)
+	if refused.Reason != credstore.ReasonLockUnsupported {
+		t.Fatalf("reason = %q, want %q", refused.Reason, credstore.ReasonLockUnsupported)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read replaced credentials: %v", err)
+	if prepared {
+		t.Fatal("prepare ran before the lock refusal")
 	}
-	if string(data) != `{"token":"new"}` {
-		t.Fatalf("credentials = %s, want the replacement", data)
-	}
-	entries, err := os.ReadDir(winDir)
-	if err != nil {
-		t.Fatalf("read fixture directory: %v", err)
-	}
-	for _, entry := range entries {
-		if strings.Contains(entry.Name(), ".tmp") {
-			t.Fatalf("temp artifact remains after 9P replacement: %s", entry.Name())
-		}
+	if data, readErr := os.ReadFile(path); readErr != nil || string(data) != `{"token":"old"}` {
+		t.Fatalf("credentials changed: %s, %v", data, readErr)
 	}
 }
 
@@ -299,5 +296,60 @@ func Test_WSL_lock_interop_node_reclaims_stale_headroom_lock(t *testing.T) {
 	}
 	if err := lock.release(); err != nil {
 		t.Fatalf("release: %v", err)
+	}
+}
+
+// Test_WSL_lock_interop_claude_refuses_wsl_home_refresh proves the whole path
+// for a native Windows server watching a WSL home: the Claude Code mkdir lock is
+// taken and released, the credential lock refusal happens before any token
+// request, and the usage row keeps the old sign-in until it expires with the
+// lock-unsupported reason.
+func Test_WSL_lock_interop_claude_refuses_wsl_home_refresh(t *testing.T) {
+	_, winDir, _ := requireWSLDir(t)
+	home := t.TempDir()
+	dir := filepath.Join(winDir, ".claude")
+	path := writeClaudeCredentialsIn(t, filepath.Join(dir, ".credentials.json"), credentialFixture{
+		Access: "old-access", Refresh: "old-refresh", ExpiresAt: pastMillis(t),
+	})
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := New(Options{
+		HomeDir:    home,
+		WSLHomeDir: winDir,
+		UsageURL:   server.URL + "/usage",
+		TokenURL:   server.URL + "/token",
+		HTTPClient: server.Client(),
+	})
+	client.lockConfig = testLockConfig()
+
+	got, err := client.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("upstream requests = %d, want none before the lock refusal", requests)
+	}
+	if got.Auth.State != "expired" || !got.NeedsReauth || got.Error == nil {
+		t.Fatalf("auth=%+v error=%v", got.Auth, got.Error)
+	}
+	want := "because Windows can't lock files in this location."
+	if !strings.Contains(*got.Error, want) {
+		t.Fatalf("error = %q, want %q", *got.Error, want)
+	}
+	if got.Auth.Source == nil || got.Auth.Source.Name != "Claude Code (WSL)" {
+		t.Fatalf("source = %+v, want the WSL Claude Code candidate", got.Auth.Source)
+	}
+	if data := readFile(t, path); !strings.Contains(data, `"accessToken":"old-access"`) {
+		t.Fatalf("credentials changed: %s", data)
+	}
+	// Claude Code's mkdir lock is taken before the refusal and must be released.
+	for _, lockPath := range []string{filepath.Join(dir, claudeCodeLockName), dir + ".lock"} {
+		if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("lock left behind at %s: %v", lockPath, err)
+		}
 	}
 }
