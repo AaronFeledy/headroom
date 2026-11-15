@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 )
 
 func LoadSnapshot(ctx context.Context, path string) (snapshot Snapshot, err error) {
@@ -14,7 +13,7 @@ func LoadSnapshot(ctx context.Context, path string) (snapshot Snapshot, err erro
 		return Snapshot{}, fmt.Errorf("load snapshot canceled: %w", ctx.Err())
 	default:
 	}
-	file, err := os.Open(path)
+	file, err := openSnapshot(path)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("open credential snapshot %s: %w", path, err)
 	}
