@@ -23,12 +23,12 @@ func (c *Client) refresh(ctx context.Context, creds Credentials) (usage.RefreshR
 	}
 	result, err := c.doRefresh(ctx, creds)
 	switch {
-	case err == nil:
-		c.refreshLog.Saved()
 	case errors.Is(err, credstore.ErrNotWritable):
 		c.refreshLog.Refused(creds.Path, err, tokenPair(creds))
-	default:
+	case err != nil:
 		c.refreshLog.NotSaved(creds.Path, err)
+	case result == usage.RefreshSuccess:
+		c.refreshLog.Saved()
 	}
 	return result, err
 }
