@@ -13,10 +13,11 @@ type TokenPair struct {
 	Refresh string
 }
 
-// TokenCodec describes one store's token pair. Pair and Apply are pure and must
-// not write the store; Of maps a refresh result to the pair the store will
-// carry. Warn, when set, receives the error from a commit whose refreshed
-// tokens reached the file anyway (for example, the directory sync failed).
+// TokenCodec describes one store's token pair. Pair, Apply, and Of are
+// required; Pair and Apply are pure and must not write the store, and Of maps a
+// refresh result to the pair the store will carry. Warn, when set, receives the
+// error from a commit whose refreshed tokens reached the file anyway (for
+// example, the directory sync failed).
 type TokenCodec[T any] struct {
 	Pair  func(file []byte) (TokenPair, error)
 	Apply func(file []byte, tokens T) ([]byte, error)
@@ -35,13 +36,9 @@ const (
 	Saved
 )
 
-var (
-	// ErrTokenCodec reports a TokenCodec missing a required function.
-	ErrTokenCodec = errors.New("credstore: incomplete token codec")
-	// ErrRefreshNotSaved marks an exchange that succeeded but whose tokens
-	// never reached the file; the spent sign-in may now be invalid.
-	ErrRefreshNotSaved = errors.New("credstore: refreshed sign-in was not saved")
-)
+// ErrRefreshNotSaved marks an exchange that succeeded but whose tokens
+// never reached the file; the spent sign-in may now be invalid.
+var ErrRefreshNotSaved = errors.New("credstore: refreshed sign-in was not saved")
 
 // RefreshTokens refreshes path when it still holds spent and saves the result
 // through codec. It is the one owner of the spent-pair rule: exchange runs at
@@ -50,9 +47,6 @@ var (
 // an exchange, and a result superseded while the exchange ran is discarded.
 func RefreshTokens[T any](ctx context.Context, path string, spent TokenPair, codec TokenCodec[T],
 	exchange func(file []byte) (T, error)) (result T, outcome Outcome, err error) {
-	if codec.Pair == nil || codec.Apply == nil || codec.Of == nil {
-		return result, Adopted, ErrTokenCodec
-	}
 	obtained := false
 	outcome = Adopted
 	err = Refresh(ctx, path, func(current []byte) (Mutator, error) {

@@ -56,9 +56,8 @@ func (s *CredentialStore) Current(ctx context.Context) (Credentials, error) {
 func (s *CredentialStore) NeedsRefresh(now time.Time) bool {
 	s.mu.RLock()
 	creds := s.creds
-	loaded := s.loaded
 	s.mu.RUnlock()
-	if !loaded || creds.RefreshToken == "" || creds.ExpiresAt == nil {
+	if creds.RefreshToken == "" || creds.ExpiresAt == nil {
 		return false
 	}
 	return !now.Before(*creds.ExpiresAt)
@@ -93,7 +92,7 @@ func (s *CredentialStore) target(ctx context.Context) (string, CredentialSource,
 	s.mu.RLock()
 	path, source, loaded := s.path, s.source, s.loaded
 	s.mu.RUnlock()
-	if loaded && path != "" {
+	if loaded {
 		return path, source, nil
 	}
 	if _, err := s.Load(ctx); err != nil {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func Test_creationNotWritable_classifies_permission_and_read_only_errors(t *testing.T) {
+func Test_CreationRefusal_classifies_permission_and_read_only_errors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		err    error
@@ -19,7 +19,7 @@ func Test_creationNotWritable_classifies_permission_and_read_only_errors(t *test
 		{name: "read-only file system", err: syscall.EROFS, reason: ReasonReadOnlyFilesystem},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := creationNotWritable("/tmp/credentials.json", tc.err)
+			err := CreationRefusal("/tmp/credentials.json", tc.err)
 			var refused *NotWritableError
 			if !errors.As(err, &refused) {
 				t.Fatalf("err = %v, want NotWritableError", err)

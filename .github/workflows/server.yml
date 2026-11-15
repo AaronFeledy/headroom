@@ -30,7 +30,8 @@ jobs:
           go-version-file: server/go.mod
           cache: true
           cache-dependency-path: server/go.sum
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js for lockfile fixture
+        uses: actions/setup-node@v6
         with:
           node-version: '24.22.1'
           cache: npm
@@ -48,16 +49,14 @@ jobs:
         run: go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
       - name: Build packages
         run: go build ./...
-      - name: Install Claude Code lock contender
+      - name: Install lockfile fixture dependencies
         working-directory: server/internal/providers/claude/testdata/lockfile-interop
         run: npm ci --ignore-scripts
-      - name: Claude Code lock interop
+      - name: Test Claude Code lock interoperability
         env:
           HEADROOM_PROPER_LOCKFILE_FIXTURE: '1'
         run: go test -count=1 -run LockfileInterop ./internal/providers/claude
 
-  # Native Windows coverage for the whole server module. Tests assert Unix
-  # permission bits only where the platform has them.
   windows-test:
     name: Test (Windows)
     runs-on: windows-latest

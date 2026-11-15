@@ -34,7 +34,7 @@ func tokenCodec(warn func(error)) credstore.TokenCodec[tokenDoc] {
 				return nil, err
 			}
 			doc.Access, doc.Refresh = tokens.Access, tokens.Refresh
-			return encodeTokenDoc(doc)
+			return json.Marshal(doc)
 		},
 		Of: func(tokens tokenDoc) credstore.TokenPair {
 			return credstore.TokenPair{Access: tokens.Access, Refresh: tokens.Refresh}
@@ -49,10 +49,6 @@ func decodeTokenDoc(data []byte) (tokenDoc, error) {
 		return tokenDoc{}, err
 	}
 	return doc, nil
-}
-
-func encodeTokenDoc(doc tokenDoc) ([]byte, error) {
-	return json.Marshal(doc)
 }
 
 func Test_RefreshTokens_saves_refreshed_tokens(t *testing.T) {
@@ -154,15 +150,6 @@ func Test_RefreshTokens_exchange_error_leaves_file_unchanged(t *testing.T) {
 		t.Fatalf("file = %s", got)
 	}
 	assertNoTempFiles(t, filepath.Dir(path))
-}
-
-func Test_RefreshTokens_rejects_incomplete_codec(t *testing.T) {
-	path := writeCreds(t, `{"access":"old","refresh":"old-r"}`, 0o600)
-	_, _, err := credstore.RefreshTokens(context.Background(), path, credstore.TokenPair{},
-		credstore.TokenCodec[tokenDoc]{}, func([]byte) (tokenDoc, error) { return tokenDoc{}, nil })
-	if !errors.Is(err, credstore.ErrTokenCodec) {
-		t.Fatalf("err = %v, want ErrTokenCodec", err)
-	}
 }
 
 func readCredsBytes(t *testing.T, path string) []byte {

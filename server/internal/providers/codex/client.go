@@ -129,8 +129,6 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		if err := drainAndCloseResponseBody(resp, "close codex unauthorized response body"); err != nil {
 			return data, err
 		}
-		// The rejected pair goes through RefreshTokens: a pair another writer
-		// already replaced is adopted without an exchange.
 		result, refreshErr := c.refresh(ctx, creds)
 		if refreshErr != nil {
 			if errors.Is(refreshErr, credstore.ErrNotWritable) {

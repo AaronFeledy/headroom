@@ -48,6 +48,23 @@ func Test_NotWritableReason_phrases_are_distinct(t *testing.T) {
 	}
 }
 
+func Test_NotWritablePhrase_uses_generic_explanation_without_known_reason(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "nil"},
+		{name: "unrelated error", err: errors.New("unrelated")},
+		{name: "unknown reason", err: &credstore.NotWritableError{Reason: "unknown"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := credstore.NotWritablePhrase(tc.err); got != "the credentials file cannot be replaced" {
+				t.Fatalf("phrase = %q", got)
+			}
+		})
+	}
+}
+
 func Test_Refresh_reports_read_only_file_reason(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("Unix permission test")

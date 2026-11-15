@@ -10,8 +10,8 @@ import (
 // refresh there can never save its result.
 var errLockUnsupported = errors.New("credential file locking is unsupported at this location")
 
-// creationNotWritable maps a failed lock or temp creation to a typed refusal.
-func creationNotWritable(path string, err error) error {
+// CreationRefusal classifies a failed lock or directory creation at path.
+func CreationRefusal(path string, err error) error {
 	reason := ReasonCannotCreateFiles
 	switch {
 	case errors.Is(err, errLockUnsupported):

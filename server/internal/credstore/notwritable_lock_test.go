@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func Test_creationNotWritable_classifies_unsupported_file_locking(t *testing.T) {
+func Test_CreationRefusal_classifies_unsupported_file_locking(t *testing.T) {
 	// Given: a lock failure from a file system without byte-range locks.
 	cause := errors.New("Incorrect function")
-	err := creationNotWritable("/mnt/credentials.json", fmt.Errorf("%w: %w", errLockUnsupported, cause))
+	err := CreationRefusal("/mnt/credentials.json", fmt.Errorf("%w: %w", errLockUnsupported, cause))
 
 	// Then
 	var refused *NotWritableError

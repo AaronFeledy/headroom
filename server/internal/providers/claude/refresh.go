@@ -55,9 +55,6 @@ func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mod
 
 	spent := credstore.TokenPair{Access: creds.accessToken, Refresh: creds.refreshToken}
 	outcome, err := store.refresh(ctx, spent, func([]byte) (credentialUpdate, error) {
-		if err := ctx.Err(); err != nil {
-			return credentialUpdate{}, err
-		}
 		refreshed, err := c.requestRefresh(ctx, spent.Refresh)
 		if err != nil {
 			return credentialUpdate{}, err

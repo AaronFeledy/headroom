@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,8 +19,6 @@ const (
 	contenderExitTimeout     = 30 * time.Second
 )
 
-// contenderPath returns the absolute path of the pinned Node contender shared
-// by the proper-lockfile and Windows-to-WSL fixtures.
 func contenderPath(t *testing.T) string {
 	t.Helper()
 	script, err := filepath.Abs(filepath.Join("testdata", "lockfile-interop", "contender.js"))
@@ -52,7 +51,7 @@ func (b *lockedBuffer) String() string {
 type contender struct {
 	t      *testing.T
 	cmd    *exec.Cmd
-	stdin  *os.File
+	stdin  io.WriteCloser
 	lines  chan string
 	stderr *lockedBuffer
 	wait   chan error
@@ -66,10 +65,6 @@ func startContender(t *testing.T, argv []string, args ...string) *contender {
 	if err != nil {
 		t.Fatalf("contender stdin: %v", err)
 	}
-	file, ok := stdin.(*os.File)
-	if !ok {
-		t.Fatalf("contender stdin is %T, want *os.File", stdin)
-	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatalf("contender stdout: %v", err)
@@ -79,7 +74,7 @@ func startContender(t *testing.T, argv []string, args ...string) *contender {
 	if err := command.Start(); err != nil {
 		t.Fatalf("start contender %v: %v", argv, err)
 	}
-	c := &contender{t: t, cmd: command, stdin: file, lines: make(chan string, 8), stderr: stderr, wait: make(chan error, 1)}
+	c := &contender{t: t, cmd: command, stdin: stdin, lines: make(chan string, 8), stderr: stderr, wait: make(chan error, 1)}
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
@@ -154,7 +149,6 @@ func (c *contender) finish() {
 	}
 }
 
-// runContender runs a one-shot contender command and returns its single marker.
 func runContender(t *testing.T, argv []string, args ...string) string {
 	t.Helper()
 	command := exec.Command(argv[0], append(append([]string{}, argv[1:]...), args...)...)

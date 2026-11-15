@@ -179,7 +179,7 @@ func (p *Provider) refresh(ctx context.Context, stale credentials, reason refres
 	if reason == refreshReasonProactive && !stale.needsRefresh(p.now()) {
 		return stale, nil
 	}
-	if strings.TrimSpace(stale.refreshToken) == "" {
+	if stale.refreshToken == "" {
 		return credentials{}, errInvalidGrant
 	}
 	spent := credstore.TokenPair{Access: stale.accessToken, Refresh: stale.refreshToken}

@@ -159,13 +159,6 @@ func windowRoleOf(window *whamWindow) windowRole {
 	}
 }
 
-func credsExpiresAt(creds Credentials) time.Time {
-	if creds.ExpiresAt != nil {
-		return *creds.ExpiresAt
-	}
-	return time.Time{}
-}
-
 type refreshRequest struct {
 	ClientID     string `json:"client_id"`
 	GrantType    string `json:"grant_type"`

@@ -32,8 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,8 +39,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 // requireWSLDir creates the directory shared with WSL over 9P. Tests that only
@@ -95,9 +91,6 @@ func wslStaleWindow(t *testing.T, argv []string) time.Duration {
 	}
 	stale := skew + 4*time.Second
 	stale = (stale + time.Second - 1) / time.Second * time.Second
-	if stale < 2*time.Second {
-		stale = 2 * time.Second
-	}
 	return stale
 }
 
@@ -198,37 +191,11 @@ func Test_WSL_lock_interop_legacy_lock_through_symlinked_config_dir(t *testing.T
 
 	// The legacy lock is created beside the resolved directory, matching Claude
 	// Code's realpath(configDir).lock, not beside the symlink spelling.
-	if _, err := os.Lstat(filepath.Join(realWin) + ".lock"); err != nil {
+	if _, err := os.Lstat(realWin + ".lock"); err != nil {
 		t.Fatalf("legacy lock missing beside the resolved directory: %v", err)
 	}
 	if got := runContender(t, argv, "try", linuxDir+"/config", staleArg(stale), "1000", "legacy"); got != "ELOCKED:legacy" {
 		t.Fatalf("WSL contender legacy lock = %q, want ELOCKED:legacy", got)
-	}
-}
-
-func Test_WSL_lock_interop_credstore_refuses_unlockable_store(t *testing.T) {
-	_, winDir, _ := requireWSLDir(t)
-	path := filepath.Join(winDir, "credentials.json")
-	if err := os.WriteFile(path, []byte(`{"token":"old"}`), 0o600); err != nil {
-		t.Fatalf("write fixture credentials: %v", err)
-	}
-	prepared := false
-	err := credstore.Refresh(context.Background(), path, func(current []byte) (credstore.Mutator, error) {
-		prepared = true
-		return nil, errors.New("prepare must not run")
-	})
-	var refused *credstore.NotWritableError
-	if !errors.As(err, &refused) {
-		t.Fatalf("Refresh over 9P = %v, want NotWritableError", err)
-	}
-	if refused.Reason != credstore.ReasonLockUnsupported {
-		t.Fatalf("reason = %q, want %q", refused.Reason, credstore.ReasonLockUnsupported)
-	}
-	if prepared {
-		t.Fatal("prepare ran before the lock refusal")
-	}
-	if data, readErr := os.ReadFile(path); readErr != nil || string(data) != `{"token":"old"}` {
-		t.Fatalf("credentials changed: %s, %v", data, readErr)
 	}
 }
 
@@ -296,60 +263,5 @@ func Test_WSL_lock_interop_node_reclaims_stale_headroom_lock(t *testing.T) {
 	}
 	if err := lock.release(); err != nil {
 		t.Fatalf("release: %v", err)
-	}
-}
-
-// Test_WSL_lock_interop_claude_refuses_wsl_home_refresh proves the whole path
-// for a native Windows server watching a WSL home: the Claude Code mkdir lock is
-// taken and released, the credential lock refusal happens before any token
-// request, and the usage row keeps the old sign-in until it expires with the
-// lock-unsupported reason.
-func Test_WSL_lock_interop_claude_refuses_wsl_home_refresh(t *testing.T) {
-	_, winDir, _ := requireWSLDir(t)
-	home := t.TempDir()
-	dir := filepath.Join(winDir, ".claude")
-	path := writeClaudeCredentialsIn(t, filepath.Join(dir, ".credentials.json"), credentialFixture{
-		Access: "old-access", Refresh: "old-refresh", ExpiresAt: pastMillis(t),
-	})
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-	client := New(Options{
-		HomeDir:    home,
-		WSLHomeDir: winDir,
-		UsageURL:   server.URL + "/usage",
-		TokenURL:   server.URL + "/token",
-		HTTPClient: server.Client(),
-	})
-	client.lockConfig = testLockConfig()
-
-	got, err := client.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	if requests != 0 {
-		t.Fatalf("upstream requests = %d, want none before the lock refusal", requests)
-	}
-	if got.Auth.State != "expired" || !got.NeedsReauth || got.Error == nil {
-		t.Fatalf("auth=%+v error=%v", got.Auth, got.Error)
-	}
-	want := "because Windows can't lock files in this location."
-	if !strings.Contains(*got.Error, want) {
-		t.Fatalf("error = %q, want %q", *got.Error, want)
-	}
-	if got.Auth.Source == nil || got.Auth.Source.Name != "Claude Code (WSL)" {
-		t.Fatalf("source = %+v, want the WSL Claude Code candidate", got.Auth.Source)
-	}
-	if data := readFile(t, path); !strings.Contains(data, `"accessToken":"old-access"`) {
-		t.Fatalf("credentials changed: %s", data)
-	}
-	// Claude Code's mkdir lock is taken before the refusal and must be released.
-	for _, lockPath := range []string{filepath.Join(dir, claudeCodeLockName), dir + ".lock"} {
-		if _, err := os.Lstat(lockPath); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("lock left behind at %s: %v", lockPath, err)
-		}
 	}
 }

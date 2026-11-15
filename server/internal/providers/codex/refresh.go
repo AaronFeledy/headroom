@@ -94,7 +94,10 @@ func (c *Client) exchangeRefresh(ctx context.Context, creds Credentials) (Refres
 	if refreshToken == "" {
 		refreshToken = creds.RefreshToken
 	}
-	expiresAt := credsExpiresAt(creds)
+	var expiresAt time.Time
+	if creds.ExpiresAt != nil {
+		expiresAt = *creds.ExpiresAt
+	}
 	if decoded.ExpiresIn != nil {
 		expiresAt = time.Now().UTC().Add(time.Duration(*decoded.ExpiresIn) * time.Second)
 	}

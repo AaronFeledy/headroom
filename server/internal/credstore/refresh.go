@@ -143,7 +143,7 @@ func Refresh(ctx context.Context, path string, prepare func(current []byte) (Mut
 
 func mapCreationErr(path string, err error) error {
 	if isNotWritableFSError(err) {
-		return creationNotWritable(path, err)
+		return CreationRefusal(path, err)
 	}
 	return err
 }

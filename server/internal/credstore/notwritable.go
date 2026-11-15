@@ -54,12 +54,10 @@ func (e *NotWritableError) Error() string {
 	return fmt.Sprintf("%s: %s: %s: %v", ErrNotWritable, e.Path, e.Reason, e.Err)
 }
 
-// Is matches ErrNotWritable and the underlying cause.
 func (e *NotWritableError) Is(target error) bool {
 	return target == ErrNotWritable || errors.Is(e.Err, target)
 }
 
-// Unwrap reports the refusal sentinel.
 func (e *NotWritableError) Unwrap() error { return ErrNotWritable }
 
 // NotWritablePhrase returns the short explanation for a refusal, or a generic
@@ -69,14 +67,9 @@ func NotWritablePhrase(err error) string {
 	if errors.As(err, &refused) {
 		return refused.Reason.Phrase()
 	}
-	return "the credentials file cannot be replaced"
+	return NotWritableReason("").Phrase()
 }
 
 func notWritable(path string, reason NotWritableReason, err error) error {
 	return &NotWritableError{Path: path, Reason: reason, Err: err}
-}
-
-// CreationRefusal classifies a failed lock or directory creation at path.
-func CreationRefusal(path string, err error) error {
-	return creationNotWritable(path, err)
 }

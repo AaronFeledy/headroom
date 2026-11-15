@@ -10,15 +10,13 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
 	lockfileExclusiveLock   = 0x00000002
 	lockfileFailImmediately = 0x00000001
-	errorLockViolation      = syscall.Errno(33)
-	errorSharingViolation   = syscall.Errno(32)
-	errorInvalidFunction    = syscall.Errno(1)  // ERROR_INVALID_FUNCTION
-	errorNotSupported       = syscall.Errno(50) // ERROR_NOT_SUPPORTED
 )
 
 type fileLock struct{ file *os.File }
@@ -128,13 +126,13 @@ func lockFileEx(handle syscall.Handle, flags uint32, overlapped *syscall.Overlap
 }
 
 func isLockContention(err error) bool {
-	return errors.Is(err, errorLockViolation) || errors.Is(err, errorSharingViolation)
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
 }
 
 // isLockUnsupported reports a file system that cannot take byte-range locks,
 // such as the 9P share behind \\wsl.localhost.
 func isLockUnsupported(err error) bool {
-	return errors.Is(err, errorInvalidFunction) || errors.Is(err, errorNotSupported)
+	return errors.Is(err, windows.ERROR_INVALID_FUNCTION) || errors.Is(err, windows.ERROR_NOT_SUPPORTED)
 }
 
 func unlockFileEx(handle syscall.Handle, overlapped *syscall.Overlapped) error {
