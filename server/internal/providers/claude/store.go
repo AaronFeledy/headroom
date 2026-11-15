@@ -72,8 +72,14 @@ func (s fileStore) refresh(ctx context.Context, spent credstore.TokenPair,
 			}
 			return credstore.TokenPair{Access: parsed.accessToken, Refresh: parsed.refreshToken}, nil
 		},
+		// Write the section Pair read: a Claude Code path can hold an
+		// OpenCode-shaped sign-in, which parseCredentials reads from "anthropic".
 		Apply: func(file []byte, update credentialUpdate) ([]byte, error) {
-			return applyCredentialUpdate(file, s.source, update)
+			parsed, parseErr := parseCredentials(s.path, s.source, credstore.Snapshot{Data: file})
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			return applyCredentialUpdate(file, parsed.source, update)
 		},
 		Of: func(update credentialUpdate) credstore.TokenPair {
 			return credstore.TokenPair{Access: update.refreshed.AccessToken, Refresh: update.refreshed.RefreshToken}
