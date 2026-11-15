@@ -94,11 +94,13 @@ func readContinuouslyUntilDone(path string, done <-chan struct{}) readResult {
 			return readResult{observations: observations}
 		default:
 		}
-		data, err := os.ReadFile(path)
+		// Use Headroom's own reader: on Windows it shares delete access so the
+		// writer's replacement is never blocked by a concurrent read.
+		snapshot, err := credstore.LoadSnapshot(context.Background(), path)
 		if err != nil {
 			return readResult{observations: observations, err: err}
 		}
-		if err := validateObservableVersion(data); err != nil {
+		if err := validateObservableVersion(snapshot.Data); err != nil {
 			return readResult{observations: observations, err: err}
 		}
 		observations++

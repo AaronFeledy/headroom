@@ -26,7 +26,7 @@ func Test_LoadSnapshot_reads_bytes_modtime_and_mode(t *testing.T) {
 	if string(snapshot.Data) != `{"sentinel":"keep"}` {
 		t.Fatalf("Data = %s", snapshot.Data)
 	}
-	if snapshot.Mode.Perm() != 0o640 {
+	if !modeMatches(snapshot.Mode, 0o640) {
 		t.Fatalf("Mode = %v, want 0640", snapshot.Mode.Perm())
 	}
 	if snapshot.ModTime.IsZero() {

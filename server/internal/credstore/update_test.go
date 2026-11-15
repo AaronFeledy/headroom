@@ -23,7 +23,7 @@ func Test_UpdateFile_creates_missing_non_JSON_file_privately(t *testing.T) {
 	}
 	assertFileBytesAndMode(t, path, []byte("providers: {}\n"), 0o600)
 	info, err := os.Stat(filepath.Dir(path))
-	if err != nil || info.Mode().Perm() != 0o700 {
+	if err != nil || !modeMatches(info.Mode(), 0o700) {
 		t.Fatalf("parent mode: %v %v", info, err)
 	}
 }

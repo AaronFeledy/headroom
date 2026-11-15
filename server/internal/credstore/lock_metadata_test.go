@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,13 +33,20 @@ func Test_Refresh_writes_PID_and_UNIX_seconds_to_lock_file(t *testing.T) {
 	}()
 	<-lockHeld
 
-	// When
-	metadata, err := os.ReadFile(filepath.Clean(path) + ".lock")
+	// When: Windows holds a mandatory byte-range lock, so the metadata is only
+	// readable once Refresh releases it. Unix can read it while the lock is held.
+	var metadata []byte
+	var err error
+	if runtime.GOOS != "windows" {
+		metadata, err = os.ReadFile(filepath.Clean(path) + ".lock")
+	}
 	close(releaseLock)
 
-	// Then
 	if updateErr := <-done; updateErr != nil {
 		t.Fatalf("Refresh: %v", updateErr)
+	}
+	if runtime.GOOS == "windows" {
+		metadata, err = os.ReadFile(filepath.Clean(path) + ".lock")
 	}
 	if err != nil {
 		t.Fatalf("read lock metadata: %v", err)

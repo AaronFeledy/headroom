@@ -48,6 +48,9 @@ func Test_Refresh_returns_ErrNotWritable_for_read_only_directory_without_calling
 	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
 		t.Skip("permission tests unreliable as root")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows read-only attribute does not block creating files in a directory")
+	}
 	// Given
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
