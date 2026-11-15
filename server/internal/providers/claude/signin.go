@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -29,6 +30,10 @@ func (c *Client) credentialErrorMessage(err error) string {
 		c.stateMu.Unlock()
 		if loaded != nil && loaded.source == credentialSourceOpenCode {
 			name = "OpenCode"
+		}
+		var refused *credstore.NotWritableError
+		if errors.As(err, &refused) {
+			return "Sign-in expired, and Headroom can't save a refreshed one because " + refused.Reason.Phrase() + ". Use " + name + " once, or run `" + command + "`."
 		}
 		return name + " refreshes this sign-in when it runs. Use " + name + " once, or run `" + command + "`."
 	}

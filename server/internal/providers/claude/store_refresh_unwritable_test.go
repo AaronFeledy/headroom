@@ -57,12 +57,12 @@ func Test_Client_file_refresh_unwritable_file_expires_without_token_request(t *t
 	if got.Auth.SignInCommand == nil || got.ReauthCommand == nil {
 		t.Fatal("sign-in command must be kept")
 	}
-	want := "Claude Code refreshes this sign-in when it runs. Use Claude Code once, or run `"
+	want := "Sign-in expired, and Headroom can't save a refreshed one because the credentials file is read-only. Use Claude Code once, or run `"
 	if got.Error == nil || !strings.Contains(*got.Error, want) {
 		t.Fatalf("error = %v", got.Error)
 	}
-	if strings.Contains(strings.ToLower(*got.Error), "read-only") {
-		t.Fatalf("message must not claim read-only: %s", *got.Error)
+	if strings.Contains(strings.ToLower(*got.Error), "refresh token") {
+		t.Fatalf("message must not expose token internals: %s", *got.Error)
 	}
 }
 
@@ -98,7 +98,7 @@ func Test_Client_opencode_unwritable_file_uses_opencode_copy(t *testing.T) {
 	if got.Auth.State != "expired" || got.Error == nil {
 		t.Fatalf("got = %+v", got)
 	}
-	if !strings.Contains(*got.Error, "OpenCode refreshes this sign-in when it runs") {
+	if !strings.Contains(*got.Error, "because the credentials file is read-only. Use OpenCode once, or run `claude auth login`.") {
 		t.Fatalf("error = %q", *got.Error)
 	}
 }

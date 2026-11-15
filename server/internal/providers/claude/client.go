@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -51,6 +53,8 @@ type Options struct {
 	Account *usage.Account
 	// SignInCommand overrides extra-account sign-in instructions verbatim when nonempty.
 	SignInCommand string
+	// Logger receives refusal and save-failure warnings; nil discards them.
+	Logger *slog.Logger
 }
 
 type Client struct {
@@ -65,6 +69,8 @@ type Client struct {
 	goos          string
 	keychain      Keychain
 	lockConfig    claudeCodeLockConfig
+	logger        *slog.Logger
+	refusalLog    credstore.RefusalLog
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex

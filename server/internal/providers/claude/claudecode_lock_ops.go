@@ -21,7 +21,7 @@ func mkdirLock(path string, staleAge time.Duration, allowStale bool) (os.FileInf
 		return info, nil
 	}
 	if isLockPermissionError(err) {
-		return nil, fmt.Errorf("%w: %w", credstore.ErrNotWritable, err)
+		return nil, credstore.CreationRefusal(path, err)
 	}
 	if !errors.Is(err, os.ErrExist) {
 		return nil, err
@@ -36,7 +36,7 @@ func mkdirLock(path string, staleAge time.Duration, allowStale bool) (os.FileInf
 	}
 	if lerr != nil {
 		if isLockPermissionError(lerr) {
-			return nil, fmt.Errorf("%w: %w", credstore.ErrNotWritable, lerr)
+			return nil, credstore.CreationRefusal(path, lerr)
 		}
 		return nil, lerr
 	}
@@ -61,7 +61,7 @@ func mkdirLock(path string, staleAge time.Duration, allowStale bool) (os.FileInf
 	}
 	if remErr := removeLockDir(path); remErr != nil && !errors.Is(remErr, os.ErrNotExist) {
 		if isLockPermissionError(remErr) {
-			return nil, fmt.Errorf("%w: %w", credstore.ErrNotWritable, remErr)
+			return nil, credstore.CreationRefusal(path, remErr)
 		}
 		// Nonempty or foreign type: treat as busy.
 		return nil, errLockBusy
@@ -93,7 +93,7 @@ func claimLockDir(path string) (claimed os.FileInfo, err error) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	if err := os.Chtimes(path, now, now); err != nil {
 		if isLockPermissionError(err) {
-			return nil, fmt.Errorf("%w: %w", credstore.ErrNotWritable, err)
+			return nil, credstore.CreationRefusal(path, err)
 		}
 		return nil, err
 	}

@@ -39,62 +39,44 @@ const (
 	refreshModeForced
 )
 
+// refreshCredentials spends the caller's token pair. The shared refresher
+// compares that pair with the file under the lock, so a sign-in another tool
+// already refreshed is adopted without another POST.
 func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mode refreshMode) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
-	current, err := c.loadCredentials(ctx)
-	if err != nil {
-		return err
-	}
-	if current.accessToken != creds.accessToken || current.refreshToken != creds.refreshToken {
-		return nil
-	}
-	store, writable := current.store.(writableCredentialStore)
+	store, writable := creds.store.(writableCredentialStore)
 	if !writable {
 		return ErrRefreshUnavailable
 	}
-	if mode == refreshModeProactive && current.expiresAt.After(time.Now().UTC().Add(expirySkew)) {
+	if mode == refreshModeProactive && creds.expiresAt.After(time.Now().UTC().Add(expirySkew)) {
 		return nil
 	}
 
-	spentAccess := current.accessToken
-	spentRefresh := current.refreshToken
-	source := current.source
-	path := current.path
-
-	err = store.refresh(ctx, func(data []byte) (credstore.Mutator, error) {
-		parsed, err := parseCredentials(path, source, credstore.Snapshot{Data: data})
-		if err != nil {
-			return nil, err
+	spent := credstore.TokenPair{Access: creds.accessToken, Refresh: creds.refreshToken}
+	outcome, err := store.refresh(ctx, spent, func([]byte) (credentialUpdate, error) {
+		if err := ctx.Err(); err != nil {
+			return credentialUpdate{}, err
 		}
-		if parsed.accessToken != spentAccess || parsed.refreshToken != spentRefresh {
-			return nil, nil
-		}
-		refreshed, err := c.requestRefresh(ctx, spentRefresh)
+		refreshed, err := c.requestRefresh(ctx, spent.Refresh)
 		if err != nil {
-			return nil, err
+			return credentialUpdate{}, err
 		}
 		if refreshed.RefreshToken == "" {
-			refreshed.RefreshToken = spentRefresh
+			refreshed.RefreshToken = spent.Refresh
 		}
 		newExpiresAt := time.Now().UTC().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
-		update := credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}
-		return func(latest []byte) ([]byte, error) {
-			latestParsed, err := parseCredentials(path, source, credstore.Snapshot{Data: latest})
-			if err != nil {
-				return nil, err
-			}
-			if latestParsed.accessToken != spentAccess || latestParsed.refreshToken != spentRefresh {
-				return latest, nil
-			}
-			return applyCredentialUpdate(latest, source, update)
-		}, nil
+		return credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}, nil
 	})
 	if err != nil {
 		if errors.Is(err, credstore.ErrNotWritable) {
-			return c.handleUnwritableRefresh(ctx, current, mode, err)
+			c.recordRefusal(creds.path, err, spent)
+			return c.handleUnwritableRefresh(ctx, creds, mode, err)
 		}
 		return err
+	}
+	if outcome == credstore.Saved {
+		c.refusalLog.Saved()
 	}
 
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)

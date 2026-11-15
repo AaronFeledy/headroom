@@ -20,7 +20,7 @@ type storeCandidate struct {
 func (c *Client) credentialCandidates() []storeCandidate {
 	opts := c.paths
 	file := func(path string, source credentialSource) storeCandidate {
-		store := fileStore{path: path, lockConfig: c.lockConfig}
+		store := fileStore{path: path, source: source, lockConfig: c.lockConfig, warn: func(err error) { c.warnUnsaveable(path, err) }}
 		if source == credentialSourceClaude && filepath.Base(path) == ".credentials.json" {
 			store.claudeCodeDir = filepath.Dir(path)
 		}

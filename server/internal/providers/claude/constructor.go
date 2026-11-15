@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"runtime"
@@ -50,8 +51,13 @@ func New(opts Options) *Client {
 			signInCommand = &command
 		}
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	return &Client{
 		client:        client,
+		logger:        logger,
 		goos:          runtime.GOOS,
 		keychain:      opts.Keychain,
 		usageURL:      usageURL,
