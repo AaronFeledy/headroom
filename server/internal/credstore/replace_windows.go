@@ -25,7 +25,6 @@ var procMoveFileExW = kernel32.NewProc("MoveFileExW")
 // fileRenameInfoEx mirrors FILE_RENAME_INFO as used with FileRenameInfoEx.
 type fileRenameInfoEx struct {
 	Flags          uint32
-	_              uint32
 	RootDirectory  windows.Handle
 	FileNameLength uint32
 	FileName       [1]uint16
@@ -94,7 +93,7 @@ func renameOverOpenFile(tmpName, path string) (err error) {
 	// Windows only reads during this synchronous call.
 	info := (*fileRenameInfoEx)(unsafe.Pointer(&buffer[0]))
 	info.Flags = fileRenameFlagReplaceIfExists | fileRenameFlagPOSIXSemantics
-	info.FileNameLength = uint32(len(name) * 2)
+	info.FileNameLength = uint32((len(name) - 1) * 2) // bytes, without the terminating NUL
 	copy(unsafe.Slice((*uint16)(unsafe.Pointer(&buffer[offset])), len(name)), name)
 	if err := windows.SetFileInformationByHandle(handle, windows.FileRenameInfoEx, &buffer[0], uint32(len(buffer))); err != nil {
 		return fmt.Errorf("rename file: %w", err)
