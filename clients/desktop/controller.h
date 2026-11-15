@@ -16,6 +16,7 @@
 #include "sshnetwork.h"
 #include "tlsproof.h"
 #include "resetpolicy.h"
+#include "reminders.h"
 #include "trayvisual.h"
 
 class Controller : public QObject {
@@ -99,7 +100,7 @@ public:
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QVariantMap loginCopy(const QVariantMap &provider) const;
     // Keys: mode, url, token, interval, notifications, forgetToken, sshUrl,
-    // shareBrowserSignIns, trayProvider. Absent keys keep their
+    // shareBrowserSignIns, trayProvider, unusedReminders. Absent keys keep their
     // values, except that an absent or empty token keeps the saved token only for
     // the same address, so a token is never carried to another server.
     Q_INVOKABLE QString saveSettings(const QVariantMap &patch);
@@ -140,7 +141,8 @@ private:
         qint64 observedAt = 0;      // desktop time this reading was first seen
         quint64 snapshotSerial = 0; // last accepted snapshot in which the provider succeeded
     };
-    void updateMeterStates();
+    // Returns the meter targets whose session became available again in this pass.
+    QSet<QString> updateMeterStates();
     void updateTrayProvider();
     void fail(const QString &message, const QString &kind = "network");
     void log(const QString &category, const QString &message);
@@ -185,6 +187,8 @@ private:
     Notifications m_notificationCenter;
     QStringList m_order;
     SettingsService m_settingsService;
+    Reminders m_reminders;
+    QString m_reminderError;
     QString m_mode = "remote", m_url, m_token, m_sshUrl, m_message;
     ConnectionStatus m_status = ConnectionStatus::Setup;
     Request m_request = Request::None;

@@ -277,6 +277,7 @@ bool SettingsService::loadHeadroom()
     }
     m_value.interval = qBound(15, readInt(m_document, "interval", 60), 900);
     m_value.notifications = readBool(m_document, "notifications", true);
+    m_value.unusedReminders = readBool(m_document, "unusedReminders", false);
     const QString trayProvider = readString(m_document, "trayProvider");
     if (validTrayProvider(trayProvider)) m_value.trayProvider = trayProvider;
     m_value.primary = normalizeProvider(readString(m_document, "primary", "Claude"));
@@ -387,6 +388,7 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["shareBrowserSignIns"] = settings.shareBrowserSignIns;
     result["interval"] = settings.interval;
     result["notifications"] = settings.notifications;
+    result["unusedReminders"] = settings.unusedReminders;
     result["trayProvider"] = settings.trayProvider;
     result["primary"] = settings.primary;
     result["order"] = QJsonArray::fromStringList(settings.order);

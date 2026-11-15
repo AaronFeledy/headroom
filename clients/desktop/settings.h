@@ -15,6 +15,7 @@ struct DesktopSettings {
     bool shareBrowserSignIns = true;
     int interval = 60;
     bool notifications = true;
+    bool unusedReminders = false;
     // "first" shows the first provider in the order; "constrained" follows
     // the provider closest to a limit.
     QString trayProvider = "first";

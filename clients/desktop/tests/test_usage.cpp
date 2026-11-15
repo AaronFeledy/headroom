@@ -360,11 +360,12 @@ private slots:
     void settingsPatchKeepsAbsentFieldsAndRejectsUnknownKeys() {
         QTemporaryDir dir;
         ControllerFixture controller(dir.filePath("settings.json"));
-        QVERIFY(controller.saveSettings({{"mode", "local"}, {"interval", 120.0}, {"trayProvider", "constrained"}}).isEmpty());
+        QVERIFY(controller.saveSettings({{"mode", "local"}, {"interval", 120.0}, {"trayProvider", "constrained"},
+            {"unusedReminders", true}}).isEmpty());
         QVERIFY(controller.saveSettings({{"notifications", false}}).isEmpty());
         const auto settings = controller.settings();
         QCOMPARE(settings["mode"].toString(), "local"); QCOMPARE(settings["interval"].toInt(), 120);
-        QCOMPARE(settings["trayProvider"].toString(), "constrained");
+        QCOMPARE(settings["trayProvider"].toString(), "constrained"); QVERIFY(settings["unusedReminders"].toBool());
         QVERIFY(!settings["notifications"].toBool());
         for (const auto &invalid : {QVariantMap{{"primary", "Codex"}}, QVariantMap{{"interval", "60"}},
                 QVariantMap{{"interval", 60.5}}, QVariantMap{{"notifications", 1}}, QVariantMap{{"mode", "ftp"}},
@@ -372,7 +373,7 @@ private slots:
             QVERIFY(!controller.saveSettings(invalid).isEmpty());
         QCOMPARE(controller.settings(), settings);
         SettingsService saved(controller.settingsPath(), false);
-        QCOMPARE(saved.value().trayProvider, QStringLiteral("constrained"));
+        QCOMPARE(saved.value().trayProvider, QStringLiteral("constrained")); QVERIFY(saved.value().unusedReminders);
     }
     void accountIdentityNormalizationAndPrivateBridge() {
         auto rows = QJsonDocument::fromJson(TestUsage::snapshot()).array();
@@ -476,6 +477,69 @@ private slots:
         QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", "https://different.example.test"}, {"interval", 60}, {"notifications", true}}).isEmpty()); // Fixture refresh is synthetic; no network request.
         QCOMPARE(alerts.size(), 3);
         QCOMPARE(controller.notifications()->unreadCount(), 0);
+    }
+    void remindersSurviveBaselinesAndSupersedeMeterAlerts() {
+        QTemporaryDir dir;
+        const auto now = QDateTime::currentDateTimeUtc();
+        const auto session = now.addSecs(2 * 3600).toString(Qt::ISODateWithMs);
+        const auto weekly = now.addDays(3).toString(Qt::ISODateWithMs);
+        const auto expires = now.addSecs(6 * 3600).toString(Qt::ISODateWithMs);
+        const auto payload = [&](double used, const QString &sessionReset) {
+            const QJsonArray kinds{TestUsage::claudeResetKind("weekly", "weekly reset", 2, true, QJsonArray{"weekly"}, false, expires)};
+            return QJsonDocument(QJsonArray{QJsonObject{{"provider_name", "Claude"}, {"error", QJsonValue::Null},
+                {"is_success", true}, {"needs_reauth", false},
+                {"buckets", QJsonArray{
+                    QJsonObject{{"id", "session"}, {"label", "5-Hour"}, {"utilization", used}, {"resets_at", sessionReset}},
+                    QJsonObject{{"id", "weekly"}, {"label", "Weekly"}, {"utilization", 20}, {"resets_at", weekly}}}},
+                {"rate_limit_reset_credits", QJsonObject{{"available_count", 2}, {"account_fingerprint", QString(64, 'b')},
+                    {"usable_now", true}, {"kinds", kinds}}}}}).toJson();
+        };
+        ControllerFixture controller(dir.filePath("settings.json"), payload(40, session));
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(controller.providers().size(), 1);
+        // The first fingerprinted reading resets the banked-count baseline, which
+        // clears that counter's events; the expiry reminder posted after it stays.
+        QCOMPARE(alerts.size(), 1);
+        QVERIFY(alerts.last()[0].toString().endsWith("Banked reset expiring"));
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        controller.notifications()->present();
+        QCOMPARE(controller.notifications()->presented().first().toMap()["target"].toString(), "bankedResets_Claude");
+        controller.notifications()->endPresentation();
+        // Reaching the limit enters Critical too; one notification says the session is used up.
+        controller.replaceSnapshot(payload(100, session));
+        QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "session"}})["severity"].toInt(), 3);
+        QCOMPARE(alerts.size(), 2);
+        QVERIFY(alerts.last()[0].toString().endsWith("Limit reached"));
+        QCOMPARE(alerts.last()[2].toInt(), 3);
+        // An early reset of a depleted session is reported once, as available again.
+        controller.replaceSnapshot(payload(0, now.addSecs(5 * 3600).toString(Qt::ISODateWithMs)));
+        QCOMPARE(alerts.size(), 3);
+        QVERIFY(alerts.last()[0].toString().endsWith("Available again"));
+        QVERIFY(QFileInfo::exists(dir.filePath("settings.reminders.json")));
+        // A restarted desktop does not repeat what was already shown.
+        ControllerFixture restarted(dir.filePath("settings.json"), payload(40, session));
+        QSignalSpy restartedAlerts(restarted.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(restarted.providers().size(), 1);
+        QCOMPARE(restartedAlerts.size(), 0);
+    }
+    void recoveredProviderEvaluatesReminders() {
+        QTemporaryDir dir;
+        const auto now = QDateTime::currentDateTimeUtc();
+        const QJsonObject failed{{"provider_name", "Grok"}, {"error", "Sign in to Grok again."}, {"is_success", false},
+            {"needs_reauth", true}, {"buckets", QJsonArray{}}};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{failed}).toJson());
+        QTRY_COMPARE(controller.providers().size(), 1);
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        const QVariantMap window{{"count", 1}, {"valid_from", now.addSecs(-3600).toString(Qt::ISODateWithMs)},
+            {"expires_at", now.addSecs(2 * 3600).toString(Qt::ISODateWithMs)}};
+        const QVariantMap recovered{{"provider_name", "Grok"}, {"is_success", true}, {"needs_reauth", false},
+            {"buckets", QVariantList{}}, {"usage_details", QVariantMap{{"reset_inventory",
+                QVariantMap{{"state", "ok"}, {"reported_count", 1}, {"windows", QVariantList{window}}}}}}};
+        auto credentials = controller.findChild<CredentialService *>(); QVERIFY(credentials);
+        emit credentials->providerRecovered(recovered);
+        // A browser sign-in recovered between polls is checked at once, not at the next poll.
+        QCOMPARE(alerts.size(), 1);
+        QVERIFY(alerts.last()[0].toString().endsWith("Banked reset expiring"));
     }
     void earlyUsageResetNotificationsObserveSnapshotsAndConnectionBaselines() {
         QTemporaryDir dir;

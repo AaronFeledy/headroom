@@ -65,7 +65,36 @@ are not treated as early resets. First readings, reauthentication, observed acco
 or plan changes, and connection changes establish new baselines; disabling
 notifications still advances them. Repeated zero readings do not replay alerts.
 
-Notification state is session-only and is never written to disk. Unseen events
+Headroom also reminds you before value is lost:
+
+- **Banked resets expiring.** When Claude reports a banked reset's expiry, or
+  Grok's read-only reset inventory has a currently valid reset with one, Headroom
+  notifies 24 hours and again 1 hour before the soonest expiry. Claude reports
+  only the earliest expiry for each kind, so the reminder says that a reset
+  expires, not how many. ChatGPT doesn't report reset expiry yet.
+- **Session used up and available again.** When a 5-hour session meter reaches
+  100%, one notification says it is used up, in place of that meter's Critical
+  alert. When a later reading shows it below 99.5% within an hour after the old
+  reset time, another says it is available again; an early reset of a used-up
+  session is reported this way instead of as an early usage reset.
+- **Unused weekly allowance.** **Remind me about unused weekly allowance**
+  (off by default) notifies 24 hours and 1 hour before a weekly reset while at
+  most 75% of the weekly meter is used.
+
+All of these follow the notification setting. Reminders that come due while they
+are turned off are recorded without being shown, so turning them on doesn't replay
+them. Each fires once per expiry or reset time; a time that moves by up to a minute
+counts as the same one. Headroom records the reminders it has handled beside the
+settings file, in `settings.reminders.json` (an explicit `--config name.json` uses
+`name.reminders.json`), so restarting doesn't repeat them. The record holds only a
+hash of the provider row and account, the meter, the time, and which reminders
+were handled, and is owner-only on Linux and macOS. An unreadable record is
+replaced, and a record from a newer Headroom version is left untouched. A failed
+write is reported in diagnostics and retried at the next check. Until a write
+succeeds, and while a newer version's record is in place, reminders may repeat
+after a restart.
+
+Other notification state is session-only and is never written to disk. Unseen events
 coalesce by target, with at most 128 targets retained; a fresh warning transition
 can notify about the same meter again after acknowledgement.
 

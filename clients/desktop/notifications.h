@@ -24,8 +24,11 @@ public:
     // a connection change resets it so the current event does not notify.
     void observeAutomaticReset(const QString &provider, const QVariantMap &event, bool enabled);
     void resetAutomaticResetBaseline(const QString &provider = {});
+    // Early-reset alerts for meter targets in superseded are skipped; their
+    // baselines still advance.
     void observeUsage(const QVariantList &providers, bool enabled,
-                      const QDateTime &now = QDateTime::currentDateTimeUtc());
+                      const QDateTime &now = QDateTime::currentDateTimeUtc(),
+                      const QSet<QString> &superseded = {});
     void resetUsageBaseline(const QString &provider = {});
     Q_INVOKABLE void present();
     Q_INVOKABLE void endPresentation();

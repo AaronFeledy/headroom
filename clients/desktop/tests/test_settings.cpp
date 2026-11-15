@@ -83,20 +83,20 @@ private slots:
         QVERIFY(service.save(settings).isEmpty()); settings.url = "https://other.test:9000";
         QVERIFY(service.save(settings).isEmpty()); QVERIFY(service.value().remoteCertificate.isEmpty());
     }
-    void trayPreferencePersists() {
+    void trayAndReminderPreferencesPersist() {
         QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);
-        QCOMPARE(service.value().trayProvider, QStringLiteral("first"));
-        auto settings = service.value(); settings.trayProvider = "constrained";
+        QCOMPARE(service.value().trayProvider, QStringLiteral("first")); QVERIFY(!service.value().unusedReminders);
+        auto settings = service.value(); settings.trayProvider = "constrained"; settings.unusedReminders = true;
         QVERIFY(service.save(settings).isEmpty());
         SettingsService reopened(service.path(), false);
-        QCOMPARE(reopened.value().trayProvider, QStringLiteral("constrained"));
+        QCOMPARE(reopened.value().trayProvider, QStringLiteral("constrained")); QVERIFY(reopened.value().unusedReminders);
         settings.trayProvider = "busiest"; QVERIFY(service.save(settings).isEmpty());
         QCOMPARE(service.value().trayProvider, QStringLiteral("first"));
         auto document = readObject(service.path());
-        document["trayProvider"] = "Constrained";
+        document["trayProvider"] = "Constrained"; document["unusedReminders"] = "true";
         QVERIFY(writeFile(service.path(), QJsonDocument(document).toJson()));
         SettingsService invalid(service.path(), false); QVERIFY(invalid.loadError().isEmpty());
-        QCOMPARE(invalid.value().trayProvider, QStringLiteral("first"));
+        QCOMPARE(invalid.value().trayProvider, QStringLiteral("first")); QVERIFY(!invalid.value().unusedReminders);
     }
     void invalidCertificateIsRejectedWithoutChangingSettings() {
         QTemporaryDir dir; SettingsService service(dir.filePath("settings.json"), false);

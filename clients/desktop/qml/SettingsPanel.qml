@@ -30,7 +30,7 @@ Popup {
             mode: localMode.checked ? "local" : (sshMode.checked ? "ssh" : "remote"),
             url: url.text, token: token.text, forgetToken: forget.checked, sshUrl: sshUrl.text,
             interval: panel.selectedInterval, notifications: notifications.checked,
-            shareBrowserSignIns: shareBrowser.checked,
+            unusedReminders: unusedReminders.checked, shareBrowserSignIns: shareBrowser.checked,
             trayProvider: panel.trayProviderValues[trayProvider.currentIndex]
         })
         if (!error.text) { token.text = ""; panel.close() }
@@ -56,6 +56,7 @@ Popup {
         if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
         interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
+        unusedReminders.checked = backend.settings.unusedReminders
         trayProvider.currentIndex = Math.max(0, trayProviderValues.indexOf(backend.settings.trayProvider))
         shareBrowser.checked = backend.settings.shareBrowserSignIns
         if (updatesRequested) {
@@ -190,6 +191,10 @@ Popup {
                 }
             }
             Check { id: notifications; text: "Notify about usage, banked resets, and updates"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
+            Check {
+                id: unusedReminders; objectName: "unusedReminders"; enabled: notifications.checked
+                text: "Remind me about unused weekly allowance"; Accessible.name: text
+            }
             Check { id: shareBrowser; objectName: "shareBrowserSignIns"; visible: Qt.platform.os === "windows"; text: "Share browser sign-ins with the server"; Accessible.name: text }
             Text {
                 text: Qt.platform.os === "osx"

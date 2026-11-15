@@ -195,7 +195,8 @@ void Notifications::resetUsageBaseline(const QString &provider) {
     if (presentationChangedValue) emit presentationChanged();
 }
 
-void Notifications::observeUsage(const QVariantList &providers, bool enabled, const QDateTime &now) {
+void Notifications::observeUsage(const QVariantList &providers, bool enabled, const QDateTime &now,
+                                 const QSet<QString> &superseded) {
     if (!now.isValid()) return;
     // Use the OLD deadline: a provider can restart the whole window when it
     // clears usage. Ignore routine rollovers, clock drift, and resets so close
@@ -234,7 +235,7 @@ void Notifications::observeUsage(const QVariantList &providers, bool enabled, co
             const auto before = baseline.buckets.constFind(id);
             if (before != baseline.buckets.cend() && before->utilization > 0 && used == 0
                 && before->resetsAt.isValid() && now < before->resetsAt.addSecs(-resetGraceSeconds)
-                && enabled) {
+                && enabled && !superseded.contains("meter_" + name + "_" + id)) {
                 const auto label = bucket.value("label").toString();
                 post("meter_" + name + "_" + id, Usage::displayName(name) + " · " + label + " · Usage reset early",
                     QString("%1 usage dropped from %2% to 0% before its scheduled reset.")
