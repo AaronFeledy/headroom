@@ -10,21 +10,14 @@ import (
 	"log/slog"
 	"net"
 	"os/user"
-	"strings"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/api"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/claude"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/codex"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/grok"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/opencodego"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/resetauto"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/server"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/sshaccess"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 // Run serves until ctx is canceled or a server component fails. Args and env
@@ -37,12 +30,17 @@ func Run(ctx context.Context, args, env []string, logger *slog.Logger, version s
 	})
 }
 
-// RunWithReady is Run with an in-process startup acknowledgement. Ready is
+// Ready identifies the effective configuration after successful server startup.
+type Ready struct {
+	ConfigPath string
+}
+
+// RunWithReady is Run with an in-process startup acknowledgement. The callback is
 // called once after configuration, provider construction, and all listeners
 // succeed, before polling starts. Returning an error closes those listeners and
 // aborts startup. Help and SSH stdio requests never acknowledge a server start.
 func RunWithReady(ctx context.Context, args, env []string, logger *slog.Logger, version string,
-	input io.Reader, output io.Writer, ready func() error) error {
+	input io.Reader, output io.Writer, ready func(Ready) error) error {
 	return runContext(ctx, args, env, logger, desktopSessionOptions{
 		input: input, output: output, version: version, ready: ready,
 	})
@@ -71,11 +69,14 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		return err
 	}
+	if cfg.CheckConfig && cfg.DesktopSession {
+		return fmt.Errorf("check-config and desktop-session cannot be combined: %w", config.ErrInvalidConfig)
+	}
 	if cfg.DesktopSession {
 		if cfg.SSHAccess {
 			return fmt.Errorf("desktop-session and ssh-access cannot be combined: %w", config.ErrInvalidConfig)
 		}
-		return runDesktopSession(ctx, cfg, logger, desktopOptions)
+		return runDesktopSession(ctx, cfg, logger, desktopOptions, env)
 	}
 	if cfg.SSHAccess {
 		if err := sshaccess.ValidatePlatform(); err != nil {
@@ -83,6 +84,10 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 	}
 	if err := api.ValidateStartup(cfg.ListenAddr, cfg.AuthToken); err != nil {
+		return err
+	}
+	if cfg.CheckConfig {
+		_, err := fmt.Fprintf(desktopOptions.output, "config ok: %s\n", cfg.ConfigPath)
 		return err
 	}
 	var sshListener net.Listener
@@ -97,7 +102,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		defer sshListener.Close()
 	}
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger, env)
 	if err != nil {
 		return err
 	}
@@ -127,7 +132,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	}
 	handler = api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Grok: grokProvider, Codex: codexClient, Claude: claudeClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, Version: desktopOptions.version, ProviderNames: names, TLSCertificateSHA256: fingerprint, Reset: resetCore, Automation: automation})
 	defer listener.Close()
-	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
+	if err := acknowledgeReady(ctx, desktopOptions.ready, Ready{ConfigPath: cfg.ConfigPath}); err != nil {
 		return err
 	}
 	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger, TLSCertificateSHA256: fingerprint}}
@@ -137,7 +142,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	return runServerAndPoller(ctx, appRuntime{servers: servers, poller: providerPoller, interval: cfg.PollInterval})
 }
 
-func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions) error {
+func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions, env []string) error {
 	ctx, stopParentWatch := desktopParentContext(ctx)
 	defer stopParentWatch()
 	prepared, err := prepareDesktopSession(ctx, cfg.ListenAddr, options)
@@ -146,7 +151,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	}
 	defer prepared.listener.Close()
 	cfg.AuthToken = prepared.request.Token
-	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger)
+	providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, err := buildPoller(cfg, logger, env)
 	if err != nil {
 		return err
 	}
@@ -166,10 +171,10 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		Reset:         resetCore,
 		Automation:    automation,
 	})
-	if err := prepared.publishIdentity(); err != nil {
+	if err := prepared.publishIdentity(cfg.ConfigPath); err != nil {
 		return err
 	}
-	if err := acknowledgeReady(ctx, options.ready); err != nil {
+	if err := acknowledgeReady(ctx, options.ready, Ready{ConfigPath: cfg.ConfigPath}); err != nil {
 		return err
 	}
 	return runServerAndPoller(ctx, appRuntime{
@@ -187,12 +192,12 @@ func buildResetAutomation(ctx context.Context, cfg config.Config, logger *slog.L
 	return automation
 }
 
-func acknowledgeReady(ctx context.Context, ready func() error) error {
+func acknowledgeReady(ctx context.Context, ready func(Ready) error, info Ready) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if ready != nil {
-		return ready()
+		return ready(info)
 	}
 	return nil
 }
@@ -201,87 +206,6 @@ type appRuntime struct {
 	servers  []server.RunOptions
 	poller   *poller.Poller
 	interval time.Duration
-}
-
-func buildPoller(cfg config.Config, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	return buildPollerWithDiagnostics(cfg, nil, logger)
-}
-
-func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discovery) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	return buildPollerWithDiagnostics(cfg, discovery, nil)
-}
-
-func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, logger *slog.Logger) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	providerPoller := poller.New(poller.Options{Logger: logger})
-	var cursorClient *cursor.Client
-	var codexClient *codex.Client
-	var claudeClient *claude.Client
-	var grokProvider *grok.Provider
-	names := []string{}
-	for name, providerCfg := range cfg.Providers {
-		if providerCfg.Enabled {
-			provider, err := buildProvider(name, providerCfg, cfg.ResetStateDir)
-			if err != nil {
-				return nil, nil, nil, nil, nil, nil, err
-			}
-			if c, ok := provider.(*cursor.Client); ok {
-				if discovery != nil {
-					c = cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, Discovery: discovery})
-					provider = c
-				}
-				cursorClient = c
-			}
-			if c, ok := provider.(*codex.Client); ok {
-				codexClient = c
-			}
-			if c, ok := provider.(*claude.Client); ok {
-				claudeClient = c
-			}
-			if g, ok := provider.(*grok.Provider); ok {
-				grokProvider = g
-			}
-			if err := providerPoller.Register(provider, true); err != nil {
-				return nil, nil, nil, nil, nil, nil, err
-			}
-			names = append(names, provider.Name())
-		}
-		if strings.ToLower(name) != "claude" {
-			continue
-		}
-		for _, account := range providerCfg.Accounts {
-			if !account.Enabled {
-				continue
-			}
-			extra := claude.New(claude.Options{
-				ConfigDir: account.ConfigDir,
-				Keychain:  claudeKeychain(),
-				Name:      "Claude (" + account.Label + ")",
-				Account:   &usage.Account{ID: account.ID, Label: account.Label},
-			})
-			if err := providerPoller.Register(extra, true); err != nil {
-				return nil, nil, nil, nil, nil, nil, err
-			}
-			names = append(names, extra.Name())
-		}
-	}
-	return providerPoller, codexClient, claudeClient, cursorClient, grokProvider, names, nil
-}
-
-func buildProvider(name string, providerCfg config.ProviderConfig, resetStateDir string) (usage.Provider, error) {
-	switch strings.ToLower(name) {
-	case "claude":
-		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath, Keychain: claudeKeychain(), ResetStateDir: resetStateDir}), nil
-	case "codex":
-		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
-	case "cursor":
-		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, BrowserCredentials: &providerCfg.BrowserCredentials}), nil
-	case "grok":
-		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath})
-	case "opencodego":
-		return opencodego.NewProvider(opencodego.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
-	default:
-		return nil, fmt.Errorf("unknown provider %q: %w", name, config.ErrInvalidConfig)
-	}
 }
 
 func runServerAndPoller(ctx context.Context, runtime appRuntime) error {

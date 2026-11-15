@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -33,111 +32,6 @@ func managedServiceMayRegister(record ManagedServiceRecord) error {
 }
 
 const ManagedServiceRecordName = "managed-serve.json"
-const managedSystemdUser = "systemd-user"
-const supervisedRestartRecordName = "supervised-restart.json"
-
-type supervisedRestartRecord struct {
-	Schema           int      `json:"schema"`
-	Product          string   `json:"product"`
-	InstallRoot      string   `json:"install_root"`
-	Executable       string   `json:"executable"`
-	Owner            string   `json:"owner"`
-	Arguments        []string `json:"arguments"`
-	Environment      []string `json:"environment,omitempty"`
-	WorkingDirectory string   `json:"working_directory"`
-}
-
-func authorizeSupervisedManagedServiceRestart(root, executable string, arguments, environment []string, workingDirectory string) error {
-	owner, err := currentOwnerIdentity()
-	if err != nil {
-		return err
-	}
-	record := supervisedRestartRecord{Schema: SchemaVersion, Product: "Headroom", InstallRoot: root, Executable: executable, Owner: owner,
-		Arguments: append([]string(nil), arguments...), Environment: append([]string(nil), environment...), WorkingDirectory: workingDirectory}
-	return WritePrivateJSON(root, filepath.Join("runtime", supervisedRestartRecordName), record)
-}
-
-func clearSupervisedManagedServiceRestart(root string) error {
-	err := os.Remove(filepath.Join(root, "runtime", supervisedRestartRecordName))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func clearManagedServiceReceipt(root string) error {
-	err := os.Remove(filepath.Join(root, "runtime", ManagedServiceRecordName))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
-}
-
-func AcceptSupervisedManagedServiceRestart(installRoot string, arguments []string) (ManagedServiceRecord, error) {
-	root, err := NormalizeInstallRoot(installRoot)
-	if err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	var intent supervisedRestartRecord
-	if err = ReadPrivateJSON(root, filepath.Join("runtime", supervisedRestartRecordName), &intent); err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	executable, _ := os.Executable()
-	executable, err = filepath.Abs(executable)
-	owner, ownerErr := currentOwnerIdentity()
-	working, workingErr := os.Getwd()
-	if err != nil || ownerErr != nil || workingErr != nil || intent.Schema != SchemaVersion || intent.Product != "Headroom" || intent.InstallRoot != root ||
-		intent.Owner != owner || !samePath(intent.Executable, executable) || !slices.Equal(intent.Arguments, arguments) ||
-		!slices.Equal(intent.Environment, managedServiceEnvironment(os.Environ())) || intent.WorkingDirectory != working {
-		return ManagedServiceRecord{}, errors.New("supervised managed service restart identity is invalid")
-	}
-	if err = validateManagedServiceSupervisor(managedSystemdUser, os.Getpid()); err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	token, err := captureProcessToken(os.Getpid(), executable)
-	if err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	record := ManagedServiceRecord{Schema: SchemaVersion, Product: "Headroom", InstallRoot: root, PID: os.Getpid(), Executable: executable, ProcessToken: token,
-		Arguments: append([]string(nil), arguments...), Owner: owner, Supervisor: managedSystemdUser,
-		Environment: append([]string(nil), intent.Environment...), WorkingDirectory: working}
-	if err = writeManagedService(root, record); err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	return record, nil
-}
-
-// AuthorizeSupervisedLauncherHandoff permits only the fixed per-user service's
-// public CLI launcher to reach the already-verified candidate while the update
-// manager holds the recovery lock. It grants no manager or recovery operation.
-func AuthorizeSupervisedLauncherHandoff(installRoot, launcher string, pid int, arguments []string) error {
-	root, err := NormalizeInstallRoot(installRoot)
-	if err != nil {
-		return err
-	}
-	if len(arguments) == 0 || arguments[0] != "serve" || validateServiceArguments(arguments[1:]) != nil {
-		return errors.New("supervised launcher handoff arguments are invalid")
-	}
-	launcher, err = normalizeAbsolutePath(launcher, "supervised service launcher")
-	if err != nil || pid <= 0 {
-		return errors.New("supervised launcher handoff identity is invalid")
-	}
-	expectedLauncher, _, launcherErr := ActiveExecutableForRole(root, RolePublicLauncher)
-	if launcherErr != nil || !samePath(expectedLauncher, launcher) || validateManagedServiceSupervisor(managedSystemdUser, pid) != nil {
-		return errors.New("supervised launcher is not the fixed Headroom user service")
-	}
-	var intent supervisedRestartRecord
-	if err = ReadPrivateJSON(root, filepath.Join("runtime", supervisedRestartRecordName), &intent); err != nil {
-		return err
-	}
-	owner, ownerErr := currentOwnerIdentity()
-	expectedCLI, inspection, cliErr := ActiveExecutableForRole(root, RoleCLI)
-	if ownerErr != nil || cliErr != nil || !inspection.TrustedIdentity || !inspection.Complete || intent.Schema != SchemaVersion || intent.Product != "Headroom" ||
-		intent.InstallRoot != root || intent.Owner != owner || !samePath(intent.Executable, expectedCLI) || !slices.Equal(intent.Arguments, arguments[1:]) {
-		return errors.New("supervised launcher restart intent is invalid")
-	}
-	return nil
-}
 
 type ManagedServiceRecord struct {
 	Schema             int      `json:"schema"`
@@ -156,6 +50,7 @@ type ManagedServiceRecord struct {
 	LauncherToken      string   `json:"launcher_process_token,omitempty"`
 	Supervisor         string   `json:"supervisor,omitempty"`
 	Ready              bool     `json:"ready"`
+	ConfigPath         string   `json:"config_path,omitempty"`
 }
 
 func RegisterManagedService(installRoot string, arguments []string) (ManagedServiceRecord, error) {
@@ -327,6 +222,7 @@ func MarkManagedServiceReady(record ManagedServiceRecord) error {
 		}
 	}
 	current.Ready = true
+	current.ConfigPath = record.ConfigPath
 	return writeManagedService(root, current)
 }
 
@@ -362,99 +258,4 @@ func AcceptManagedServiceRestart(installRoot, launchToken string, arguments []st
 		time.Sleep(20 * time.Millisecond)
 	}
 	return ManagedServiceRecord{}, errors.New("managed service restart was not authorized")
-}
-
-func readManagedService(root string) (ManagedServiceRecord, error) {
-	var record ManagedServiceRecord
-	var err error
-	if err := ReadPrivateJSON(root, filepath.Join("runtime", ManagedServiceRecordName), &record); err != nil {
-		return ManagedServiceRecord{}, err
-	}
-	if record.Schema != SchemaVersion || record.Product != "Headroom" || record.InstallRoot != root || record.PID <= 0 || record.ProcessToken == "" {
-		return ManagedServiceRecord{}, errors.New("managed service receipt is invalid")
-	}
-	owner, ownerErr := currentOwnerIdentity()
-	if ownerErr != nil || record.Owner != owner {
-		return ManagedServiceRecord{}, errors.New("managed service owner is invalid")
-	}
-	record.Executable, err = normalizeAbsolutePath(record.Executable, "managed service executable")
-	if err != nil {
-		return ManagedServiceRecord{}, errors.New("managed service receipt is invalid")
-	}
-	record.WorkingDirectory, err = normalizeAbsolutePath(record.WorkingDirectory, "managed service working directory")
-	if err != nil || validateServiceArguments(record.Arguments) != nil || validateServiceEnvironment(record.Environment) != nil {
-		return ManagedServiceRecord{}, errors.New("managed service receipt is invalid")
-	}
-	if record.LauncherPID > 0 || record.LauncherExecutable != "" || record.LauncherToken != "" {
-		record.LauncherExecutable, err = normalizeAbsolutePath(record.LauncherExecutable, "managed service launcher")
-		if err != nil || record.LauncherPID <= 0 || record.LauncherToken == "" {
-			return ManagedServiceRecord{}, errors.New("managed service launcher receipt is invalid")
-		}
-		expected, _, expectedErr := ActiveExecutableForRole(root, RolePublicLauncher)
-		if expectedErr != nil || !samePath(expected, record.LauncherExecutable) {
-			return ManagedServiceRecord{}, errors.New("managed service launcher is not active")
-		}
-	}
-	return record, nil
-}
-
-func managedServiceEnvironment(environment []string) []string {
-	result := make([]string, 0)
-	for _, item := range environment {
-		key, _, ok := strings.Cut(item, "=")
-		if !ok {
-			continue
-		}
-		checkedKey := key
-		if runtime.GOOS == "windows" {
-			checkedKey = strings.ToUpper(key)
-		}
-		allowed := checkedKey == "USAGE_CONFIG" || checkedKey == "USAGE_LISTEN_ADDR" || checkedKey == "USAGE_AUTH_TOKEN" || checkedKey == "USAGE_POLL_INTERVAL" || checkedKey == "USAGE_SSH_ACCESS" || checkedKey == "USAGE_TLS" || checkedKey == "USAGE_TLS_CERT_FILE" || checkedKey == "USAGE_TLS_KEY_FILE" ||
-			(strings.HasPrefix(checkedKey, "USAGE_PROVIDER_") && (strings.HasSuffix(checkedKey, "_ENABLED") || strings.HasSuffix(checkedKey, "_CREDENTIALS_PATH") || strings.HasSuffix(checkedKey, "_BROWSER_CREDENTIALS")))
-		if allowed {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
-func validateServiceEnvironment(environment []string) error {
-	if len(environment) > 64 {
-		return errors.New("managed service environment is invalid")
-	}
-	seen := make(map[string]struct{}, len(environment))
-	for _, item := range environment {
-		if len(item) > 16384 || strings.ContainsRune(item, 0) {
-			return errors.New("managed service environment is invalid")
-		}
-		key, _, _ := strings.Cut(item, "=")
-		if runtime.GOOS == "windows" {
-			key = strings.ToUpper(key)
-		}
-		if _, exists := seen[key]; exists {
-			return errors.New("managed service environment is invalid")
-		}
-		seen[key] = struct{}{}
-		filtered := managedServiceEnvironment([]string{item})
-		if len(filtered) != 1 || filtered[0] != item {
-			return errors.New("managed service environment is invalid")
-		}
-	}
-	return nil
-}
-
-func writeManagedService(root string, record ManagedServiceRecord) error {
-	return WritePrivateJSON(root, filepath.Join("runtime", ManagedServiceRecordName), record)
-}
-
-func validateServiceArguments(arguments []string) error {
-	if len(arguments) > 32 {
-		return errors.New("managed serve has too many arguments")
-	}
-	for _, argument := range arguments {
-		if len(argument) > 4096 || strings.ContainsRune(argument, 0) {
-			return errors.New("managed serve argument is invalid")
-		}
-	}
-	return nil
 }

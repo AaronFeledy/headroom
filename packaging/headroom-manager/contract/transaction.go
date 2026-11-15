@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -329,7 +329,7 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 		request.CommitTimeoutMS = 15000
 	}
 	if request.ReadyTimeoutMS <= 0 || request.ReadyTimeoutMS > 120000 {
-		request.ReadyTimeoutMS = 30000
+		request.ReadyTimeoutMS = defaultManagedServiceReadyTimeoutMS
 	}
 	requestPath := filepath.Join(directory, TransactionRequestName)
 	if err = writeDurableJSON(requestPath, request); err != nil {
@@ -1643,40 +1643,12 @@ func launchManagedService(request ApplyRequest, state InstallState, onLaunch fun
 		return err
 	}
 	if request.ManagedServiceSupervisor != "" {
-		_ = clearSupervisedManagedServiceRestart(request.InstallRoot)
-		if err = clearManagedServiceReceipt(request.InstallRoot); err != nil {
-			return err
-		}
-		if err = authorizeSupervisedManagedServiceRestart(request.InstallRoot, executable, request.ManagedServiceArguments,
-			request.ManagedServiceEnvironment, request.ManagedServiceWorkingDirectory); err != nil {
-			return err
-		}
-		failed := func(cause error) error {
-			return errors.Join(cause, stopManagedServiceSupervisor(request.ManagedServiceSupervisor), clearSupervisedManagedServiceRestart(request.InstallRoot))
-		}
-		if err := startManagedServiceSupervisor(request.ManagedServiceSupervisor); err != nil {
-			return failed(err)
-		}
-		deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
-		journaled := false
-		for time.Now().Before(deadline) {
-			record, readErr := readManagedService(request.InstallRoot)
-			if readErr == nil && record.Supervisor == request.ManagedServiceSupervisor && samePath(record.Executable, executable) &&
-				slices.Equal(record.Arguments, request.ManagedServiceArguments) && slices.Equal(record.Environment, request.ManagedServiceEnvironment) &&
-				record.WorkingDirectory == request.ManagedServiceWorkingDirectory {
-				if !journaled && onLaunch != nil {
-					if err = onLaunch(record.PID, record.Executable, record.ProcessToken); err != nil {
-						return failed(err)
-					}
-					journaled = true
-				}
-				if record.Ready {
-					return nil
-				}
-			}
-			time.Sleep(25 * time.Millisecond)
-		}
-		return failed(errors.New("managed per-user headroom.service did not report the active generation"))
+		_, err = launchSupervisedManagedService(context.Background(), supervisedServiceLaunch{
+			record: ManagedServiceRecord{InstallRoot: request.InstallRoot, Executable: executable, Supervisor: request.ManagedServiceSupervisor,
+				Arguments: request.ManagedServiceArguments, Environment: request.ManagedServiceEnvironment, WorkingDirectory: request.ManagedServiceWorkingDirectory},
+			timeout: time.Duration(request.ReadyTimeoutMS) * time.Millisecond, onLaunch: onLaunch,
+		})
+		return err
 	}
 	baseEnvironment := authoritativeServiceEnvironment(os.Environ(), request.ManagedServiceEnvironment)
 	environment := authoritativeApplyEnvironment(baseEnvironment, map[string]string{

@@ -450,8 +450,9 @@ void ManagedServer::finishIdentity()
     QJsonParseError parseError;
     const auto document = framed ? QJsonDocument::fromJson(frame.left(frame.size() - 1), &parseError) : QJsonDocument();
     const auto object = document.object();
-    const QSet<QString> expectedKeys{QStringLiteral("schema"), QStringLiteral("nonce"),
+    QSet<QString> expectedKeys{QStringLiteral("schema"), QStringLiteral("nonce"),
         QStringLiteral("address"), QStringLiteral("certificate")};
+    if (object.contains(QStringLiteral("config_path"))) expectedKeys.insert(QStringLiteral("config_path"));
     QSet<QString> actualKeys;
     for (const auto &key : object.keys()) actualKeys.insert(key);
     const QString address = object.value(QStringLiteral("address")).toString();
@@ -472,6 +473,7 @@ void ManagedServer::finishIdentity()
         !object.value(QStringLiteral("nonce")).isString() ||
         object.value(QStringLiteral("nonce")).toString().toLatin1() != m_sessionNonce ||
         !object.value(QStringLiteral("address")).isString() || !addressOk ||
+        (object.contains(QStringLiteral("config_path")) && !object.value(QStringLiteral("config_path")).isString()) ||
         !object.value(QStringLiteral("certificate")).isString() || certificates.size() != 1 ||
         certificates.first().isNull() || !certificates.first().isSelfSigned() ||
         certificatePEM.trimmed() != certificates.first().toPem().trimmed()) {
@@ -482,6 +484,8 @@ void ManagedServer::finishIdentity()
     m_identityOutput.fill('\0');
     m_identityOutput.clear();
     m_sessionCertificate = certificates.first();
+    m_configPath = object.value(QStringLiteral("config_path")).toString();
+    m_lastOwnedConfigPath = m_configPath;
     m_sessionUrl = QUrl(QStringLiteral("https://") + address + '/');
     m_network.clearConnectionCache();
     emit connectionChanged();
@@ -499,6 +503,7 @@ void ManagedServer::clearSession()
     m_sessionToken.clear();
     m_sessionCertificate.clear();
     m_sessionUrl.clear();
+    m_configPath.clear();
     m_network.clearConnectionCache();
     if (changed) emit connectionChanged();
 }
@@ -541,7 +546,7 @@ bool ManagedServer::allowed(State from, State to)
     case State::Remote:
         return false;
     case State::Idle:
-        return to == State::Probing;
+        return to == State::Probing || to == State::Failed;
     case State::Probing:
         return to == State::Attached || to == State::Starting || to == State::Started
             || to == State::Restarting || to == State::Failed;

@@ -31,7 +31,7 @@ func TestRunReadyRejectsInvalidStartup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			args := append([]string{"--config", filepath.Join(t.TempDir(), "missing.yaml")}, tc.args...)
-			err := RunWithReady(context.Background(), args, tc.env, discardLogger(), "test", nil, io.Discard, func() error { called = true; return nil })
+			err := RunWithReady(context.Background(), args, tc.env, discardLogger(), "test", nil, io.Discard, func(Ready) error { called = true; return nil })
 			if err == nil || called {
 				t.Fatalf("startup error=%v; ready called=%v", err, called)
 			}
@@ -50,8 +50,11 @@ func TestRunReadyFailureClosesBoundListener(t *testing.T) {
 			bound, err = net.Listen(network, address)
 			return bound, err
 		},
-		ready: func() error {
+		ready: func(info Ready) error {
 			calls++
+			if info.ConfigPath != args[1] {
+				t.Fatalf("ready config path = %q, want %q", info.ConfigPath, args[1])
+			}
 			if bound == nil {
 				t.Fatal("ready preceded listener binding")
 			}

@@ -36,6 +36,7 @@ type desktopSessionIdentity struct {
 	Nonce       string `json:"nonce"`
 	Address     string `json:"address"`
 	Certificate string `json:"certificate"`
+	ConfigPath  string `json:"config_path"`
 }
 
 type desktopSessionOptions struct {
@@ -47,7 +48,7 @@ type desktopSessionOptions struct {
 	listen  func(string, string) (net.Listener, error)
 	homeDir string
 	version string
-	ready   func() error
+	ready   func(Ready) error
 }
 
 type preparedDesktopSession struct {
@@ -222,12 +223,13 @@ func generateDesktopCertificate(random io.Reader, now time.Time, boundIP net.IP)
 	return tlsidentity.Generate(tlsidentity.CertificateOptions{Random: random, Now: now, BoundIP: boundIP, CommonName: "Headroom Desktop Session", Days: 365})
 }
 
-func (session *preparedDesktopSession) publishIdentity() error {
+func (session *preparedDesktopSession) publishIdentity(configPath string) error {
 	identity := desktopSessionIdentity{
 		Schema:      1,
 		Nonce:       session.request.Nonce,
 		Address:     session.listener.Addr().String(),
 		Certificate: string(session.certificate),
+		ConfigPath:  configPath,
 	}
 	encoded, err := json.Marshal(identity)
 	if err != nil || len(encoded)+1 > maximumDesktopIdentity {

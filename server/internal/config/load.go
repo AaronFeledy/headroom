@@ -6,12 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,26 +25,13 @@ type rawConfig struct {
 	TLSKeyFile   *string                      `yaml:"tls_key_file"`
 }
 
-type rawAccountConfig struct {
-	ID        *string `yaml:"id"`
-	Label     *string `yaml:"label"`
-	ConfigDir *string `yaml:"config_dir"`
-	Enabled   *bool   `yaml:"enabled"`
-}
-
-type rawProviderConfig struct {
-	Enabled            *bool               `yaml:"enabled"`
-	CredentialsPath    *string             `yaml:"credentials_path"`
-	BrowserCredentials *bool               `yaml:"browser_credentials"`
-	Accounts           *[]rawAccountConfig `yaml:"accounts"`
-}
-
 type flagValues struct {
 	ConfigPath     string
 	ListenAddr     string
 	AuthToken      string
 	PollInterval   string
 	DesktopSession bool
+	CheckConfig    bool
 	SSHAccess      bool
 	Set            map[string]bool
 	TLS            string
@@ -69,37 +54,16 @@ func loadForOS(ctx context.Context, opts LoadOptions, goos string, ops migration
 	if err != nil {
 		return Config{}, err
 	}
-	env := parseEnv(opts.Env)
-	path, err := (configMigration{goos: goos, ops: ops, logger: opts.Logger}).resolve(flags, opts.Env)
+	path, err := resolvePath(opts, flags, configMigration{goos: goos, ops: ops, logger: opts.Logger})
 	if err != nil {
 		return Config{}, err
 	}
 
-	cfg := Defaults()
-	if err := applyYAML(path, &cfg); err != nil {
-		return Config{}, err
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
-	if err := applyEnv(env, &cfg); err != nil {
-		return Config{}, err
-	}
-	if err := applyFlags(flags, &cfg); err != nil {
-		return Config{}, err
-	}
-	if defaultPath, err := DefaultPath(goos, opts.Env); err == nil {
-		cfg.TLSDir = tlsDirectory(defaultPath)
-		cfg.ResetStateDir = filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
-		cfg.ResetAutomationDir = filepath.Join(filepath.Dir(defaultPath), "reset-automation")
-	}
-	if err := validateAccounts(cfg, goos); err != nil {
-		return Config{}, err
-	}
-	if err := validateTLS(cfg); err != nil {
-		return Config{}, err
-	}
-	if cfg.PollInterval <= 0 {
-		return Config{}, fmt.Errorf("poll interval must be positive: %w", ErrInvalidConfig)
-	}
-	return cfg, nil
+	return buildConfig(data, opts, buildContext{goos: goos, path: path, flags: flags})
 }
 
 func parseFlags(args []string) (flagValues, error) {
@@ -113,6 +77,7 @@ func parseFlags(args []string) (flagValues, error) {
 	fs.StringVar(&values.TLSKeyFile, "tls-key-file", "", "TLS private key PEM file")
 	fs.StringVar(&values.PollInterval, "poll-interval", "", "provider poll interval")
 	fs.BoolVar(&values.DesktopSession, "desktop-session", false, "start a private desktop TLS session")
+	fs.BoolVar(&values.CheckConfig, "check-config", false, "validate configuration and exit without starting the server")
 	fs.BoolVar(&values.SSHAccess, "ssh-access", false, "enable access through the private SSH Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return flagValues{}, fmt.Errorf("parse flags: %w", err)
@@ -121,14 +86,7 @@ func parseFlags(args []string) (flagValues, error) {
 	return values, nil
 }
 
-func applyYAML(path string, cfg *Config) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read config %s: %w", path, err)
-	}
+func applyYAML(data []byte, path string, cfg *Config) error {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, errors.Join(ErrMalformedConfig, err))
@@ -167,50 +125,6 @@ func applyRaw(raw rawConfig, cfg *Config) error {
 			return err
 		}
 	}
-	return nil
-}
-
-func applyProvider(name string, raw rawProviderConfig, cfg *Config) error {
-	current := cfg.Providers[name]
-	if raw.BrowserCredentials != nil {
-		current.BrowserCredentials = *raw.BrowserCredentials
-	}
-	if raw.Enabled != nil {
-		current.Enabled = *raw.Enabled
-	}
-	if raw.CredentialsPath != nil {
-		current.CredentialsPath = *raw.CredentialsPath
-	}
-	if raw.Accounts != nil {
-		if name != "claude" {
-			return fmt.Errorf("providers.%s.accounts[0]: accounts are supported only for claude: %w", name, ErrInvalidConfig)
-		}
-		accounts := make([]AccountConfig, 0, len(*raw.Accounts))
-		for i, item := range *raw.Accounts {
-			account := AccountConfig{Enabled: true}
-			if item.ID != nil {
-				if strings.IndexFunc(*item.ID, unicode.IsControl) >= 0 {
-					return fmt.Errorf("providers.%s.accounts[%d]: id must not contain control characters: %w", name, i, ErrInvalidConfig)
-				}
-				account.ID = strings.TrimSpace(*item.ID)
-			}
-			if item.Label != nil {
-				account.Label = strings.TrimSpace(*item.Label)
-			}
-			if item.ConfigDir != nil {
-				account.ConfigDir = *item.ConfigDir
-			}
-			if item.Enabled != nil {
-				account.Enabled = *item.Enabled
-			}
-			if account.Label == "" {
-				account.Label = account.ID
-			}
-			accounts = append(accounts, account)
-		}
-		current.Accounts = accounts
-	}
-	cfg.Providers[name] = current
 	return nil
 }
 
@@ -280,6 +194,7 @@ func applyProviderEnv(env map[string]string, cfg *Config) error {
 }
 
 func applyFlags(flags flagValues, cfg *Config) error {
+	cfg.CheckConfig = flags.CheckConfig
 	if flags.Set["tls"] {
 		cfg.TLS = flags.TLS
 	}

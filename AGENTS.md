@@ -53,18 +53,22 @@ before the peer is system-trusted or pinned, and never replace a pin without a
 new proof.
 
 The public `headroom` command displays usage, `headroom serve` runs the server,
-and `headroom update` updates the managed installation. Bare CLI output refreshes
-in a terminal and prints once when piped; it does not start a server or invent
-data. With no explicit transport it can read the active desktop's private
-snapshot, then fall back to localhost only when no desktop is running.
-Desktop and CLI native updates share the same transaction manager. Explicit
-Windows/WSL pairing stages both targets before either applies; never infer it
-from hostnames, URLs, or a server's claim to be local. Cross-kernel partial
-completion must remain visible and recoverable, never reported as atomic.
-Managed `serve` receipts bind the executable, kernel process identity, owner,
-arguments, and approved server environment. Readiness is acknowledged only after
-server configuration and listener binding succeed. Linux/WSL supervision supports
-only the current user's `headroom.service`; never infer an arbitrary unit name,
+`headroom update` updates the managed installation, and `headroom accounts`
+lists, adds, signs in, changes, and removes extra Claude accounts in the server
+config (`list --json` is a stable machine format).
+`headroom serve --check-config` validates the configuration and exits without listening. Bare
+CLI output refreshes in a terminal and prints once when piped; it does not start
+a server or invent data. With no explicit transport it can read the active
+desktop's private snapshot, then fall back to localhost only when no desktop is
+running. Desktop and CLI native updates share the same transaction manager.
+Explicit Windows/WSL pairing stages both targets before either applies; never
+infer it from hostnames, URLs, or a server's claim to be local. Cross-kernel
+partial completion must remain visible and recoverable, never reported as
+atomic. Managed `serve` receipts bind the executable, kernel process identity,
+owner, arguments, and approved server environment, and record the resolved
+config path at readiness. Readiness is acknowledged only after server
+configuration and listener binding succeed. Linux/WSL supervision supports only
+the current user's `headroom.service`; never infer an arbitrary unit name,
 control system-wide units, or invoke sudo during an update.
 
 Local remains the fresh-install default; SSH is the recommended remote option
@@ -87,6 +91,32 @@ followed by SSH health checks for the exact target version. Never retry the upda
 command automatically, pass arbitrary commands/paths from the UI, weaken a
 usage-only forced key, or expose this action over HTTP. Source, capture,
 explicit-config, and system-managed desktop sessions cannot invoke it.
+
+`headroom accounts` validates through the server's own config rules (the public
+`server/accountconfig` facade, never copied rules) with the managed server's
+recorded arguments, approved environment, and working directory. It checks the
+requested account before running `claude auth login`, skips the login when the
+directory already has a readable sign-in, writes `config_dir` with exactly the
+string it passed as `CLAUDE_CONFIG_DIR`, and edits the config under a file lock
+from its current contents. Without `--config` it edits the file a ready managed
+`headroom serve` reports, and refuses to guess when a receipt exists but cannot
+be verified. It restarts only a server Headroom started for the edited file:
+a managed `headroom serve` supervised by the current user's `headroom.service`
+(holding the install lock through readiness of a replacement that reports the
+same file), or, with no managed receipt, the desktop's own Local-mode child via
+the private async `restart-server` IPC request. The desktop answers `busy`,
+`not_owner`, `other_config`, or `restarted` (60-second bound), never restarts an
+attached or remote server, and capture and isolated sessions do not register
+the request. If a restarted server fails, the command restores the previous
+bytes only when the file still holds the edit and restarts once more; if the
+restart cannot begin, the edit stays saved and is reported. Otherwise it prints
+the restart step. Error output never echoes config contents. It never edits
+Claude Code credentials or the Keychain, and tests never run a real `claude`
+login, Keychain, or systemctl. In a managed installation (nonempty
+`HEADROOM_INSTALL_ROOT` in the server's environment), extra accounts report
+`headroom accounts login claude <id>` as their sign-in command; elsewhere the
+`CLAUDE_CONFIG_DIR=... claude auth login` form remains. The desktop-session
+identity includes the child's `config_path`.
 
 Claude credentials are discovered unless `providers.claude.credentials_path`
 names a file (then only that file is read): Claude Code's macOS Keychain item
@@ -244,19 +274,20 @@ fingerprint, weekly window, and allowed kinds.
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
 trusted native per-user install. Capture, explicit-config, source, and
-system-managed sessions make no public update requests. Restart
-apply uses a two-way acknowledgement/commit, exact process identity, readiness,
-rollback, and durable recovery. Do not add a second archive validator outside
-the Go manager. External desktop installers use manager-owned activation and
-coordinate healthy live reinstalls before changing install state. Keep the
-`reinstall` IPC request separate from the managed CLI's `update` request: its
-private bootstrap observer is not an exit participant. Pin the prior state,
-transaction nonce, and exact generation; a lost reply never permits a direct
-fallback install or a duplicate request. Complete platform integration before
-fresh activation, and preserve `ready`, `skipped`, `restart_required`, and
-`unconfirmed` as distinct outcomes. macOS framework links are the only archive symlinks allowed:
-they must be manifest-listed and resolve within the same packaged framework.
-Mac payloads use Headroom.app/Contents/MacOS; the stable Finder launcher is
+system-managed sessions make no public update requests. Restart apply uses a
+two-way acknowledgement/commit, exact process identity, readiness, rollback, and
+durable recovery. Do not add a second archive validator outside the Go manager.
+External desktop installers use manager-owned activation and coordinate healthy
+live reinstalls before changing install state. Keep the `reinstall` and
+`restart-server` IPC requests separate from the managed CLI's `update` request:
+the reinstall request's private bootstrap observer is not an exit participant.
+Pin the prior state, transaction nonce, and exact generation; a lost reply never
+permits a direct fallback install or a duplicate request. Complete platform
+integration before fresh activation, and preserve `ready`, `skipped`,
+`restart_required`, and `unconfirmed` as distinct outcomes. macOS framework
+links are the only archive symlinks allowed: they must be manifest-listed and
+resolve within the same packaged framework. Mac payloads use
+Headroom.app/Contents/MacOS; the stable Finder launcher is
 ~/Applications/Headroom.app and managed generations live under
 ~/Library/Application Support/Headroom. Login startup writes only the owned
 LaunchAgent plist for the next login; do not bootstrap or bootout the current

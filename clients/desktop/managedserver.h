@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QNetworkAccessManager>
+#include <QJsonObject>
 #include <QPointer>
 #include <QProcess>
 #include <QSslCertificate>
@@ -21,6 +22,8 @@ struct ManagedServerOptions {
     int readinessAttempts = 40;
     int restartLimit = 3;
     int sessionHandshakeTimeoutMs = 8000;
+    // Bound on a CLI-requested restart of the owned server (restart-server IPC).
+    int restartTimeoutMs = 60000;
     std::function<void(QNetworkReply *)> probeObserver;
 };
 
@@ -34,6 +37,8 @@ public:
     void ensureAvailable();
     void reportConnectionFailure();
     void stopOwned();
+    void requestRestart(const QJsonObject &request, bool updateBusy, std::function<void(const QJsonObject &)> reply);
+    QString ownedConfigPath() const { return ownsProcess() ? m_configPath : QString(); }
     bool ownsProcess() const { return !m_process.isNull(); }
     bool isAttached() const { return m_state == State::Attached; }
     bool isAvailable() const { return m_state == State::Attached || m_state == State::Started; }
@@ -86,6 +91,11 @@ private:
     QString m_token;
     State m_state = State::Remote;
     QString m_message;
+    QString m_configPath;
+    // Kept after the child exits so a failed restart-server request can be
+    // followed by a relaunch for the same file.
+    QString m_lastOwnedConfigPath;
+    QPointer<QObject> m_restartRequest;
     QByteArray m_identityOutput;
     QByteArray m_sessionNonce;
     QByteArray m_sessionToken;

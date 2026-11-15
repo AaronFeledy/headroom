@@ -9,10 +9,30 @@ import (
 	"path/filepath"
 )
 
-func AtomicUpdate(ctx context.Context, path string, mutator Mutator) (err error) {
+func AtomicUpdate(ctx context.Context, path string, mutator Mutator) error {
 	if mutator == nil {
 		return ErrNilMutator
 	}
+	return lockedReplace(ctx, path, nil, func(current []byte) ([]byte, error) {
+		if !json.Valid(current) {
+			return nil, fmt.Errorf("current credentials %s: %w", path, ErrInvalidJSON)
+		}
+		updated, err := mutator(current)
+		if err != nil {
+			return nil, fmt.Errorf("mutate credentials %s: %w", path, err)
+		}
+		if !json.Valid(updated) {
+			return nil, fmt.Errorf("updated credentials %s: %w", path, ErrInvalidJSON)
+		}
+		return updated, nil
+	})
+}
+
+// lockedReplace holds path+".lock", passes a copy of the current bytes to
+// mutator, and atomically replaces path. A missing file is an error unless
+// missingMode is set, in which case mutator receives nil and the new file uses
+// that mode.
+func lockedReplace(ctx context.Context, path string, missingMode *os.FileMode, mutator Mutator) (err error) {
 	lock, err := acquireFileLock(ctx, path+".lock")
 	if err != nil {
 		return err
@@ -22,18 +42,18 @@ func AtomicUpdate(ctx context.Context, path string, mutator Mutator) (err error)
 	}()
 
 	snapshot, err := LoadSnapshot(ctx, path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) && missingMode != nil {
+		snapshot = Snapshot{Mode: *missingMode}
+	} else if err != nil {
 		return err
 	}
-	if !json.Valid(snapshot.Data) {
-		return fmt.Errorf("current credentials %s: %w", path, ErrInvalidJSON)
+	current := snapshot.Data
+	if current != nil {
+		current = append([]byte(nil), current...)
 	}
-	updated, err := mutator(append([]byte(nil), snapshot.Data...))
+	updated, err := mutator(current)
 	if err != nil {
-		return fmt.Errorf("mutate credentials %s: %w", path, err)
-	}
-	if !json.Valid(updated) {
-		return fmt.Errorf("updated credentials %s: %w", path, ErrInvalidJSON)
+		return err
 	}
 	select {
 	case <-ctx.Done():

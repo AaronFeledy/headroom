@@ -160,6 +160,9 @@ func Test_RunDesktopSession_serves_pinned_authenticatedTLS(t *testing.T) {
 	if identity.Schema != 1 || identity.Nonce != testDesktopNonce || net.ParseIP(hostFromAddress(t, identity.Address)) == nil {
 		t.Fatalf("identity = %#v", identity)
 	}
+	if identity.ConfigPath != args[1] || !filepath.IsAbs(identity.ConfigPath) {
+		t.Fatalf("identity config_path = %q, want %q", identity.ConfigPath, args[1])
+	}
 	if bytes.Contains(line, []byte(testDesktopToken)) || bytes.Contains(line, []byte("PRIVATE KEY")) {
 		t.Fatal("desktop identity disclosed private session material")
 	}

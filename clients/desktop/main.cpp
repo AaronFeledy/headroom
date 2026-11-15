@@ -50,7 +50,8 @@ int desktopCLIRequest(int argc, char **argv) {
     if (!command.isObject()) return 1;
     InstanceService instance(SettingsService::instanceIdentityPath());
     const QString operation = command.object().value(QStringLiteral("command")).toString();
-    const int timeout = operation == QStringLiteral("update") || operation == QStringLiteral("reinstall") ? 8 * 60 * 1000 : 3000;
+    const int timeout = operation == QStringLiteral("update") || operation == QStringLiteral("reinstall") ? 8 * 60 * 1000
+        : operation == QStringLiteral("restart-server") ? 75000 : 3000;
     const auto response = instance.request(command.toJson(QJsonDocument::Compact), timeout);
     if (response.isEmpty()) return instance.primaryUnavailable() ? 3 : 1;
     QFile output;
@@ -147,11 +148,13 @@ int main(int argc, char **argv) {
     if (!capture && !isolated) instance.setAsyncRequestHandler([&](const QByteArray &request, InstanceService::Reply reply) {
         const auto object = QJsonDocument::fromJson(request).object();
         const auto command = object.value(QStringLiteral("command")).toString();
-        if (command != QStringLiteral("update") && command != QStringLiteral("reinstall")) return false;
+        if (command != QStringLiteral("update") && command != QStringLiteral("reinstall")
+            && command != QStringLiteral("restart-server")) return false;
         auto respond = [reply = std::move(reply)](const QJsonObject &response) {
             reply(QJsonDocument(response).toJson(QJsonDocument::Compact));
         };
-        if (command == QStringLiteral("reinstall")) updateService.requestReinstall(object, std::move(respond));
+        if (command == QStringLiteral("restart-server")) controller.requestServerRestart(object, updateService.busy(), std::move(respond));
+        else if (command == QStringLiteral("reinstall")) updateService.requestReinstall(object, std::move(respond));
         else updateService.requestCLIUpdate(object, std::move(respond));
         return true;
     });

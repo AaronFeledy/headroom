@@ -7,16 +7,26 @@ import (
 )
 
 var (
-	ErrInvalidConfig   = errors.New("config: invalid")
-	ErrMalformedConfig = errors.New("config: malformed")
+	ErrInvalidConfig         = errors.New("config: invalid")
+	ErrMalformedConfig       = errors.New("config: malformed")
+	ErrDuplicateAccountID    = errors.New("config: duplicate account id")
+	ErrDuplicateAccountLabel = errors.New("config: duplicate account label")
+	ErrInvalidAccountID      = errors.New("config: invalid account id")
+	ErrInvalidAccountLabel   = errors.New("config: invalid account label")
+	ErrInvalidAccountDir     = errors.New("config: invalid account config_dir")
+	ErrDuplicateAccountDir   = errors.New("config: duplicate account config_dir")
+	ErrTooManyAccounts       = errors.New("config: too many accounts")
 )
 
 type Config struct {
+	// ConfigPath is the absolute resolved path read by Load.
+	ConfigPath     string
 	ListenAddr     string
 	AuthToken      string
 	PollInterval   time.Duration
 	Providers      map[string]ProviderConfig
 	DesktopSession bool
+	CheckConfig    bool
 	SSHAccess      bool
 	TLS            string
 	TLSCertFile    string
@@ -49,6 +59,9 @@ type LoadOptions struct {
 	Args   []string
 	Env    []string
 	Logger *slog.Logger
+	// Dir is the server's working directory for resolving relative credential
+	// paths during validation. Empty means this process's working directory.
+	Dir string
 }
 
 func Defaults() Config {

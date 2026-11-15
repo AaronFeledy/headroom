@@ -57,6 +57,13 @@ func writeHTTPAccountConfig(t *testing.T, id, configDir string) string {
 }
 
 func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *testing.T) {
+	for _, root := range []string{"", "/managed/install"} {
+		t.Run(root, func(t *testing.T) { runMissingAccountSignIn(t, root) })
+	}
+}
+
+func runMissingAccountSignIn(t *testing.T, root string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -78,7 +85,7 @@ func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *test
 		return listener, err
 	}}
 	go func() {
-		result <- runContext(ctx, []string{"-config", path, "-listen-addr", "127.0.0.1:0"}, disabledProviderEnv(), logger, options)
+		result <- runContext(ctx, []string{"-config", path, "-listen-addr", "127.0.0.1:0"}, append(disabledProviderEnv(), "HEADROOM_INSTALL_ROOT="+root), logger, options)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -150,6 +157,9 @@ func Test_Run_missing_claude_account_serves_actionable_sign_in_over_HTTP(t *test
 		command = "CLAUDE_CONFIG_DIR='" + strings.ReplaceAll(configDir, "'", `'\''`) + "' claude auth login"
 	}
 	wantCommand := &command
+	if root != "" {
+		command = "headroom accounts login claude work"
+	}
 	if row.Error == nil || *row.Error != wantMessage || !row.NeedsReauth || row.Success || row.Auth.State != "signed_out" {
 		t.Fatalf("sign-in row = %+v, want %q", row, wantMessage)
 	}

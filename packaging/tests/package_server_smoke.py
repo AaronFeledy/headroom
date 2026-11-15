@@ -56,8 +56,9 @@ def check_desktop_session(server, environment, creationflags):
         assert line.endswith(b"\n") and line.count(b"\n") == 1 and len(line) <= 16384
         assert token.encode() not in line and b"PRIVATE KEY" not in line
         identity = json.loads(line)
-        assert set(identity) == {"schema", "nonce", "address", "certificate"}
+        assert set(identity) == {"schema", "nonce", "address", "certificate", "config_path"}
         assert identity["schema"] == 1 and identity["nonce"] == nonce
+        assert os.path.isabs(identity["config_path"])
         host, port = identity["address"].rsplit(":", 1)
         assert host == "127.0.0.1" and 0 < int(port) <= 65535
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
