@@ -83,7 +83,11 @@ func (s *CredentialStore) ReloadIfChanged(ctx context.Context) (bool, error) {
 	return true, err
 }
 
-func (s *CredentialStore) SaveRefreshed(ctx context.Context, tokens RefreshedTokens) error {
+// Refresh locks the resolved credentials file, compares the stored token pair to
+// stale, and calls exchange only when the pair still matches. exchange must not
+// write the store. After a successful commit, credentials are reloaded with a
+// detached bounded context.
+func (s *CredentialStore) Refresh(ctx context.Context, stale Credentials, exchange func(Credentials) (RefreshedTokens, error)) error {
 	s.mu.Lock()
 	path := s.path
 	source := s.source
@@ -97,12 +101,35 @@ func (s *CredentialStore) SaveRefreshed(ctx context.Context, tokens RefreshedTok
 		source = s.source
 		s.mu.RUnlock()
 	}
-	if err := credstore.AtomicUpdate(ctx, path, func(current []byte) ([]byte, error) {
-		return mutateCredentials(current, source, tokens)
-	}); err != nil {
+	err := credstore.Refresh(ctx, path, func(current []byte) (credstore.Mutator, error) {
+		parsed, err := parseCredentials(current, path, source)
+		if err != nil {
+			return nil, err
+		}
+		if parsed.AccessToken != stale.AccessToken || parsed.RefreshToken != stale.RefreshToken {
+			return nil, nil
+		}
+		tokens, err := exchange(parsed)
+		if err != nil {
+			return nil, err
+		}
+		return func(latest []byte) ([]byte, error) {
+			latestParsed, err := parseCredentials(latest, path, source)
+			if err != nil {
+				return nil, err
+			}
+			if latestParsed.AccessToken != stale.AccessToken || latestParsed.RefreshToken != stale.RefreshToken {
+				return latest, nil
+			}
+			return mutateCredentials(latest, source, tokens)
+		}, nil
+	})
+	if err != nil {
 		return fmt.Errorf("save codex credentials: %w", err)
 	}
-	_, err := s.Load(ctx)
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer cancel()
+	_, err = s.Load(loadCtx)
 	return err
 }
 

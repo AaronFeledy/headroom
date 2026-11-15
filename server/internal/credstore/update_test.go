@@ -2,6 +2,7 @@ package credstore_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,5 +47,33 @@ func Test_UpdateFile_preserves_symlink_and_target_mode(t *testing.T) {
 	info, err := os.Lstat(link)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("symlink replaced: %v %v", info, err)
+	}
+}
+
+func Test_UpdateFile_leaves_original_when_context_canceled_before_commit(t *testing.T) {
+	// Given
+	path := writeCreds(t, `{"external_owner":{"sentinel":"keep"}}`, 0o600)
+	wantBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read original: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// When
+	err = credstore.UpdateFile(ctx, path, 0o600, func(current []byte) ([]byte, error) {
+		cancel()
+		return []byte(`{"external_owner":{"sentinel":"changed"}}`), nil
+	})
+
+	// Then
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("UpdateFile error = %v, want context canceled", err)
+	}
+	assertFileBytesAndMode(t, path, wantBytes, 0o600)
+	assertNoTempFiles(t, filepath.Dir(path))
+	if err := credstore.UpdateFile(context.Background(), path, 0o600, func(current []byte) ([]byte, error) {
+		return current, nil
+	}); err != nil {
+		t.Fatalf("lock leaked after canceled update: %v", err)
 	}
 }

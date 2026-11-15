@@ -133,9 +133,19 @@ failed discovery: `keychain` or `cli`, with `signed_in`, `signed_out`, `locked`,
 `unreadable`, or selected `expired` status. Keychain access is read-only through
 `/usr/bin/security find-generic-password`: never write, delete, unlock, or
 change ACLs, and never refresh a Keychain token (Claude Code owns refresh and
-its write lock). Before file refresh write-back, Headroom compares the stored
-refresh token with the one it refreshed and skips the write on a mismatch; this
-does not synchronize with other writers' locks. Locked or unavailable Keychains
+its write lock). File refreshes write through symlinks and reject known
+non-writable or non-replaceable stores before the token POST. Claude Code files
+take `.oauth_refresh.lock` in the credentials file's original directory, then
+the legacy resolved-directory `.lock`, with five-second heartbeats and 60-second
+staleness. Headroom writes no `.oauth_refresh.lock.owner` record, preventing
+Claude Code's dead-holder takeover; only the heartbeat prevents ordinary stale
+reclamation. Immediately before the POST it verifies and renews its locks.
+After a sent POST, refresh and write-back survive poll cancellation; the edit
+rechecks both tokens and preserves a concurrent sign-in, even if the Claude Code
+lock was lost. The final re-read preserves visible unrelated edits but is not
+compare-and-swap against writers outside Headroom's lock. Native Windows also
+takes the mkdir lock when refreshing the WSL home's file over 9P; this is not
+natively validated. Locked or unavailable Keychains
 carry no sign-in command; expired Keychain sign-ins keep their command and explain
 that Claude Code owns refresh. Tests use fake Keychains; the macOS-only native
 fixture requires `HEADROOM_KEYCHAIN_FIXTURE=1`, uses only disposable synthetic

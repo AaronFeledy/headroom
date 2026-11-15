@@ -16,10 +16,14 @@ type credentialStore interface {
 
 type writableCredentialStore interface {
 	credentialStore
-	update(context.Context, credstore.Mutator) error
+	refresh(context.Context, func([]byte) (credstore.Mutator, error)) error
 }
 
-type fileStore struct{ path string }
+type fileStore struct {
+	path          string
+	claudeCodeDir string
+	lockConfig    claudeCodeLockConfig
+}
 
 func (s fileStore) load(ctx context.Context) (credstore.Snapshot, error) {
 	snapshot, err := credstore.LoadSnapshot(ctx, s.path)
@@ -43,8 +47,31 @@ func (s fileStore) unchanged(ctx context.Context, snapshot credstore.Snapshot) (
 	return info.ModTime().Equal(snapshot.ModTime), nil
 }
 
-func (s fileStore) update(ctx context.Context, mutator credstore.Mutator) error {
-	return credstore.AtomicUpdate(ctx, s.path, mutator)
+// refresh takes Claude Code's mkdir lock when claudeCodeDir is set, then
+// credstore.Refresh. prepare is not called when the lock was lost before the
+// exchange. A synchronous heartbeat runs immediately before prepare (and thus
+// before any token POST). After a POST, the returned edit still commits while
+// the spent token pair remains in the file, even if the lock is lost.
+func (s fileStore) refresh(ctx context.Context, prepare func([]byte) (credstore.Mutator, error)) (err error) {
+	var lock *claudeCodeLock
+	if s.claudeCodeDir != "" {
+		lock, err = acquireClaudeCodeLock(ctx, s.claudeCodeDir, s.lockConfig)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, lock.release()) }()
+	}
+	return credstore.Refresh(ctx, s.path, func(current []byte) (credstore.Mutator, error) {
+		if lock != nil {
+			if lock.isLost() {
+				return nil, errClaudeCodeLockLost
+			}
+			if err := lock.heartbeatStep(); err != nil {
+				return nil, err
+			}
+		}
+		return prepare(current)
+	})
 }
 
 type keychainStore struct {

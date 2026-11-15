@@ -583,6 +583,23 @@ so when the short-lived access token runs out while Claude Code is idle, the car
 says the sign-in expired. Use Claude Code once, or run the sign-in command it
 shows.
 
+### Credential refresh
+
+Claude, Codex, and Grok refreshes write through symlinked credential files.
+Before exchanging a token, Headroom checks that it can save the result: a
+read-only file or directory, a file that is itself a mount point, or a
+hard-linked file is never refreshed. Headroom then keeps using the current
+token until it expires and shows the sign-in as expired, so the tool that owns
+it (Claude Code, OpenCode, Codex, or Grok) must refresh it. A refreshed token is
+saved only while the file still holds the sign-in Headroom refreshed, so a
+sign-in another tool wrote in the meantime is kept.
+
+Headroom refreshes a Claude Code credentials file under Claude Code's own
+refresh lock (`.oauth_refresh.lock` in the credentials directory, plus the
+legacy `<directory>.lock`), so the two never refresh the same sign-in at once.
+Native Windows servers also take this lock when refreshing the WSL home's file;
+that combination has not been validated on native runners.
+
 ### Multiple Claude accounts
 
 To watch more than one Claude subscription, add each extra account with the
@@ -863,8 +880,15 @@ The image default still binds to loopback inside the container, which is not use
 docker build -t headroom-usage-server ./server
 docker run --rm -p 7823:7823 \
   -e USAGE_AUTH_TOKEN='replace-with-a-long-random-token' \
-  -v "$HOME/.claude/.credentials.json:/home/nonroot/.claude/.credentials.json:ro" \
+  -v "$HOME/.claude:/home/nonroot/.claude:ro" \
   headroom-usage-server --listen-addr 0.0.0.0:7823
 ```
 
-Add read-only credential mounts as needed. All five providers are enabled by default, so Grok and OpenCode Go only need their credential files made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs). For OpenCode Go, mount a file containing only its key, in the format shown in the systemd sample, rather than the OpenCode database, and set `-e USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=...` to the mount path.
+Mount the Claude directory so replacements by the host's Claude Code remain
+visible. A single-file bind mount cannot be renamed over and keeps pointing at
+the old file after the host replaces it. With `:ro`, Headroom leaves refresh to
+the host's Claude Code. A writable directory mount lets Headroom refresh under
+Claude Code's lock when the container user can write both the file and its
+directory.
+
+Add read-only credential mounts as needed. All five providers are enabled by default, so Grok and OpenCode Go only need their credential files made available—for example, mount the `~/.grok` directory, for the same reason as `~/.claude`, so `auth.json` lands at the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs). For OpenCode Go, mount a file containing only its key, in the format shown in the systemd sample, rather than the OpenCode database, and set `-e USAGE_PROVIDER_OPENCODEGO_CREDENTIALS_PATH=...` to the mount path.

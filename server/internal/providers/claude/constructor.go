@@ -61,6 +61,7 @@ func New(opts Options) *Client {
 		account:       account,
 		signInCommand: signInCommand,
 		resetStateDir: resetStateDir,
+		lockConfig:    defaultClaudeCodeLockConfig(),
 		paths: discoveryOptions{
 			configuredPath: opts.CredentialsPath,
 			configDir:      expandConfigDir(opts.ConfigDir, opts.HomeDir),

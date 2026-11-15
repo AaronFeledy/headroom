@@ -64,6 +64,7 @@ type Client struct {
 	paths         discoveryOptions
 	goos          string
 	keychain      Keychain
+	lockConfig    claudeCodeLockConfig
 
 	stateMu            sync.Mutex
 	refreshMu          sync.Mutex

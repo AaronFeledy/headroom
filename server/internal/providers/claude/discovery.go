@@ -20,7 +20,11 @@ type storeCandidate struct {
 func (c *Client) credentialCandidates() []storeCandidate {
 	opts := c.paths
 	file := func(path string, source credentialSource) storeCandidate {
-		return storeCandidate{store: fileStore{path: path}, key: path, source: source, checked: usage.AuthChecked{Kind: "cli", Name: credentialSourceName(path, source)}}
+		store := fileStore{path: path, lockConfig: c.lockConfig}
+		if source == credentialSourceClaude && filepath.Base(path) == ".credentials.json" {
+			store.claudeCodeDir = filepath.Dir(path)
+		}
+		return storeCandidate{store: store, key: path, source: source, checked: usage.AuthChecked{Kind: "cli", Name: credentialSourceName(path, source)}}
 	}
 	if opts.configuredPath != "" {
 		return []storeCandidate{file(expandHome(opts.configuredPath, opts.homeDir), credentialSourceClaude)}

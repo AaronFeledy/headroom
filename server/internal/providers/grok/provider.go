@@ -12,20 +12,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 const (
-	providerName       = "Grok"
-	billingURL         = "https://cli-chat-proxy.grok.com/v1/billing"
-	settingsURL        = "https://cli-chat-proxy.grok.com/v1/settings"
-	webBillingURL      = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
-	tokenURL           = "https://auth.x.ai/oauth2/token"
-	oauthClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
-	tokenAuthHeader    = "xai-grok-cli"
-	userAgent          = "ClaudeUsageWidget"
-	defaultHTTPTimeout = 10 * time.Second
-	refreshBuffer      = 5 * time.Minute
+	providerName        = "Grok"
+	billingURL          = "https://cli-chat-proxy.grok.com/v1/billing"
+	settingsURL         = "https://cli-chat-proxy.grok.com/v1/settings"
+	webBillingURL       = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
+	tokenURL            = "https://auth.x.ai/oauth2/token"
+	oauthClientID       = "b1a00492-073a-47ea-816f-4c329264a828"
+	tokenAuthHeader     = "xai-grok-cli"
+	userAgent           = "ClaudeUsageWidget"
+	defaultHTTPTimeout  = 10 * time.Second
+	refreshBuffer       = 5 * time.Minute
+	tokenRequestTimeout = 30 * time.Second
 )
 
 var (
@@ -104,26 +106,16 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 	if err != nil {
 		data, err = p.authError(data, err)
 	} else {
-		ready := true
 		state = "signed_in"
 		name := "Grok CLI"
 		if strings.HasPrefix(p.credentialsPath, `\\wsl.`) {
 			name += " (WSL)"
 		}
 		source = &usage.AuthSource{Kind: "cli", Name: name}
-		if creds.needsRefresh(p.now()) {
-			creds, err = p.refresh(ctx, creds, refreshReasonProactive)
-			if err != nil {
-				ready = false
-				data, err = p.refreshError(data, err)
-			}
-		}
-		if ready && err == nil {
-			data, err = p.fetchWithToken(ctx, data, creds)
-			var failure *usage.FetchFailure
-			if errors.As(err, &failure) {
-				data.FetchFailure = failure
-			}
+		data, err = p.fetchWithToken(ctx, data, creds)
+		var failure *usage.FetchFailure
+		if errors.As(err, &failure) {
+			data.FetchFailure = failure
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -153,6 +145,15 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 }
 
 func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, creds credentials) (usage.UsageData, error) {
+	if creds.needsRefresh(p.now()) {
+		refreshed, err := p.refresh(ctx, creds, refreshReasonProactive)
+		if err != nil && !errors.Is(err, credstore.ErrNotWritable) {
+			return p.refreshError(data, err)
+		}
+		if err == nil {
+			creds = refreshed
+		}
+	}
 	parsedURL, err := url.Parse(p.billingURL)
 	if err != nil {
 		return data, fmt.Errorf("parse Grok billing URL: %w", err)
@@ -173,6 +174,9 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 		}
 		refreshed, err := p.refresh(ctx, creds, refreshReasonUnauthorized)
 		if err != nil {
+			if errors.Is(err, credstore.ErrNotWritable) {
+				return unwritableReauth(data), nil
+			}
 			return p.refreshError(data, err)
 		}
 		creds = refreshed
@@ -223,30 +227,6 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 	return data, nil
 }
 
-func (p *Provider) authError(data usage.UsageData, err error) (usage.UsageData, error) {
-	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return data, err
-	}
-	if errors.Is(err, errMissingAuthEntry) {
-		return reauth(data), nil
-	}
-	data.Error = strPtr("Grok auth error. Run `grok login`.")
-	return data, nil
-}
-
-func (p *Provider) refreshError(data usage.UsageData, err error) (usage.UsageData, error) {
-	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return data, err
-	}
-	if errors.Is(err, errInvalidGrant) {
-		return reauth(data), nil
-	}
-	data.Error = strPtr("Token refresh failed. Will retry.")
-	return data, nil
-}
-
 func baseUsageData() usage.UsageData {
 	return usage.UsageData{
 		ProviderName:   providerName,
@@ -255,13 +235,6 @@ func baseUsageData() usage.UsageData {
 		ShowSecondary:  false,
 		ReauthCommand:  strPtr("grok login"),
 	}
-}
-
-func reauth(data usage.UsageData) usage.UsageData {
-	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureAuth}
-	data.Error = strPtr("Grok auth expired. Run `grok login` again.")
-	data.NeedsReauth = true
-	return data
 }
 
 var _ usage.Provider = (*Provider)(nil)

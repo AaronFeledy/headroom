@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 func Test_Provider_refresh_adopts_completed_sibling_rotation_without_token_call(t *testing.T) {
@@ -35,9 +33,7 @@ func Test_Provider_refresh_adopts_completed_sibling_rotation_without_token_call(
 		t.Fatalf("NewProvider: %v", err)
 	}
 	rotatedJSON := `{"https://auth.x.ai/oauth2/token":{"key":"rotated-token","refresh_token":"rotated-refresh","expires_at":1800000000000}}`
-	if err := credstore.AtomicUpdate(context.Background(), authPath, func(_ []byte) ([]byte, error) {
-		return []byte(rotatedJSON), nil
-	}); err != nil {
+	if err := os.WriteFile(authPath, []byte(rotatedJSON), 0o600); err != nil {
 		t.Fatalf("sibling credential rotation: %v", err)
 	}
 

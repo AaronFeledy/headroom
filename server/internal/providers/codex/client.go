@@ -1,9 +1,7 @@
 package codex
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -98,20 +97,23 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 	}
 	if c.store.NeedsRefresh(time.Now().UTC()) {
 		result, refreshErr := c.refresh(ctx, creds)
-		if refreshErr != nil {
+		if refreshErr != nil && !errors.Is(refreshErr, credstore.ErrNotWritable) {
 			return data, refreshErr
 		}
-		if result == usage.RefreshInvalidGrant {
-			return reauthUsage(), nil
-		}
-		if result == usage.RefreshFailed {
-			message := "Token refresh failed. Will retry."
-			data.Error = &message
-			return data, nil
-		}
-		creds, err = c.store.Current(ctx)
-		if err != nil {
-			return data, err
+		// An unwritable store leaves the current token usable until rejected.
+		if refreshErr == nil {
+			if result == usage.RefreshInvalidGrant {
+				return reauthUsage(), nil
+			}
+			if result == usage.RefreshFailed {
+				message := "Token refresh failed. Will retry."
+				data.Error = &message
+				return data, nil
+			}
+			creds, err = c.store.Current(ctx)
+			if err != nil {
+				return data, err
+			}
 		}
 	}
 	epoch = usage.CredentialEpoch(providerName, creds.Path, fmt.Sprint(creds.Source), creds.AccessToken, creds.AccountID)
@@ -135,6 +137,9 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 		} else {
 			result, refreshErr := c.refresh(ctx, creds)
 			if refreshErr != nil {
+				if errors.Is(refreshErr, credstore.ErrNotWritable) {
+					return unwritableReauthUsage(), nil
+				}
 				return data, refreshErr
 			}
 			if result == usage.RefreshInvalidGrant {
@@ -183,70 +188,6 @@ func (c *Client) Fetch(ctx context.Context) (result usage.UsageData, fetchErr er
 	}
 	c.observeResetUsage(parsed, fetchStartedAt)
 	return parsed, nil
-}
-
-func (c *Client) refresh(ctx context.Context, creds Credentials) (usage.RefreshResult, error) {
-	c.refreshMu.Lock()
-	defer c.refreshMu.Unlock()
-	current, err := c.store.Current(ctx)
-	if err == nil && (current.AccessToken != creds.AccessToken || current.RefreshToken != creds.RefreshToken) {
-		return usage.RefreshSuccess, nil
-	}
-	if creds.RefreshToken == "" {
-		return usage.RefreshInvalidGrant, nil
-	}
-	return c.doRefresh(ctx, creds)
-}
-
-func (c *Client) doRefresh(ctx context.Context, creds Credentials) (usage.RefreshResult, error) {
-	body, err := json.Marshal(refreshRequest{ClientID: oauthClientID, GrantType: "refresh_token", RefreshToken: creds.RefreshToken, Scope: oauthScope})
-	if err != nil {
-		return usage.RefreshFailed, fmt.Errorf("encode codex refresh request: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, bytes.NewReader(body))
-	if err != nil {
-		return usage.RefreshFailed, fmt.Errorf("build codex refresh request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return usage.RefreshFailed, err
-	}
-	responseBody, err := io.ReadAll(resp.Body)
-	closeErr := closeResponseBody(resp, "close codex refresh response body")
-	if err != nil {
-		return usage.RefreshFailed, fmt.Errorf("read codex refresh response: %w", err)
-	}
-	if closeErr != nil {
-		return usage.RefreshFailed, closeErr
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		if resp.StatusCode == http.StatusUnauthorized || isInvalidGrantBody(responseBody) {
-			return usage.RefreshInvalidGrant, nil
-		}
-		return usage.RefreshFailed, nil
-	}
-	var decoded refreshResponse
-	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		return usage.RefreshFailed, fmt.Errorf("decode codex refresh response: %w", err)
-	}
-	accessToken := decoded.AccessToken
-	if accessToken == "" {
-		accessToken = creds.AccessToken
-	}
-	refreshToken := decoded.RefreshToken
-	if refreshToken == "" {
-		refreshToken = creds.RefreshToken
-	}
-	expiresAt := credsExpiresAt(creds)
-	if decoded.ExpiresIn != nil {
-		expiresAt = time.Now().UTC().Add(time.Duration(*decoded.ExpiresIn) * time.Second)
-	}
-	err = c.store.SaveRefreshed(ctx, RefreshedTokens{AccessToken: accessToken, RefreshToken: refreshToken, AccountID: creds.AccountID, ExpiresAt: expiresAt, RefreshedAt: time.Now().UTC()})
-	if err != nil {
-		return usage.RefreshFailed, err
-	}
-	return usage.RefreshSuccess, nil
 }
 
 func (c *Client) sendUsage(ctx context.Context, creds Credentials) (*http.Response, error) {

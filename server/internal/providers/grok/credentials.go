@@ -173,29 +173,46 @@ func parseCredentialTime(raw json.RawMessage, field string) (time.Time, error) {
 func (p *Provider) refresh(ctx context.Context, stale credentials, reason refreshReason) (credentials, error) {
 	p.store.refresh.Lock()
 	defer p.store.refresh.Unlock()
-	err := credstore.AtomicUpdate(ctx, p.credentialsPath, func(data []byte) ([]byte, error) {
+	err := credstore.Refresh(ctx, p.credentialsPath, func(data []byte) (credstore.Mutator, error) {
 		current, err := parseCredentials(data)
 		if err != nil {
 			return nil, err
 		}
 		if current.accessToken != stale.accessToken || current.refreshToken != stale.refreshToken {
-			return data, nil
+			return nil, nil
 		}
 		if reason == refreshReasonProactive && !current.needsRefresh(p.now()) {
-			return data, nil
+			return nil, nil
 		}
 		if current.refreshToken == "" {
 			return nil, errInvalidGrant
 		}
-		refreshed, err := p.requestRefresh(ctx, current)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		exchangeCtx, exchangeCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+		defer exchangeCancel()
+		refreshed, err := p.requestRefresh(exchangeCtx, current)
 		if err != nil {
 			return nil, err
 		}
 		refreshed.entryKey = current.entryKey
-		return updateCredentialJSON(data, refreshed)
+		spentAccess, spentRefresh := current.accessToken, current.refreshToken
+		return func(latest []byte) ([]byte, error) {
+			latestCreds, err := parseCredentials(latest)
+			if err != nil {
+				return nil, err
+			}
+			if latestCreds.accessToken != spentAccess || latestCreds.refreshToken != spentRefresh {
+				return latest, nil
+			}
+			return updateCredentialJSON(latest, refreshed)
+		}, nil
 	})
 	if err != nil {
 		return credentials{}, err
 	}
-	return p.loadCredentials(ctx)
+	loadCtx, loadCancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer loadCancel()
+	return p.loadCredentials(loadCtx)
 }

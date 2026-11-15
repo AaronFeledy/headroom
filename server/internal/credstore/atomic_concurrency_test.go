@@ -12,7 +12,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
-func Test_AtomicUpdate_preserves_unknown_fields_and_valid_json_when_concurrent(t *testing.T) {
+func Test_Refresh_preserves_unknown_fields_and_valid_json_when_concurrent(t *testing.T) {
 	// Given
 	path := writeCreds(t, `{"external_owner":{"sentinel":"keep","version":1}}`, 0o600)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -35,13 +35,15 @@ func Test_AtomicUpdate_preserves_unknown_fields_and_valid_json_when_concurrent(t
 		go func(i int) {
 			defer wg.Done()
 			name := fmt.Sprintf("field_%02d", i)
-			errCh <- credstore.AtomicUpdate(ctx, path, func(current []byte) ([]byte, error) {
-				doc, err := decodeOwnedDoc(current)
-				if err != nil {
-					return nil, err
-				}
-				doc.Fields[name] = "updated"
-				return encodePreservingUnknown(current, doc)
+			errCh <- credstore.Refresh(ctx, path, func(current []byte) (credstore.Mutator, error) {
+				return func(latest []byte) ([]byte, error) {
+					doc, err := decodeOwnedDoc(latest)
+					if err != nil {
+						return nil, err
+					}
+					doc.Fields[name] = "updated"
+					return encodePreservingUnknown(latest, doc)
+				}, nil
 			})
 		}(i)
 	}
@@ -59,7 +61,7 @@ func Test_AtomicUpdate_preserves_unknown_fields_and_valid_json_when_concurrent(t
 	}
 	for err := range errCh {
 		if err != nil {
-			t.Fatalf("AtomicUpdate returned error: %v", err)
+			t.Fatalf("Refresh returned error: %v", err)
 		}
 	}
 	finalBytes, err := os.ReadFile(path)

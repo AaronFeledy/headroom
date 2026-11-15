@@ -12,8 +12,12 @@ var (
 	ErrInvalidGrant         = errors.New("claude: invalid grant")
 	ErrKeychainLocked       = errors.New("claude: keychain locked")
 	ErrKeychainUnavailable  = errors.New("claude: keychain unavailable")
-	ErrKeychainExpired      = errors.New("claude: keychain credential expired")
-	errCredentialsChanged   = errors.New("claude: credentials changed during refresh")
+	// ErrRefreshUnavailable is returned when the sign-in is expired and Headroom
+	// cannot refresh it (Keychain, or a credentials file that cannot be written).
+	ErrRefreshUnavailable = errors.New("claude: sign-in expired and Headroom cannot refresh it")
+
+	errClaudeCodeRefreshing = errors.New("claude: another process is refreshing credentials")
+	errClaudeCodeLockLost   = errors.New("claude: oauth refresh lock lost")
 )
 
 type credentialsError struct {

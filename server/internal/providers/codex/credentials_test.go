@@ -40,11 +40,13 @@ func Test_Credentials_loads_codex_tokens_and_preserves_unknown_fields_on_writeba
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	err = store.SaveRefreshed(context.Background(), RefreshedTokens{AccessToken: "new", RefreshToken: "new-refresh", AccountID: creds.AccountID, ExpiresAt: time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC), RefreshedAt: time.Date(2026, 7, 12, 11, 0, 0, 0, time.UTC)})
+	err = store.Refresh(context.Background(), creds, func(Credentials) (RefreshedTokens, error) {
+		return RefreshedTokens{AccessToken: "new", RefreshToken: "new-refresh", AccountID: creds.AccountID, ExpiresAt: time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC), RefreshedAt: time.Date(2026, 7, 12, 11, 0, 0, 0, time.UTC)}, nil
+	})
 
 	// Then
 	if err != nil {
-		t.Fatalf("SaveRefreshed returned error: %v", err)
+		t.Fatalf("Refresh returned error: %v", err)
 	}
 	got := string(readFile(t, path))
 	for _, want := range []string{`"sentinel":"keep"`, `"token_sentinel":"keep"`, `"access_token":"new"`, `"refresh_token":"new-refresh"`, `"account_id":"acct"`, `"last_refresh":"2026-07-12T11:00:00Z"`} {
@@ -64,11 +66,13 @@ func Test_Credentials_loads_opencode_tokens_and_preserves_unknown_fields_on_writ
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	err = store.SaveRefreshed(context.Background(), RefreshedTokens{AccessToken: "new", RefreshToken: "new-refresh", AccountID: creds.AccountID, ExpiresAt: time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC), RefreshedAt: time.Date(2026, 7, 12, 11, 0, 0, 0, time.UTC)})
+	err = store.Refresh(context.Background(), creds, func(Credentials) (RefreshedTokens, error) {
+		return RefreshedTokens{AccessToken: "new", RefreshToken: "new-refresh", AccountID: creds.AccountID, ExpiresAt: time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC), RefreshedAt: time.Date(2026, 7, 12, 11, 0, 0, 0, time.UTC)}, nil
+	})
 
 	// Then
 	if err != nil {
-		t.Fatalf("SaveRefreshed returned error: %v", err)
+		t.Fatalf("Refresh returned error: %v", err)
 	}
 	got := string(readFile(t, path))
 	for _, want := range []string{`"other":"keep"`, `"nested":"keep"`, `"access":"new"`, `"refresh":"new-refresh"`, `"accountId":"acct"`, `"expires":1783857600000`} {

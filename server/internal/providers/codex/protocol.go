@@ -67,6 +67,14 @@ func reauthUsage() usage.UsageData {
 	return data
 }
 
+func unwritableReauthUsage() usage.UsageData {
+	data := baseUsage()
+	message := "Sign-in expired. Headroom can't save a refreshed sign-in; run `codex` to refresh it."
+	data.Error = &message
+	data.NeedsReauth = true
+	return data
+}
+
 func usageBucket(window *whamWindow) usage.UsageBucket {
 	if window == nil {
 		return usage.UsageBucket{}

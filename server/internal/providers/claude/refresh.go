@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/credstore"
 )
 
 type refreshResponse struct {
@@ -47,37 +49,91 @@ func (c *Client) refreshCredentials(ctx context.Context, creds *credentials, mod
 	if current.accessToken != creds.accessToken || current.refreshToken != creds.refreshToken {
 		return nil
 	}
-	if _, writable := current.store.(writableCredentialStore); !writable {
-		return ErrKeychainExpired
+	store, writable := current.store.(writableCredentialStore)
+	if !writable {
+		return ErrRefreshUnavailable
 	}
 	if mode == refreshModeProactive && current.expiresAt.After(time.Now().UTC().Add(expirySkew)) {
 		return nil
 	}
-	refreshed, err := c.requestRefresh(ctx, current.refreshToken)
+
+	spentAccess := current.accessToken
+	spentRefresh := current.refreshToken
+	source := current.source
+	path := current.path
+
+	err = store.refresh(ctx, func(data []byte) (credstore.Mutator, error) {
+		parsed, err := parseCredentials(path, source, credstore.Snapshot{Data: data})
+		if err != nil {
+			return nil, err
+		}
+		if parsed.accessToken != spentAccess || parsed.refreshToken != spentRefresh {
+			return nil, nil
+		}
+		refreshed, err := c.requestRefresh(ctx, spentRefresh)
+		if err != nil {
+			return nil, err
+		}
+		if refreshed.RefreshToken == "" {
+			refreshed.RefreshToken = spentRefresh
+		}
+		newExpiresAt := time.Now().UTC().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
+		update := credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}
+		return func(latest []byte) ([]byte, error) {
+			latestParsed, err := parseCredentials(path, source, credstore.Snapshot{Data: latest})
+			if err != nil {
+				return nil, err
+			}
+			if latestParsed.accessToken != spentAccess || latestParsed.refreshToken != spentRefresh {
+				return latest, nil
+			}
+			return applyCredentialUpdate(latest, source, update)
+		}, nil
+	})
 	if err != nil {
+		if errors.Is(err, credstore.ErrNotWritable) {
+			return c.handleUnwritableRefresh(ctx, current, mode, err)
+		}
 		return err
 	}
-	if refreshed.RefreshToken == "" {
-		refreshed.RefreshToken = current.refreshToken
-	}
-	newExpiresAt := time.Now().UTC().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
-	if err := c.writeCredentials(ctx, current, credentialUpdate{refreshed: refreshed, expiresAtMillis: newExpiresAt.UnixMilli()}); err != nil && !errors.Is(err, errCredentialsChanged) {
-		return err
-	}
-	_, err = c.loadCredentials(ctx)
+
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer cancel()
+	_, err = c.loadCredentials(loadCtx)
 	return err
 }
 
+func (c *Client) handleUnwritableRefresh(ctx context.Context, current *credentials, mode refreshMode, cause error) error {
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer cancel()
+	reloaded, err := c.loadCredentials(loadCtx)
+	if err == nil {
+		if reloaded.accessToken != current.accessToken || reloaded.refreshToken != current.refreshToken {
+			return nil
+		}
+		if mode == refreshModeProactive && reloaded.expiresAt.After(time.Now().UTC()) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %w", ErrRefreshUnavailable, cause)
+}
+
 func (c *Client) requestRefresh(ctx context.Context, refreshToken string) (refreshResponse, error) {
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRequestTimeout)
+	defer cancel()
+
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("client_id", oauthClientID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, bytes.NewBufferString(form.Encode()))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.tokenURL, bytes.NewBufferString(form.Encode()))
 	if err != nil {
 		return refreshResponse{}, fmt.Errorf("build refresh request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := ctx.Err(); err != nil {
+		return refreshResponse{}, err
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return refreshResponse{}, fmt.Errorf("refresh token: %w", err)
@@ -103,40 +159,23 @@ func (c *Client) requestRefresh(ctx context.Context, refreshToken string) (refre
 	return parsed, nil
 }
 
-func (c *Client) writeCredentials(ctx context.Context, creds *credentials, update credentialUpdate) error {
-	store, writable := creds.store.(writableCredentialStore)
-	if !writable {
-		return ErrKeychainExpired
+func applyCredentialUpdate(data []byte, source credentialSource, update credentialUpdate) ([]byte, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil, fmt.Errorf("parse credentials: %w", err)
 	}
-	return store.update(ctx, func(data []byte) ([]byte, error) {
-		var top map[string]json.RawMessage
-		if err := json.Unmarshal(data, &top); err != nil {
-			return nil, fmt.Errorf("parse credentials: %w", err)
-		}
-		key := "claudeAiOauth"
-		fields := sectionFields{access: "accessToken", refresh: "refreshToken", expires: "expiresAt"}
-		if creds.source == credentialSourceOpenCode {
-			key = "anthropic"
-			fields = sectionFields{access: "access", refresh: "refresh", expires: "expires"}
-		}
-		var stored map[string]json.RawMessage
-		if err := json.Unmarshal(top[key], &stored); err != nil {
-			return nil, ErrCredentialsMalformed
-		}
-		var refreshToken string
-		if err := json.Unmarshal(stored[fields.refresh], &refreshToken); err != nil {
-			return nil, ErrCredentialsMalformed
-		}
-		if refreshToken != creds.refreshToken {
-			return nil, errCredentialsChanged
-		}
-		section, err := updateSection(top[key], fields, update)
-		if err != nil {
-			return nil, err
-		}
-		top[key] = section
-		return json.MarshalIndent(top, "", "  ")
-	})
+	key := "claudeAiOauth"
+	fields := sectionFields{access: "accessToken", refresh: "refreshToken", expires: "expiresAt"}
+	if source == credentialSourceOpenCode {
+		key = "anthropic"
+		fields = sectionFields{access: "access", refresh: "refresh", expires: "expires"}
+	}
+	section, err := updateSection(top[key], fields, update)
+	if err != nil {
+		return nil, err
+	}
+	top[key] = section
+	return json.MarshalIndent(top, "", "  ")
 }
 
 func updateSection(raw json.RawMessage, fields sectionFields, update credentialUpdate) (json.RawMessage, error) {
