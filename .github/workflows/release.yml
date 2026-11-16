@@ -20,16 +20,17 @@ jobs:
     steps:
       - name: Require the main branch
         run: test "$GITHUB_REF" = refs/heads/main
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Reuse a release tag already created for this main commit
         id: reuse
         run: python3 packaging/release_tag.py --commit "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
       - name: Resolve the next main-branch tag
         id: bump
         if: steps.reuse.outputs.reused != 'true'
-        uses: mathieudutour/github-tag-action@v6.2
+        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
@@ -48,7 +49,7 @@ jobs:
   packages:
     needs: resolve
     if: needs.resolve.outputs.version != ''
-    uses: ./.github/workflows/headroom-packages.yml
+    uses: $/.github/workflows/headroom-packages.yml
     with:
       version: ${{ needs.resolve.outputs.version }}
 
@@ -58,9 +59,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # This job pushes the release tag with the checkout credential.
+          persist-credentials: true
       - name: Create or verify the release tag at this commit
         env:
           RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
@@ -82,12 +85,12 @@ jobs:
               test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$expected"
             fi
           fi
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: headroom-release-assets
           path: artifacts
       - name: Publish one verified Headroom release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
           name: ${{ needs.resolve.outputs.tag }}

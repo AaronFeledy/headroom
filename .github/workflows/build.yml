@@ -7,8 +7,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   headroom:
-    uses: ./.github/workflows/headroom-packages.yml
+    uses: $/.github/workflows/headroom-packages.yml
     with:
       version: ${{ format('0.1.0+pr.{0}.{1}', github.event.pull_request.number, github.run_attempt) }}

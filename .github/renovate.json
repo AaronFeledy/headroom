@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":enableVulnerabilityAlerts",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
+  ],
+  "timezone": "America/Chicago",
+  "schedule": ["before 6am on monday"],
+  "minimumReleaseAge": "7 days",
+  "osvVulnerabilityAlerts": true,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "The Claude Code lock interop fixture pins proper-lockfile on purpose.",
+      "matchFileNames": ["server/internal/providers/claude/testdata/**"],
+      "enabled": false
+    },
+    {
+      "description": "Runner images are deliberate build baselines, such as Ubuntu 22.04 for Linux package compatibility.",
+      "matchDatasources": ["github-runners"],
+      "enabled": false
+    },
+    {
+      "description": "One pull request for non-major action updates.",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Release builds, CI, and the Docker image move to a new Go release together.",
+      "matchDepNames": ["go", "golang"],
+      "groupName": "Go toolchain"
+    }
+  ]
+}
