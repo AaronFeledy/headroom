@@ -52,9 +52,11 @@ func TestApplyLaunchSupervisedManagedServiceJournalsBeforeReadiness(t *testing.T
 			f.onStart = func() error { return writeManagedService(f.root, f.record) }
 			journalError := errors.New("fixture journal failure")
 			journalCalls := 0
+			// Both cases return as soon as the receipt is ready or the journal fails;
+			// the bound only has to outlast the fsynced receipt writes on a slow disk.
 			request := ApplyRequest{InstallRoot: f.root, ManagedServiceSupervisor: managedSystemdUser,
 				ManagedServiceArguments: f.record.Arguments, ManagedServiceEnvironment: f.record.Environment,
-				ManagedServiceWorkingDirectory: f.record.WorkingDirectory, ReadyTimeoutMS: 100}
+				ManagedServiceWorkingDirectory: f.record.WorkingDirectory, ReadyTimeoutMS: 5000}
 
 			err := launchManagedService(request, f.state, func(pid int, executable, token string) error {
 				journalCalls++
