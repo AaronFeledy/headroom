@@ -81,7 +81,7 @@ func ActivateInstall(ctx context.Context, options ActivationOptions) (Activation
 	if err != nil {
 		return result, err
 	}
-	readyPath := filepath.Join(directory, "ready.json")
+	readyPath := filepath.Join(directory, readyFileName)
 	environment := authoritativeApplyEnvironment(os.Environ(), map[string]string{
 		"HEADROOM_INSTALL_ROOT": root, "HEADROOM_READY_NONCE": nonce,
 	})

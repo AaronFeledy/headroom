@@ -19,7 +19,9 @@ func priorAppReady(journal ApplyJournal, directory string) bool {
 		component = manifest.Components.Server.Path
 	}
 	executable := installedComponentPath(journal.Request.InstallRoot, journal.Previous.VersionPath, component)
-	for _, name := range []string{"rollback-ready.json", "recovery-ready.json"} {
+	// Older managers wrote rollback-ready.json or recovery-ready.json. A candidate's
+	// ready.json never matches: it names the candidate version and generation.
+	for _, name := range []string{readyFileName, "rollback-ready.json", "recovery-ready.json"} {
 		data, err := readBoundedFile(filepath.Join(directory, name), 4096)
 		var ready struct {
 			PID        int    `json:"pid"`

@@ -77,6 +77,10 @@ func main() {
 			readyPath = os.Args[i+1]
 		}
 	}
+	// Shipped CLIs refuse any readiness file not named ready.json; so does the fixture.
+	if readyPath != "" && filepath.Base(readyPath) != "ready.json" {
+		os.Exit(1)
+	}
 	if os.Getenv("HEADROOM_FIXTURE_CRASH_VERSION") == version {
 		return
 	}

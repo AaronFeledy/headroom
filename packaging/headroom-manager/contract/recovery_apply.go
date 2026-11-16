@@ -77,7 +77,7 @@ func recoverApplyJournal(journal ApplyJournal, directory string) error {
 		return nil
 	}
 	relaunch := journal.Request
-	relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
+	relaunch.ReadyPath = filepath.Join(directory, readyFileName)
 	relaunch.Nonce, _ = randomHex(24)
 	if !priorAppReady(journal, directory) {
 		if err := launchAndAwaitReady(relaunch, *journal.Previous, nil); err != nil {

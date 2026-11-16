@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// readyFileName is the only readiness file shipped Headroom CLIs will write:
+// <install root>/transactions/apply-*/ready.json. Rollback and recovery
+// relaunch the previous, already-shipped CLI, so they reuse this name with a
+// fresh nonce instead of inventing another one.
+const readyFileName = "ready.json"
+
 type readinessMarker struct {
 	Nonce      string `json:"nonce"`
 	PID        int    `json:"pid"`

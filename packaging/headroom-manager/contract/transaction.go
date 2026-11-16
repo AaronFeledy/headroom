@@ -317,7 +317,7 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	request.StageRecord = filepath.Clean(request.StageRecord)
 	request.AcknowledgementPath = filepath.Join(directory, "accepted.json")
 	request.CommitPath = filepath.Join(directory, "commit.json")
-	request.ReadyPath = filepath.Join(directory, "ready.json")
+	request.ReadyPath = filepath.Join(directory, readyFileName)
 	request.Nonce, err = randomHex(24)
 	if err != nil {
 		return PreparedApply{}, err
@@ -609,7 +609,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, RolledBack: true, FailureReason: boundedError(originalFailure)}
 			relaunch := journal.Request
-			relaunch.ReadyPath = filepath.Join(directory, "rollback-ready.json")
+			relaunch.ReadyPath = filepath.Join(directory, readyFileName)
 			relaunch.Nonce, _ = randomHex(24)
 			cleanupErr = relaunchRollbackPrior(relaunch, *previous)
 		}
@@ -1232,7 +1232,7 @@ func validateApplyRequestFields(request *ApplyRequest, root, directory string) e
 	if request.InstallRoot != root || request.WaitTimeoutMS <= 0 || request.WaitTimeoutMS > 120000 || request.CommitTimeoutMS <= 0 || request.CommitTimeoutMS > 30000 || request.ReadyTimeoutMS <= 0 || request.ReadyTimeoutMS > 120000 ||
 		len(request.Nonce) != 48 || !isLowerHex(request.Nonce) || !hashPattern.MatchString(request.PriorStateSHA256) ||
 		!samePath(request.AcknowledgementPath, filepath.Join(directory, "accepted.json")) || !samePath(request.CommitPath, filepath.Join(directory, "commit.json")) ||
-		!samePath(request.ReadyPath, filepath.Join(directory, "ready.json")) {
+		!samePath(request.ReadyPath, filepath.Join(directory, readyFileName)) {
 		return errors.New("apply request bounds or private paths are invalid")
 	}
 	return nil
