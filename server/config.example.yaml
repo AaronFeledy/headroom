@@ -10,4 +10,5 @@ providers:
     #   - id: work
     #     label: Work
     #     config_dir: ~/.claude-work
+    #     # Deprecated 3.5 spelling accepted instead: credentials_path: ~/.claude-work/.credentials.json
     #     enabled: true

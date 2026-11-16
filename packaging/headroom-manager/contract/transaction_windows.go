@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var kernel32 = syscall.NewLazyDLL("kernel32.dll")
@@ -162,7 +164,16 @@ func (l *windowsLock) Close() error {
 	return l.file.Close()
 }
 func runtimeWindows() bool { return true }
+
+// replaceAtomic retries while another process briefly holds destination open.
+// Go and most programs open files without FILE_SHARE_DELETE, and MoveFileEx
+// refuses to replace such a file. The updater and a managed serve poll and
+// rewrite the same service receipt, so a concurrent read is expected.
 func replaceAtomic(source, destination string) error {
+	return retryWhileFileInUse(func() error { return moveFileReplacing(source, destination) }, fileInUseRetryTimeout)
+}
+
+func moveFileReplacing(source, destination string) error {
 	from, _ := syscall.UTF16PtrFromString(source)
 	to, _ := syscall.UTF16PtrFromString(destination)
 	ok, _, err := procMoveFileExW.Call(uintptr(unsafe.Pointer(from)), uintptr(unsafe.Pointer(to)), 0x1|0x8)
@@ -170,6 +181,27 @@ func replaceAtomic(source, destination string) error {
 		return err
 	}
 	return nil
+}
+
+// fileInUseRetryTimeout matches the Go toolchain's robustio bound for the same
+// transient Windows errors.
+const fileInUseRetryTimeout = 2 * time.Second
+
+func retryWhileFileInUse(attempt func() error, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	delay := time.Millisecond
+	for {
+		err := attempt()
+		if err == nil || !fileInUse(err) || time.Now().Add(delay).After(deadline) {
+			return err
+		}
+		time.Sleep(delay)
+		delay = min(2*delay, 50*time.Millisecond)
+	}
+}
+
+func fileInUse(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
 }
 func syncDirectory(string) error { return nil }
 

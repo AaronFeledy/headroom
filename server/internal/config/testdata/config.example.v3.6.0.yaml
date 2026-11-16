@@ -1,0 +1,14 @@
+# Copied from tag v3.6.0; must never be edited.
+listen_addr: 127.0.0.1:7823
+auth_token: ""
+poll_interval: 60s
+providers:
+  claude:
+    enabled: true
+    # credentials_path: ~/.claude/.credentials.json  # optional; reads only this file
+    # Optional extra Claude accounts (YAML only; no env/flags).
+    accounts:
+      - id: work
+        label: Work
+        config_dir: ~/.claude-work
+        enabled: true

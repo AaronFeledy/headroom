@@ -45,7 +45,10 @@ type AccountConfig struct {
 	// Keychain hashing and sign-in commands. File access and uniqueness use the
 	// cleaned path.
 	ConfigDir string
-	Enabled   bool
+	// legacyCredentialsPath holds the deprecated 3.5 credentials_path spelling.
+	// Load maps it onto ConfigDir and emits a deprecation warning.
+	legacyCredentialsPath string
+	Enabled               bool
 }
 
 type ProviderConfig struct {

@@ -502,7 +502,7 @@ jobs:
           (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
       - name: Test native macOS installs and update transactions
         id: mac-manager
-        timeout-minutes: 10
+        timeout-minutes: 15
         working-directory: packaging/headroom-manager
         run: |
           go vet ./...
@@ -844,11 +844,69 @@ jobs:
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
           export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           python3 packaging/tests/cli_systemd_smoke.py --manager "$RUNNER_TEMP/headroom-package" --archive "$RUNNER_TEMP/cli-output/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-${{ matrix.arch }}.tar.gz" --version "$HEADROOM_PACKAGE_VERSION"
+      - name: Build the upgrade-test candidate
+        # PR package versions are 0.1.0+pr.*, below every published release, so
+        # the in-place upgrade fixture gets the same CI binaries under a newer
+        # test version that the published updater will accept.
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        env:
+          UPGRADE_TEST_VERSION: 99.0.0
+          CLI_ARCH: ${{ matrix.arch }}
+          CLI_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -eu
+          root="$RUNNER_TEMP/upgrade-candidate"
+          mkdir -p "$root"
+          module=packaging/headroom-manager
+          (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$UPGRADE_TEST_VERSION" -o "$root/headroom-runtime" ./cmd/headroom)
+          (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$UPGRADE_TEST_VERSION -X main.invocationRole=cli" -o "$root/headroom-router" ./cmd/headroom-manager)
+          (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$UPGRADE_TEST_VERSION" -o "$root/headroom-package" ./cmd/headroom-manager)
+          python3 packaging/package-cli.py --version "$UPGRADE_TEST_VERSION" --platform linux --arch "$CLI_ARCH" \
+            --cli "$root/headroom-runtime" --launcher "$root/headroom-router" --manager "$root/headroom-package" \
+            --validator "$root/headroom-package" --work "$root/work" --output "$root/output"
+      - name: Resolve the latest published CLI release
+        if: runner.os == 'Linux'
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(curl -fsS --proto '=https' --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors \
+            -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/AaronFeledy/headroom/releases/latest \
+            | python3 -c '
+          import json, re, sys
+          tag = json.load(sys.stdin).get("tag_name", "")
+          match = re.fullmatch(r"v(\d+\.\d+\.\d+)", tag)
+          if not match: raise SystemExit("latest release tag is not a stable Headroom version")
+          print(match.group(1))
+          ')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Update the latest published release in place
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        env:
+          FROM_VERSION: ${{ steps.published.outputs.version }}
+        run: |
+          python3 packaging/tests/cli_upgrade_smoke.py \
+            --from-version "$FROM_VERSION" \
+            --candidate-archive "$RUNNER_TEMP/upgrade-candidate/output/Headroom-CLI-v99.0.0-linux-${{ matrix.arch }}.tar.gz" \
+            --candidate-version 99.0.0
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: headroom-cli-${{ matrix.platform }}-${{ matrix.arch }}-package
           path: ${{ runner.temp }}/cli-output/*
           if-no-files-found: error
+      - name: Update 3.5.0 in place
+        # 3.5.0's updater reads the service receipt strictly and its users
+        # documented extra accounts with credentials_path; both must keep working.
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          python3 packaging/tests/cli_upgrade_smoke.py \
+            --from-version 3.5.0 \
+            --candidate-archive "$RUNNER_TEMP/upgrade-candidate/output/Headroom-CLI-v99.0.0-linux-${{ matrix.arch }}.tar.gz" \
+            --candidate-version 99.0.0
 
   cli-release-manifest:
     needs: package-cli

@@ -57,7 +57,7 @@ func TestRecoveryReadyRequiresLivePriorRoleAndVersion(t *testing.T) {
 		{"dead process", RoleApplication, crashLaunch{dead.Process.Pid, dead.Path, prior.ActiveVersion}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			for _, name := range []string{"rollback-ready.json", "recovery-ready.json"} {
+			for _, name := range []string{readyFileName, "rollback-ready.json", "recovery-ready.json"} {
 				directory := t.TempDir()
 				if err := writeDurableJSON(filepath.Join(directory, name), test.ready); err != nil {
 					t.Fatal(err)

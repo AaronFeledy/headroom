@@ -7,10 +7,11 @@ import (
 )
 
 type rawAccountConfig struct {
-	ID        *string `yaml:"id"`
-	Label     *string `yaml:"label"`
-	ConfigDir *string `yaml:"config_dir"`
-	Enabled   *bool   `yaml:"enabled"`
+	ID              *string `yaml:"id"`
+	Label           *string `yaml:"label"`
+	ConfigDir       *string `yaml:"config_dir"`
+	CredentialsPath *string `yaml:"credentials_path"`
+	Enabled         *bool   `yaml:"enabled"`
 }
 
 type rawProviderConfig struct {
@@ -49,6 +50,9 @@ func applyProvider(name string, raw rawProviderConfig, cfg *Config) error {
 			}
 			if item.ConfigDir != nil {
 				account.ConfigDir = *item.ConfigDir
+			}
+			if item.CredentialsPath != nil {
+				account.legacyCredentialsPath = strings.TrimSpace(*item.CredentialsPath)
 			}
 			if item.Enabled != nil {
 				account.Enabled = *item.Enabled

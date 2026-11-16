@@ -148,12 +148,19 @@ text.
 - `prepare-apply` creates a private manager copy and a bounded request that pins
   the prior state digest, verified stage, current application process identity,
   and optional manager-owned server identity. The detached manager revalidates
-  them under the install lock before acknowledging. Qt validates the returned
+  them under the install lock before acknowledging. When a managed server
+  participates, `prepare-apply` first runs the staged candidate CLI as
+  `serve --check-config` with the receipt's arguments, approved environment, and
+  working directory; a rejected configuration returns
+  `Headroom <version> rejects the current server configuration: ...` before any
+  transaction or stop. Candidates older than 3.6.0 skip the check. Qt validates the returned
   transaction paths and acknowledgement, then writes a nonce-bound commit;
   without that second commit the transaction expires without changing the
   running installation. `apply` waits for the exact old processes, activates a
   new generation, and accepts readiness only from the expected executable,
-  PID, nonce, and compiled package version. `recover` stops an exact recorded
+  PID, nonce, and compiled package version. Rollback and recovery relaunch the
+  previous version through the same `ready.json` with a fresh nonce, because
+  shipped CLIs write no other readiness file. `recover` stops an exact recorded
   candidate before restoring an interrupted transaction. Apply outcomes are
   persisted for the reopened UI as `applied`, `rolled_back`, or
   `recovery_required`, with the transaction `nonce`. Coordinated installers check
@@ -347,7 +354,12 @@ does not expose an HTTP update route or transfer provider credentials. See the
 Managed standalone servers register private process receipts. Linux/WSL also
 supports the fixed per-user `headroom.service`: apply stops and restarts only that
 unit after matching its MainPID to the exact recorded process. A replacement
-acknowledges readiness after successful configuration and listener binding.
+acknowledges readiness after successful configuration and listener binding. The
+receipt keeps the 3.5.0 field set because older updaters read it with unknown
+fields rejected; the resolved config path is a sibling private record,
+`runtime/managed-serve-config.json`, bound to the same process identity. A
+replacement that exits reports its exit status, and a failed `headroom.service`
+ends the wait at once with its systemd result.
 System-wide or unrelated units remain outside updater ownership.
 
 `tests/cli_systemd_smoke.py` verifies a real Linux per-user service repair using
@@ -355,6 +367,24 @@ a disposable CLI package install and disabled providers. It requires a working
 user bus and refuses an existing `headroom.service`. Its runtime-only unit is
 stopped and removed afterward. Linux CLI jobs run this fixture on isolated CI
 runner accounts; it does not enable a service on a user's machine.
+
+`tests/cli_upgrade_smoke.py` is the opt-in upgrade direction: it installs a
+previously published CLI release, starts that release's managed
+provider-disabled server, then has the release's own updater apply a locally
+built candidate package in place. It uses `headroom-package stage` and
+`prepare-apply`, the same transaction `headroom update` uses, and asserts the
+candidate generation is active, healthy, and the previous server has exited.
+It runs on Linux without systemd, with a temporary HOME/XDG state, install root,
+and port, and removes every process and path it created. Linux CLI jobs run it
+against the latest published release and against 3.5.0, whose documented
+account format and strict receipt reader must keep working.
+Pull-request packages carry a `0.1.0+pr.*` version that sorts below every
+published release, so CI rebuilds the same binaries under a newer test version
+before applying them.
+
+    python3 packaging/tests/cli_upgrade_smoke.py --from-version 3.6.0 \
+      --candidate-archive /path/to/Headroom-CLI-v3.6.1-linux-x86_64.tar.gz \
+      --candidate-version 3.6.1
 
 The weekly and manually dispatched `.github/workflows/claude-code-contract.yml`
 canary checks credential-storage string markers in the latest Claude Code macOS

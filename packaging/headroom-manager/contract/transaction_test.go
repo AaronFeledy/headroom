@@ -319,7 +319,7 @@ func TestTransactionalApplyRollsBackAndReopensOnReadinessFailure(t *testing.T) {
 	authorizePreparedApply(t, prepared)
 	_ = current.Process.Kill()
 	_, _ = current.Process.Wait()
-	rollbackReady := filepath.Join(prepared.TransactionDirectory, "rollback-ready.json")
+	rollbackReady := filepath.Join(prepared.TransactionDirectory, readyFileName)
 	// This observer covers package verification, file replacement, and rollback
 	// as well as the deliberate readiness timeout. Loaded Windows runners can
 	// take more than two seconds before the rollback process is even launched.
@@ -394,14 +394,14 @@ func TestTransactionalApplyRollsBackAfterCandidateCrash(t *testing.T) {
 	authorizePreparedApply(t, prepared)
 	_ = current.Process.Kill()
 	_, _ = current.Process.Wait()
-	if err = <-done; err == nil || !strings.Contains(err.Error(), "exited before readiness") {
+	if err = <-done; err == nil || !strings.Contains(err.Error(), "exited before readiness") || !strings.Contains(err.Error(), "exit status 8") {
 		t.Fatalf("candidate crash = %v", err)
 	}
 	inspection := InspectInstall(installRoot)
 	if inspection.Version != "11.2.0" || inspection.ApplyStatus != "rolled_back" {
 		t.Fatalf("crash rollback inspection = %+v", inspection)
 	}
-	readyData, err := readBoundedFile(filepath.Join(prepared.TransactionDirectory, "rollback-ready.json"), 4096)
+	readyData, err := readBoundedFile(filepath.Join(prepared.TransactionDirectory, readyFileName), 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestRecoveryStopsExactOrphanCandidateBeforeRollback(t *testing.T) {
 	if err = RecoverInstall(installRoot); err != nil {
 		t.Fatal(err)
 	}
-	recoveryReady, err := readBoundedFile(filepath.Join(directory, "recovery-ready.json"), 4096)
+	recoveryReady, err := readBoundedFile(filepath.Join(directory, readyFileName), 4096)
 	if err != nil {
 		t.Fatal(err)
 	}

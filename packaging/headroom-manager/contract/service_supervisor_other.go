@@ -30,3 +30,6 @@ func startManagedServiceSupervisor(string) error {
 func managedServiceSupervisorPID(string) (int, error) {
 	return 0, errors.New("managed service supervisor is unsupported")
 }
+func supervisedManagedServiceFailure(string) (error, bool) {
+	return nil, false
+}

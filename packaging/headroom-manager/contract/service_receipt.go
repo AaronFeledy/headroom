@@ -8,20 +8,53 @@ import (
 	"strings"
 )
 
+const managedServiceConfigRecordName = "managed-serve-config.json"
+
+// managedServiceConfigRecord binds the resolved config path to the exact
+// process reported ready. It lives beside the receipt because older updaters
+// decode the receipt itself with unknown fields disallowed.
+type managedServiceConfigRecord struct {
+	Schema       int    `json:"schema"`
+	Product      string `json:"product"`
+	InstallRoot  string `json:"install_root"`
+	PID          int    `json:"pid"`
+	ProcessToken string `json:"process_token"`
+	Executable   string `json:"executable"`
+	Owner        string `json:"owner"`
+	ConfigPath   string `json:"config_path"`
+}
+
+// managedServiceReceipt also accepts the config_path that 3.6.0 wrote inline.
+// This version never serializes it there; see writeManagedServiceConfig.
+type managedServiceReceipt struct {
+	ManagedServiceRecord
+	LegacyConfigPath string `json:"config_path,omitempty"`
+}
+
 func clearManagedServiceReceipt(root string) error {
-	err := os.Remove(filepath.Join(root, "runtime", ManagedServiceRecordName))
+	return errors.Join(removePrivateFile(filepath.Join(root, "runtime", ManagedServiceRecordName)),
+		clearManagedServiceConfig(root))
+}
+
+func removePrivateFile(path string) error {
+	err := os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
 }
 
+func clearManagedServiceConfig(root string) error {
+	return removePrivateFile(filepath.Join(root, "runtime", managedServiceConfigRecordName))
+}
+
 func readManagedService(root string) (ManagedServiceRecord, error) {
-	var record ManagedServiceRecord
+	var receipt managedServiceReceipt
 	var err error
-	if err := ReadPrivateJSON(root, filepath.Join("runtime", ManagedServiceRecordName), &record); err != nil {
+	if err := readPrivateJSONRelaxed(root, filepath.Join("runtime", ManagedServiceRecordName), &receipt); err != nil {
 		return ManagedServiceRecord{}, err
 	}
+	record := receipt.ManagedServiceRecord
 	if record.Schema != SchemaVersion || record.Product != "Headroom" || record.InstallRoot != root || record.PID <= 0 || record.ProcessToken == "" {
 		return ManagedServiceRecord{}, errors.New("managed service receipt is invalid")
 	}
@@ -47,6 +80,7 @@ func readManagedService(root string) (ManagedServiceRecord, error) {
 			return ManagedServiceRecord{}, errors.New("managed service launcher is not active")
 		}
 	}
+	record.ConfigPath = managedServiceConfigPath(root, record, receipt.LegacyConfigPath)
 	return record, nil
 }
 
@@ -96,7 +130,51 @@ func validateServiceEnvironment(environment []string) error {
 }
 
 func writeManagedService(root string, record ManagedServiceRecord) error {
+	if err := writeManagedServiceConfig(root, record); err != nil {
+		return err
+	}
 	return WritePrivateJSON(root, filepath.Join("runtime", ManagedServiceRecordName), record)
+}
+
+// writeManagedServiceConfig records the resolved config path beside the
+// receipt, bound to the same process identity. It runs before the receipt it
+// belongs to becomes visible, so a ready receipt never lacks its sidecar.
+// Written without a config path, the receipt drops any previous sidecar.
+func writeManagedServiceConfig(root string, record ManagedServiceRecord) error {
+	if record.ConfigPath == "" {
+		return clearManagedServiceConfig(root)
+	}
+	normalizedRoot, err := NormalizeInstallRoot(root)
+	if err != nil {
+		return err
+	}
+	configPath, err := normalizeAbsolutePath(record.ConfigPath, "managed service config file")
+	if err != nil {
+		return err
+	}
+	return WritePrivateJSON(root, filepath.Join("runtime", managedServiceConfigRecordName), managedServiceConfigRecord{
+		Schema: SchemaVersion, Product: "Headroom", InstallRoot: normalizedRoot, PID: record.PID,
+		ProcessToken: record.ProcessToken, Executable: record.Executable, Owner: record.Owner, ConfigPath: configPath})
+}
+
+// managedServiceConfigPath returns the resolved config path only when its
+// record belongs to this receipt's process identity; a stale or mismatched
+// sidecar is ignored. A 3.6.0 receipt carried the path inline instead, and
+// that legacy value is used when no matching sidecar exists.
+func managedServiceConfigPath(root string, record ManagedServiceRecord, legacy string) string {
+	var stored managedServiceConfigRecord
+	if err := readPrivateJSONRelaxed(root, filepath.Join("runtime", managedServiceConfigRecordName), &stored); err == nil &&
+		stored.Schema == SchemaVersion && stored.Product == "Headroom" && stored.InstallRoot == root &&
+		stored.PID == record.PID && stored.ProcessToken == record.ProcessToken && stored.Owner == record.Owner &&
+		samePath(stored.Executable, record.Executable) {
+		if path, pathErr := normalizeAbsolutePath(stored.ConfigPath, "managed service config file"); pathErr == nil {
+			return path
+		}
+	}
+	if path, err := normalizeAbsolutePath(legacy, "managed service config file"); err == nil {
+		return path
+	}
+	return ""
 }
 
 func validateServiceArguments(arguments []string) error {

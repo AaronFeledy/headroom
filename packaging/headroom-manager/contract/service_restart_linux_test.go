@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -243,5 +244,49 @@ func TestRestartSupervisedManagedServiceRefusesReplacementReadingAnotherConfig(t
 	}
 	if !reflect.DeepEqual(f.calls, []string{"stop", "start", "stop"}) {
 		t.Fatalf("supervisor operations = %v", f.calls)
+	}
+}
+
+func TestSupervisedManagedServiceStopsWaitingWhenUnitExits(t *testing.T) {
+	for _, test := range []struct{ name, output string }{
+		{"properties", "ActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"},
+		{"values", "failed\nexit-code\n1\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newSupervisedServiceFixture(t)
+			userSystemctlCommand = func(arguments ...string) ([]byte, error) {
+				if arguments[len(arguments)-1] != managedUserUnit {
+					t.Fatalf("unexpected unit: %v", arguments)
+				}
+				switch arguments[0] {
+				case "show":
+					for _, argument := range arguments {
+						if argument == "ActiveState" {
+							return []byte(test.output), nil
+						}
+					}
+					return []byte(strconv.Itoa(f.record.PID)), nil
+				case "start":
+					f.calls = append(f.calls, "start")
+				case "stop":
+					f.calls = append(f.calls, "stop")
+				default:
+					t.Fatalf("unexpected systemctl command: %v", arguments)
+				}
+				return nil, nil
+			}
+
+			_, err := launchSupervisedManagedService(context.Background(), supervisedServiceLaunch{record: f.record, timeout: 30 * time.Second})
+
+			if err == nil || !strings.Contains(err.Error(), "headroom.service exited before reporting readiness (exit-code/1); see journalctl --user -u headroom.service") {
+				t.Fatalf("supervised exit error = %v", err)
+			}
+			if !reflect.DeepEqual(f.calls, []string{"start", "stop"}) {
+				t.Fatalf("supervisor operations = %v", f.calls)
+			}
+			if _, err := os.Stat(filepath.Join(f.root, "runtime", supervisedRestartRecordName)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("restart intent remains: %v", err)
+			}
+		})
 	}
 }

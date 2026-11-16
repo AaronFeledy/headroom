@@ -50,7 +50,12 @@ type ManagedServiceRecord struct {
 	LauncherToken      string   `json:"launcher_process_token,omitempty"`
 	Supervisor         string   `json:"supervisor,omitempty"`
 	Ready              bool     `json:"ready"`
-	ConfigPath         string   `json:"config_path,omitempty"`
+	// ConfigPath is the resolved server configuration recorded at readiness.
+	// It is deliberately absent from the receipt: every updater Headroom has
+	// shipped decodes runtime/managed-serve.json with unknown fields
+	// disallowed, so a new field there breaks updates from those versions.
+	// The path lives beside the receipt in a record bound to this process.
+	ConfigPath string `json:"-"`
 }
 
 func RegisterManagedService(installRoot string, arguments []string) (ManagedServiceRecord, error) {
@@ -153,7 +158,7 @@ func UnregisterManagedService(record ManagedServiceRecord) error {
 	if current.PID != record.PID || current.ProcessToken != record.ProcessToken || !samePath(current.Executable, record.Executable) {
 		return errors.New("managed service receipt changed")
 	}
-	return os.Remove(filepath.Join(root, "runtime", ManagedServiceRecordName))
+	return clearManagedServiceReceipt(root)
 }
 
 func ReadManagedService(installRoot string) (ManagedServiceRecord, error) {

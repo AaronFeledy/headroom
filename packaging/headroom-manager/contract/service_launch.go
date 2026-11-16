@@ -37,6 +37,7 @@ func launchSupervisedManagedService(ctx context.Context, launch supervisedServic
 	}
 	deadline := time.Now().Add(launch.timeout)
 	journaled := false
+	nextSupervisorCheck := time.Time{}
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return failed(err)
@@ -54,6 +55,12 @@ func launchSupervisedManagedService(ctx context.Context, launch supervisedServic
 			if record.Ready {
 				return record, nil
 			}
+		}
+		if !time.Now().Before(nextSupervisorCheck) {
+			if failure, exited := supervisedManagedServiceFailure(expected.Supervisor); exited {
+				return failed(failure)
+			}
+			nextSupervisorCheck = time.Now().Add(200 * time.Millisecond)
 		}
 		timer := time.NewTimer(25 * time.Millisecond)
 		select {

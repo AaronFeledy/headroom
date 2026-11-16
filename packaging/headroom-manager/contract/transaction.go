@@ -247,6 +247,15 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	if len(request.ManagedServiceArguments) != 0 && !seenRole[RoleManagedServer] {
 		return PreparedApply{}, errors.New("managed service arguments have no participant")
 	}
+
+	// The candidate must accept the running managed serve's configuration
+	// before this transaction can stop that service. Nothing is stopped or
+	// changed when the staged CLI rejects it.
+	if hasManagedService(request) {
+		if err = checkStagedServerConfig(stage, manifest, request); err != nil {
+			return PreparedApply{}, err
+		}
+	}
 	if request.OwnedChildPID > 0 {
 		request.OwnedChildExecutable, err = normalizeAbsolutePath(request.OwnedChildExecutable, "owned child executable")
 		if err != nil {
@@ -317,7 +326,7 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	request.StageRecord = filepath.Clean(request.StageRecord)
 	request.AcknowledgementPath = filepath.Join(directory, "accepted.json")
 	request.CommitPath = filepath.Join(directory, "commit.json")
-	request.ReadyPath = filepath.Join(directory, "ready.json")
+	request.ReadyPath = filepath.Join(directory, readyFileName)
 	request.Nonce, err = randomHex(24)
 	if err != nil {
 		return PreparedApply{}, err
@@ -609,7 +618,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			result = ApplyResult{Nonce: journal.Request.Nonce, Schema: SchemaVersion, Product: "Headroom", Status: "rolled_back", Version: previous.ActiveVersion,
 				VersionPath: previous.VersionPath, RolledBack: true, FailureReason: boundedError(originalFailure)}
 			relaunch := journal.Request
-			relaunch.ReadyPath = filepath.Join(directory, "rollback-ready.json")
+			relaunch.ReadyPath = filepath.Join(directory, readyFileName)
 			relaunch.Nonce, _ = randomHex(24)
 			cleanupErr = relaunchRollbackPrior(relaunch, *previous)
 		}
@@ -1232,7 +1241,7 @@ func validateApplyRequestFields(request *ApplyRequest, root, directory string) e
 	if request.InstallRoot != root || request.WaitTimeoutMS <= 0 || request.WaitTimeoutMS > 120000 || request.CommitTimeoutMS <= 0 || request.CommitTimeoutMS > 30000 || request.ReadyTimeoutMS <= 0 || request.ReadyTimeoutMS > 120000 ||
 		len(request.Nonce) != 48 || !isLowerHex(request.Nonce) || !hashPattern.MatchString(request.PriorStateSHA256) ||
 		!samePath(request.AcknowledgementPath, filepath.Join(directory, "accepted.json")) || !samePath(request.CommitPath, filepath.Join(directory, "commit.json")) ||
-		!samePath(request.ReadyPath, filepath.Join(directory, "ready.json")) {
+		!samePath(request.ReadyPath, filepath.Join(directory, readyFileName)) {
 		return errors.New("apply request bounds or private paths are invalid")
 	}
 	return nil
@@ -1687,13 +1696,13 @@ func launchManagedService(request ApplyRequest, state InstallState, onLaunch fun
 		_, _ = process.Wait()
 		return err
 	}
-	done := make(chan error, 1)
-	go func() { _, waitErr := process.Wait(); done <- waitErr }()
+	done := make(chan processExit, 1)
+	go func() { state, waitErr := process.Wait(); done <- processExit{state, waitErr} }()
 	deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
 	for time.Now().Before(deadline) {
 		select {
-		case waitErr := <-done:
-			return fmt.Errorf("managed service exited during startup: %v", waitErr)
+		case exit := <-done:
+			return fmt.Errorf("managed service exited during startup: %v", exit)
 		default:
 		}
 		ready, readyErr := ReadManagedService(request.InstallRoot)

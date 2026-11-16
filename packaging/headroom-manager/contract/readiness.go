@@ -10,11 +10,34 @@ import (
 	"time"
 )
 
+// readyFileName is the only readiness file shipped Headroom CLIs will write:
+// <install root>/transactions/apply-*/ready.json. Rollback and recovery
+// relaunch the previous, already-shipped CLI, so they reuse this name with a
+// fresh nonce instead of inventing another one.
+const readyFileName = "ready.json"
+
 type readinessMarker struct {
 	Nonce      string `json:"nonce"`
 	PID        int    `json:"pid"`
 	Version    string `json:"version"`
 	Executable string `json:"executable"`
+}
+
+// processExit keeps the observed process state because os.Process.Wait
+// returns a nil error for an ordinary non-zero exit.
+type processExit struct {
+	state *os.ProcessState
+	err   error
+}
+
+func (exit processExit) String() string {
+	if exit.state != nil {
+		return exit.state.String()
+	}
+	if exit.err != nil {
+		return exit.err.Error()
+	}
+	return "unknown exit status"
 }
 
 func matchesReadinessMarker(data []byte, expected readinessMarker) bool {
@@ -64,8 +87,8 @@ func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func
 		_, _ = process.Wait()
 		return tokenErr
 	}
-	done := make(chan error, 1)
-	go func() { _, waitErr := process.Wait(); done <- waitErr }()
+	done := make(chan processExit, 1)
+	go func() { state, waitErr := process.Wait(); done <- processExit{state, waitErr} }()
 	if onLaunch != nil {
 		if err = onLaunch(process.Pid, executable, token); err != nil {
 			_ = process.Kill()

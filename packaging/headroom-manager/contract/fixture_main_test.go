@@ -47,11 +47,13 @@ func runTests(m *testing.M) int {
 	fixtureExecutable = filepath.Join(root, "headroom-fixture"+ext)
 	source := filepath.Join(root, "main.go")
 	program := `package main
-import ("encoding/json"; "os"; "path/filepath"; "strconv"; "strings"; "time")
+import ("encoding/json"; "fmt"; "os"; "path/filepath"; "strconv"; "strings"; "time")
 func main() {
  var ready string; sleep:=os.Getenv("HEADROOM_FIXTURE_SLEEP_MS"); log:=os.Getenv("HEADROOM_FIXTURE_LAUNCH_LOG")
  for i:=1; i<len(os.Args); i++ { if i+1<len(os.Args) { switch os.Args[i] { case "--headroom-ready-file": ready=os.Args[i+1]; i++; case "--headroom-fixture-log": log=os.Args[i+1]; i++; case "--headroom-fixture-sleep": sleep=os.Args[i+1]; i++ } } }
  executable,_:=os.Executable(); directory:=filepath.Dir(filepath.Dir(executable)); if filepath.Base(directory)=="Contents" { directory=filepath.Dir(filepath.Dir(directory)) }; generation:=filepath.Base(directory); version:=strings.Split(generation,".generation-")[0]
+ for d:=filepath.Dir(executable); d!=filepath.Dir(d); d=filepath.Dir(d) { data,e:=os.ReadFile(filepath.Join(d,"package-manifest.json")); if e!=nil { continue }; var manifest map[string]any; if json.Unmarshal(data,&manifest)==nil { if v,ok:=manifest["version"].(string); ok && v!="" { version=v } }; break }
+ for _,a:=range os.Args { if a=="--check-config" { if os.Getenv("HEADROOM_FIXTURE_CHECK_CONFIG_FAIL_VERSION")==version { fmt.Fprintln(os.Stderr,"headroom: providers.claude.accounts[0]: config_dir is required"); os.Exit(1) }; return } }
  if os.Getenv("HEADROOM_FIXTURE_CRASH_VERSION")==version { os.Exit(8) }
  if ready!="" && os.Getenv("HEADROOM_FIXTURE_NO_READY_VERSION")!=version { b,_:=json.Marshal(map[string]any{"nonce":os.Getenv("HEADROOM_READY_NONCE"),"pid":os.Getpid(),"version":version,"executable":executable}); if log!="" { f,e:=os.OpenFile(log,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600); if e==nil { _,_=f.Write(append(b,'\n')); _=f.Close() } }; _=os.WriteFile(ready,append(b,'\n'),0600) }
  if evidence:=os.Getenv("USAGE_CONFIG"); evidence!="" && os.Getenv("HEADROOM_MANAGED_SERVICE_RESTART")!="" {
