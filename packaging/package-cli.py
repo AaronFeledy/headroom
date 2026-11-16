@@ -44,6 +44,7 @@ def main():
     notices.write_text("Headroom CLI includes the Go runtime, golang.org/x/sys, golang.org/x/term, "
                        "Google Protocol Buffers for Go, and go-yaml v3.\n"
                        "Their license texts are included under share/licenses/go. No Qt runtime is included.\n")
+    notices.chmod(0o644)
     goroot = Path(subprocess.check_output(["go", "env", "GOROOT"], text=True).strip())
     go_version = subprocess.check_output(["go", "env", "GOVERSION"], text=True).strip()
     go_release = ".".join(go_version.removeprefix("go").split(".")[:2])

@@ -862,7 +862,6 @@ jobs:
           (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$UPGRADE_TEST_VERSION" -o "$root/headroom-runtime" ./cmd/headroom)
           (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$UPGRADE_TEST_VERSION -X main.invocationRole=cli" -o "$root/headroom-router" ./cmd/headroom-manager)
           (cd "$module" && GOARCH="$CLI_GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$UPGRADE_TEST_VERSION" -o "$root/headroom-package" ./cmd/headroom-manager)
-          umask 022
           python3 packaging/package-cli.py --version "$UPGRADE_TEST_VERSION" --platform linux --arch "$CLI_ARCH" \
             --cli "$root/headroom-runtime" --launcher "$root/headroom-router" --manager "$root/headroom-package" \
             --validator "$root/headroom-package" --work "$root/work" --output "$root/output"
@@ -899,8 +898,8 @@ jobs:
           path: ${{ runner.temp }}/cli-output/*
           if-no-files-found: error
       - name: Update 3.5.0 in place
-        # Expected to fail until receipt config_path compatibility and the 3.5
-        # account format are fixed. The failure is the point: it must be visible.
+        # 3.5.0's updater reads the service receipt strictly and its users
+        # documented extra accounts with credentials_path; both must keep working.
         if: runner.os == 'Linux'
         timeout-minutes: 10
         run: |

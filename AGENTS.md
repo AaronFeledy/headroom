@@ -65,8 +65,13 @@ Explicit Windows/WSL pairing stages both targets before either applies; never
 infer it from hostnames, URLs, or a server's claim to be local. Cross-kernel
 partial completion must remain visible and recoverable, never reported as
 atomic. Managed `serve` receipts bind the executable, kernel process identity,
-owner, arguments, and approved server environment, and record the resolved
-config path at readiness. Readiness is acknowledged only after server
+owner, arguments, and approved server environment. Shipped updaters read
+`runtime/managed-serve.json` with unknown fields rejected while they wait for a
+new server, so it keeps the 3.5.0 field set and newer readers ignore unknown
+fields. The resolved config path recorded at readiness lives in
+`runtime/managed-serve-config.json`, bound to the receipt's process identity and
+removed with it; a 3.6.0 receipt's inline `config_path` is used only without a
+matching sidecar. Readiness is acknowledged only after server
 configuration and listener binding succeed. Linux/WSL supervision supports only
 the current user's `headroom.service`; never infer an arbitrary unit name,
 control system-wide units, or invoke sudo during an update.
@@ -123,7 +128,10 @@ names a file (then only that file is read): Claude Code's macOS Keychain item
 (macOS only), `~/.claude/.credentials.json`, the WSL home's file (native Windows
 only), then OpenCode's `auth.json`. This mirrors Claude Code, which reads the
 Keychain before its file. Extra accounts set `config_dir`, the `CLAUDE_CONFIG_DIR`
-used at sign-in, and never fall back to other sources. Their Keychain service is
+used at sign-in, and never fall back to other sources. The 3.5 spelling
+`credentials_path: <dir>/.credentials.json` still loads as `config_dir: <dir>`
+with one deprecation warning per account; any other file name or a relative path
+is rejected, and `config_dir` wins when both are present. Their Keychain service is
 `Claude Code-credentials-` plus the first 8 hex digits of SHA-256 over the NFC
 form of `config_dir` exactly as written after `~` expansion. Only a missing item
 permits a second lookup with trailing slashes removed or one slash added; no
@@ -194,7 +202,12 @@ SSH forward, usage details, or resets; do not add them without an explicit task.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider
-key `Codex`, and snake_case API fields. Default server config locations are
+key `Codex`, and snake_case API fields. Every spelling a released
+`server/config.example.yaml` documented keeps loading: renaming or removing a key
+needs a load-time migration in the same change, and the released examples in
+`server/internal/config/testdata` must keep loading. A file that a newer version
+writes and an older updater reads during update or rollback never gains a field
+that older reader rejects. Default server config locations are
 `${XDG_CONFIG_HOME:-$HOME/.config}/headroom/config.yaml` on Unix and
 `%APPDATA%\Headroom\config.yaml` on Windows. Legacy `claude-usage-widget` /
 `ClaudeUsageWidget` config locations migrate automatically and must stay readable:
@@ -318,7 +331,14 @@ the current-user Headroom root. Public acquisition is available only to a
 trusted native per-user install. Capture, explicit-config, source, and
 system-managed sessions make no public update requests. Restart apply uses a
 two-way acknowledgement/commit, exact process identity, readiness, rollback, and
-durable recovery. Do not add a second archive validator outside the Go manager.
+durable recovery. Rollback and recovery relaunch the previous app through the
+transaction's `ready.json`, the only readiness file shipped CLIs write. Before an
+apply that includes a managed `serve` prepares anything, the staged candidate
+runs `serve --check-config` with the receipt's arguments, approved environment,
+and working directory (candidates older than 3.6.0 skip it); a rejection aborts
+with the server's first error line and stops nothing. Readiness failures report
+the real exit status, and a supervised restart stops waiting as soon as
+`headroom.service` fails. Do not add a second archive validator outside the Go manager.
 External desktop installers use manager-owned activation and coordinate healthy
 live reinstalls before changing install state. Keep the `reinstall` and
 `restart-server` IPC requests separate from the managed CLI's `update` request:
@@ -483,3 +503,9 @@ uses a disposable provider-disabled installation and a temporary runtime unit
 link, runs a real repair/restart, then stops the unit and removes that link. Never
 run it against an account already using the fixed unit. Linux CLI CI runs it on
 an isolated runner account.
+
+The optional `packaging/tests/cli_upgrade_smoke.py` downloads a published CLI
+release, verifies it against that release's manifest, runs its managed `serve`
+unsupervised under a temporary home and install root with providers disabled,
+and has that release's own updater apply a local candidate in place. Linux CLI
+CI runs it from the latest release and from 3.5.0 against a 99.0.0 test build.
