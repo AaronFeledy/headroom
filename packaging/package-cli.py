@@ -45,6 +45,8 @@ def main():
                        "Google Protocol Buffers for Go, and go-yaml v3.\n"
                        "Their license texts are included under share/licenses/go. No Qt runtime is included.\n")
     goroot = Path(subprocess.check_output(["go", "env", "GOROOT"], text=True).strip())
+    go_version = subprocess.check_output(["go", "env", "GOVERSION"], text=True).strip()
+    go_release = ".".join(go_version.removeprefix("go").split(".")[:2])
     cache = Path(subprocess.check_output(["go", "env", "GOMODCACHE"], text=True).strip())
     runtime_license = next((path for path in (goroot / "LICENSE", Path("/usr/share/licenses/go/LICENSE")) if path.is_file()), None)
     if runtime_license is None:
@@ -70,7 +72,7 @@ def main():
     archive = args.output.resolve() / (stem + (".zip" if args.platform == "windows" else ".tar.gz"))
     subprocess.run([str(args.validator.resolve()), "create-package", "--kind", "cli", "--root", str(root),
         "--output", str(archive), "--version", args.version, "--platform", args.platform, "--arch", args.arch,
-        "--baseline", "Go 1.25 native CLI"], check=True)
+        "--baseline", f"Go {go_release} native CLI"], check=True)
 
 
 if __name__ == "__main__":

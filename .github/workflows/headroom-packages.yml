@@ -65,7 +65,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version: '1.25.x', cache: false}
+        with: {go-version-file: packaging/headroom-manager/go.mod, cache: false}
       - name: Race-test the complete package-manager suite
         # The contract package alone takes 18-30 minutes under -race (#103).
         timeout-minutes: 50
@@ -338,7 +338,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: '1.25.x', cache: false }
+        with: { go-version-file: packaging/headroom-manager/go.mod, cache: false }
       - name: Install package build dependencies
         timeout-minutes: 15
         run: sudo bash packaging/ci/install-apt.sh ninja-build patchelf libgl1-mesa-dev libwayland-dev libxkbcommon-x11-0
@@ -395,7 +395,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: '1.25.x', cache: false }
+        with: { go-version-file: packaging/headroom-manager/go.mod, cache: false }
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with: { dotnet-version: 8.0.x }
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
@@ -474,7 +474,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version: '1.25.x', cache: false}
+        with: {go-version-file: packaging/headroom-manager/go.mod, cache: false}
       - uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005 # v4.3.0
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
@@ -800,7 +800,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version: '1.25.x', cache: false}
+        with: {go-version-file: packaging/headroom-manager/go.mod, cache: false}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with: {python-version: '3.x'}
       - name: Build, package, and execute the native CLI without Qt
@@ -858,7 +858,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: {go-version: '1.25.x', cache: false}
+        with: {go-version-file: packaging/headroom-manager/go.mod, cache: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: {pattern: 'headroom-cli-*-package', path: '${{ runner.temp }}/cli-packages', merge-multiple: true}
       - name: Verify the complete CLI matrix
@@ -921,7 +921,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with: { go-version: '1.25.x', cache: false }
+        with: { go-version-file: packaging/headroom-manager/go.mod, cache: false }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { pattern: 'headroom-*-package', path: '${{ runner.temp }}/packages', merge-multiple: true }
       - name: Verify matrix and create release manifest

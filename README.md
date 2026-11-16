@@ -136,7 +136,7 @@ On Linux and macOS, ensure `~/.local/bin` is on your PATH.
 
 For a terminal, WSL, or a server without a desktop, install the CLI-only package.
 It includes the usage server without Qt, and supports Windows
-x64/ARM64, Linux x86_64/ARM64, and macOS Intel/Apple Silicon.
+x64/ARM64, Linux x86_64/ARM64, and macOS 13+ on Intel and Apple Silicon.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh -s -- --cli
