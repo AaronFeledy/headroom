@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/accountconfig"
@@ -13,7 +12,8 @@ import (
 func Test_Legacy_credentials_path_account_lists_changes_removes_and_adds(t *testing.T) {
 	// Given
 	target := targetConfig(t, "providers:\n  claude:\n    accounts:\n      - id: work\n        label: Work\n        credentials_path: ~/.claude-work/.credentials.json\n")
-	wantDir := filepath.Join(os.Getenv("HOME"), ".claude-work")
+	// ~ expansion keeps the spelling after ~, so Windows keeps the forward slash.
+	wantDir := os.Getenv("HOME") + "/.claude-work"
 
 	// When
 	accounts, err := accountconfig.List(context.Background(), target)
@@ -54,7 +54,7 @@ func Test_Legacy_credentials_path_account_lists_changes_removes_and_adds(t *test
 		t.Fatal(err)
 	}
 	data := fileBytes(t, target.Path)
-	if !bytes.Contains(data, []byte("config_dir: "+filepath.Join(os.Getenv("HOME"), ".claude-side"))) {
+	if !bytes.Contains(data, []byte("config_dir: "+os.Getenv("HOME")+"/.claude-side")) {
 		t.Fatalf("added account lacks config_dir:\n%s", data)
 	}
 	if bytes.Contains(data, []byte("credentials_path:")) {

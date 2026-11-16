@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +17,8 @@ func Test_Load_maps_legacy_account_credentials_path_to_config_dir(t *testing.T) 
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	workDir := filepath.Join(home, ".claude-work")
+	// ~ expansion keeps the spelling after ~, so Windows keeps the forward slash.
+	expandedWorkDir := home + "/.claude-work"
 
 	tests := []struct {
 		name     string
@@ -32,25 +35,25 @@ func Test_Load_maps_legacy_account_credentials_path_to_config_dir(t *testing.T) 
 		{
 			name:     "home expansion",
 			account:  "credentials_path: ~/.claude-work/.credentials.json\n",
-			wantDir:  workDir,
+			wantDir:  expandedWorkDir,
 			wantWarn: 1,
 		},
 		{
 			name:     "trailing slash adds none",
 			account:  "credentials_path: ~/.claude-work/.credentials.json/\n",
-			wantDir:  workDir,
+			wantDir:  expandedWorkDir,
 			wantWarn: 1,
 		},
 		{
 			name:     "config_dir wins when consistent",
 			account:  "config_dir: ~/.claude-work\n        credentials_path: ~/.claude-work/.credentials.json\n",
-			wantDir:  workDir,
+			wantDir:  expandedWorkDir,
 			wantWarn: 0,
 		},
 		{
 			name:     "config_dir wins when inconsistent",
 			account:  "config_dir: ~/.claude-work\n        credentials_path: ~/.claude-side/.credentials.json\n",
-			wantDir:  workDir,
+			wantDir:  expandedWorkDir,
 			wantWarn: 1,
 		},
 	}
@@ -166,13 +169,14 @@ func Test_Load_warns_once_per_legacy_account(t *testing.T) {
 		t.Fatalf("warnings = %d, want one per account:\n%s", len(lines), logs)
 	}
 	for i, want := range []struct{ id, dir string }{
-		{"account=work", filepath.Join(home, ".claude-work")},
-		{"account=side", filepath.Join(home, ".claude-side")},
+		{"account=work", home + "/.claude-work"},
+		{"account=side", home + "/.claude-side"},
 	} {
 		if !strings.Contains(lines[i], "level=WARN") || !strings.Contains(lines[i], "deprecated credentials_path") || !strings.Contains(lines[i], want.id) {
 			t.Fatalf("warning %d = %q, want deprecation for %s", i, lines[i], want.id)
 		}
-		if !strings.Contains(lines[i], "config_dir: "+want.dir) {
+		// The text handler quotes the value, escaping Windows backslashes.
+		if !strings.Contains(lines[i], "replacement="+strconv.Quote("config_dir: "+want.dir)) {
 			t.Fatalf("warning %d = %q, want replacement config_dir: %s", i, lines[i], want.dir)
 		}
 	}
