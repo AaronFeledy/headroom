@@ -208,6 +208,11 @@ QString SettingsService::normalizeProvider(const QString &provider)
     return "Claude";
 }
 
+bool SettingsService::validTrayProvider(const QString &value)
+{
+    return value == QStringLiteral("first") || value == QStringLiteral("constrained");
+}
+
 QStringList SettingsService::normalizeOrder(const QStringList &values, const QString &legacyPrimary)
 {
     const QStringList defaults{"Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"};
@@ -272,6 +277,9 @@ bool SettingsService::loadHeadroom()
     }
     m_value.interval = qBound(15, readInt(m_document, "interval", 60), 900);
     m_value.notifications = readBool(m_document, "notifications", true);
+    m_value.unusedReminders = readBool(m_document, "unusedReminders", false);
+    const QString trayProvider = readString(m_document, "trayProvider");
+    if (validTrayProvider(trayProvider)) m_value.trayProvider = trayProvider;
     m_value.primary = normalizeProvider(readString(m_document, "primary", "Claude"));
     m_value.order = normalizeOrder(readOrder(m_document.value("order")), m_value.primary);
     m_value.primary = m_value.order.first();
@@ -380,6 +388,8 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["shareBrowserSignIns"] = settings.shareBrowserSignIns;
     result["interval"] = settings.interval;
     result["notifications"] = settings.notifications;
+    result["unusedReminders"] = settings.unusedReminders;
+    result["trayProvider"] = settings.trayProvider;
     result["primary"] = settings.primary;
     result["order"] = QJsonArray::fromStringList(settings.order);
     result["startup"] = settings.startup;
@@ -432,6 +442,7 @@ QString SettingsService::save(const DesktopSettings &settings, bool explicitUser
     if (normalized.connectionMode == "ssh" && !SshTransport::parseAddress(normalized.sshUrl))
         return "Use ssh://[user@]host[:port] without a password, path, query, or fragment.";
     normalized.interval = qBound(15, normalized.interval, 900);
+    if (!validTrayProvider(normalized.trayProvider)) normalized.trayProvider = QStringLiteral("first");
     normalized.order = normalizeOrder(normalized.order, normalized.primary);
     normalized.primary = normalized.order.first();
     const QString error = write(normalized);

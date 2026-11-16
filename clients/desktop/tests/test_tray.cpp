@@ -38,12 +38,12 @@ private slots:
         auto row = provider("Claude (Work)", {meter("session", 12)});
         row["provider_type"] = "Claude";
         row["account"] = QVariantMap{{"id", "work"}, {"label", "Work"}};
-        const auto model = TrayVisual::build(ready(), {row}, "Claude (Work)", assess, now);
+        const auto model = TrayVisual::build(ready(), {row}, "Claude (Work)", {}, assess, now);
         QCOMPARE(model.provider, "Claude (Work)");
         QCOMPARE(model.providerType, "claude");
         QCOMPARE(model.expected, 50);
         QVERIFY(model.tooltip.startsWith("Claude (Work)"));
-        const auto defaultModel = TrayVisual::build(ready(), {provider("Claude", {meter("session", 12)})}, "Claude", assess, now);
+        const auto defaultModel = TrayVisual::build(ready(), {provider("Claude", {meter("session", 12)})}, "Claude", {}, assess, now);
         QCOMPARE(TrayVisual::icon(model).pixmap(64, 64).toImage(),
             TrayVisual::icon(defaultModel).pixmap(64, 64).toImage());
     }
@@ -68,12 +68,12 @@ private slots:
     void openCodeGoUsesDisplayNamePacingAndIcon() {
         auto session = meter("session", 42);
         session["label"] = "5-Hour";
-        const auto model = TrayVisual::build(ready(), {provider("OpenCodeGo", {session})}, "OpenCodeGo", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("OpenCodeGo", {session})}, "OpenCodeGo", {}, assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Usage);
         QCOMPARE(model.providerType, QString("opencodego"));
         QCOMPARE(model.used, 42);
         QCOMPARE(model.expected, 50);
-        QVERIFY(model.tooltip.startsWith("OpenCode Go · 42% used"));
+        QVERIFY(model.tooltip.startsWith("OpenCode Go · 5-Hour · 42% used"));
         QVERIFY(!QIcon(":/provider-icons/opencodego.svg").isNull());
         auto unbranded = model;
         unbranded.providerType = "unbranded";
@@ -81,13 +81,13 @@ private slots:
         QVERIFY(TrayVisual::icon(model).pixmap(64, 64).toImage() != TrayVisual::icon(unbranded).pixmap(64, 64).toImage());
     }
     void usesSharedLevelsForBothIndicators() {
-        const auto model = TrayVisual::build(ready(), {provider("Codex", {meter("session", 12), meter("weekly", 8, 86400)})}, "Codex", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("Codex", {meter("session", 12), meter("weekly", 8, 86400)})}, "Codex", {}, assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Usage);
         QCOMPARE(model.level, Usage::WarningLevel::Watch);
         QCOMPARE(model.secondary, Usage::WarningLevel::Critical);
         QCOMPARE(model.used, 12);
         QCOMPARE(model.expected, 50);
-        QVERIFY(model.tooltip.startsWith("ChatGPT · 12% used"));
+        QVERIFY(model.tooltip.startsWith("ChatGPT · 5-Hour · 12% used"));
         QCOMPARE(model.tooltip.count('\n'), 1);
         QVERIFY(model.tooltip.contains("Resets in 2h 30m · Critical"));
         QVERIFY(!model.tooltip.contains("Weekly"));
@@ -122,7 +122,7 @@ private slots:
     }
     void keepsSelectedProviderOnError() {
         const auto model = TrayVisual::build(ready(), {
-            provider("Claude", {}, false), provider("Codex", {meter("session", 60), meter("weekly", 99)})}, "Claude", assess, now);
+            provider("Claude", {}, false), provider("Codex", {meter("session", 60), meter("weekly", 99)})}, "Claude", {}, assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::ProviderError);
         QCOMPARE(model.provider, QString("Claude"));
         QCOMPARE(model.used, -1);
@@ -143,7 +143,7 @@ private slots:
     void distinguishesConnectionStates() {
         QFETCH(QString, status); QFETCH(QString, error); QFETCH(int, kind);
         auto state = ready(); state["status"] = status; state["errorKind"] = error; state["retrySeconds"] = 30;
-        const auto model = TrayVisual::build(state, {provider("Claude", {meter("session", 40)})}, "Claude", assess, now);
+        const auto model = TrayVisual::build(state, {provider("Claude", {meter("session", 40)})}, "Claude", {}, assess, now);
         QCOMPARE(int(model.kind), kind);
         QVERIFY(!TrayVisual::icon(model).isNull());
         QCOMPARE(model.tooltip.count('\n'), 1);
@@ -155,8 +155,8 @@ private slots:
                 QCOMPARE(TrayVisual::icon(other).pixmap(64, 64).toImage(), disconnected);
             }
             auto retry = state; retry["loading"] = true; retry["lastGood"] = 0;
-            QCOMPARE(TrayVisual::build(retry, {}, "Claude", assess, now).kind, TrayVisual::Kind::Offline);
-            const auto recovered = TrayVisual::build(ready(), {provider("Claude", {meter("session", 40)})}, "Claude", assess, now);
+            QCOMPARE(TrayVisual::build(retry, {}, "Claude", {}, assess, now).kind, TrayVisual::Kind::Offline);
+            const auto recovered = TrayVisual::build(ready(), {provider("Claude", {meter("session", 40)})}, "Claude", {}, assess, now);
             QCOMPARE(recovered.kind, TrayVisual::Kind::Usage);
             QVERIFY(TrayVisual::icon(recovered).pixmap(64, 64).toImage() != disconnected);
             const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
@@ -168,12 +168,12 @@ private slots:
     }
     void loadingWithoutGoodDataAndBackgroundRefresh() {
         auto state = ready(); state["loading"] = true; state["lastGood"] = 0;
-        QCOMPARE(TrayVisual::build(state, {}, "Claude", assess, now).kind, TrayVisual::Kind::Connecting);
+        QCOMPARE(TrayVisual::build(state, {}, "Claude", {}, assess, now).kind, TrayVisual::Kind::Connecting);
         state["lastGood"] = now.toSecsSinceEpoch();
-        QCOMPARE(TrayVisual::build(state, {provider("Claude", {meter("session", 40)})}, "Claude", assess, now).kind, TrayVisual::Kind::Usage);
+        QCOMPARE(TrayVisual::build(state, {provider("Claude", {meter("session", 40)})}, "Claude", {}, assess, now).kind, TrayVisual::Kind::Usage);
     }
     void exhaustionAndExpiredPacing() {
-        const auto model = TrayVisual::build(ready(), {provider("Claude", {meter("session", 100, -60)})}, "Claude", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("Claude", {meter("session", 100, -60)})}, "Claude", {}, assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Exhausted);
         QCOMPARE(model.expected, -1);
         QVERIFY(model.tooltip.contains("awaiting reset update"));
@@ -183,27 +183,27 @@ private slots:
     }
     void billingStatusAndMissingSelectedProvider() {
         auto billing = meter("on_demand", 0); billing["label"] = "On-Demand"; billing["status_text"] = "$4.00 billed";
-        const auto model = TrayVisual::build(ready(), {provider("Cursor", {meter("session", 40), billing})}, "Cursor", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("Cursor", {meter("session", 40), billing})}, "Cursor", {}, assess, now);
         QVERIFY(!model.tooltip.contains("On-Demand"));
         QVERIFY(!model.tooltip.contains("On-Demand · 0%"));
         QCOMPARE(model.secondary, Usage::WarningLevel::Normal);
-        const auto missing = TrayVisual::build(ready(), {provider("Cursor", {meter("session", 40)})}, "Claude", assess, now);
+        const auto missing = TrayVisual::build(ready(), {provider("Cursor", {meter("session", 40)})}, "Claude", {}, assess, now);
         QCOMPARE(missing.kind, TrayVisual::Kind::Idle);
         QCOMPARE(missing.used, -1);
     }
     void firstMeasurableBucketDrivesTray() {
         auto billing = meter("on_demand", 0); billing["status_text"] = "On-demand enabled";
         auto measured = meter("weekly", 37, 86400);
-        const auto model = TrayVisual::build(ready(), {provider("Grok", {billing, measured})}, "Grok", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("Grok", {billing, measured})}, "Grok", {}, assess, now);
         QCOMPARE(model.kind, TrayVisual::Kind::Usage);
         QCOMPARE(model.used, 37);
         QCOMPARE(model.level, Usage::WarningLevel::Critical);
         QCOMPARE(model.secondary, Usage::WarningLevel::Normal);
-        QCOMPARE(TrayVisual::build(ready(), {provider("Grok", {billing})}, "Grok", assess, now).kind,
+        QCOMPARE(TrayVisual::build(ready(), {provider("Grok", {billing})}, "Grok", {}, assess, now).kind,
                  TrayVisual::Kind::Idle);
     }
     void criticalAttentionRendersAProceduralFlame() {
-        auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", assess, now);
+        auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", {}, assess, now);
         QCOMPARE(model.level, Usage::WarningLevel::Critical);
         const TrayVisual::AttentionFrame first{1.0, 0.0, false};
         const TrayVisual::AttentionFrame bent{1.0, 0.25, false};
@@ -214,7 +214,7 @@ private slots:
             QVERIFY(image != TrayVisual::icon(model, bent).pixmap(size, size).toImage());
         }
         const auto secondaryCritical = TrayVisual::build(
-            ready(), {provider("Codex", {meter("session", 30), meter("weekly", 75)})}, "Codex", assess, now);
+            ready(), {provider("Codex", {meter("session", 30), meter("weekly", 75)})}, "Codex", {}, assess, now);
         QCOMPARE(secondaryCritical.level, Usage::WarningLevel::Watch);
         QCOMPARE(secondaryCritical.secondary, Usage::WarningLevel::Critical);
         QVERIFY(flamePixels(TrayVisual::icon(secondaryCritical, first).pixmap(22, 22).toImage()) >= 10);
@@ -236,7 +236,7 @@ private slots:
     }
     void attentionIsLimitedToCriticalMeters() {
         const TrayVisual::AttentionFrame attention{1.0, 0.3, true};
-        auto normal = TrayVisual::build(ready(), {provider("Claude", {meter("session", 35)})}, "Claude",
+        auto normal = TrayVisual::build(ready(), {provider("Claude", {meter("session", 35)})}, "Claude", {},
                                         [](const QString &, const QVariantMap &) { return QVariantMap{{"severity", 0}}; }, now);
         QCOMPARE(TrayVisual::icon(normal, attention).pixmap(64, 64).toImage(),
                  TrayVisual::icon(normal).pixmap(64, 64).toImage());
@@ -246,7 +246,7 @@ private slots:
                  TrayVisual::icon(normal).pixmap(64, 64).toImage());
     }
     void flashAddsABrightAlertFrame() {
-        const auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", assess, now);
+        const auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", {}, assess, now);
         const QImage normal = TrayVisual::icon(model).pixmap(64, 64).toImage();
         const QImage flashed = TrayVisual::icon(model, {0, 0, true}).pixmap(64, 64).toImage();
         QVERIFY(flashed != normal);

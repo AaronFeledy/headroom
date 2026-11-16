@@ -15,6 +15,10 @@ struct DesktopSettings {
     bool shareBrowserSignIns = true;
     int interval = 60;
     bool notifications = true;
+    bool unusedReminders = false;
+    // "first" shows the first provider in the order; "constrained" follows
+    // the provider closest to a limit.
+    QString trayProvider = "first";
     QString primary = "Claude";
     QStringList order;
     bool startup = false;
@@ -50,6 +54,7 @@ public:
     static QString defaultLegacyPath();
     static QStringList normalizeOrder(const QStringList &order, const QString &legacyPrimary = {});
     static QString normalizeProvider(const QString &provider);
+    static bool validTrayProvider(const QString &value);
 
 private:
     bool isWindows() const;

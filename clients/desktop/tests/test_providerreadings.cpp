@@ -61,7 +61,7 @@ private slots:
         QByteArray body = TestUsage::snapshotWithFetchStatus(stamp(0), "epoch-a");
         backend.respond = [&](const QByteArray &) { return httpResponse(200, body); };
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", backend.url(), "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", backend.url()}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         auto entry = [](const QVariantList &list, const QString &name) {
             for (const auto &value : list) if (value.toMap()["provider_name"].toString() == name) return value.toMap();

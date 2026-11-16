@@ -23,7 +23,7 @@ Rectangle {
     readonly property bool cursorLoginRequired: failed && providerType === "Cursor"
         && !hasAuthCopy
         && (provider.needs_reauth || (provider.error || "").startsWith("Log in to cursor.com"))
-    property bool pinned: backend.settings.primary === name
+    property bool trayMeter: backend.trayProvider === name
     property bool stacked: width < 780
     // Tighten both narrow and medium cards while the provider header is above the meters.
     readonly property bool compact: stacked
@@ -206,7 +206,7 @@ Rectangle {
     implicitHeight: body.implicitHeight + (card.compact ? 28 : 36)
     radius: 12
     color: Theme.surface
-    border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : card.pinned ? Qt.alpha(card.accent, 0.55) : hover.hovered ? Theme.comment : Theme.selection
+    border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : card.trayMeter ? Qt.alpha(card.accent, 0.55) : hover.hovered ? Theme.comment : Theme.selection
     // Layered outlines give the selected tray meter a soft halo without an
     // expensive blur effect or changes to the card's layout.
     Repeater {
@@ -218,7 +218,7 @@ Rectangle {
             z: -1; radius: card.radius + index + 1
             color: "transparent"; border.width: 1
             border.color: Qt.alpha(card.accent, 0.12 - index * 0.025)
-            visible: card.pinned
+            visible: card.trayMeter
         }
     }
     NotificationHighlight {
@@ -302,7 +302,7 @@ Rectangle {
                     Layout.alignment: Qt.AlignTop
                     spacing: 10
                     activeFocusOnTab: true
-                    Accessible.description: card.pinned ? "Current tray meter" : ""
+                    Accessible.description: card.trayMeter ? "Current tray meter" : ""
                     Rectangle {
                         width: 35; height: 35; radius: 10; color: Qt.alpha(card.accent, 0.10); border.color: Qt.alpha(card.accent, 0.17)
                         Image { objectName: "providerIcon_" + card.name; anchors.centerIn: parent; width: 26; height: 26; source: "qrc:/provider-icons/" + card.providerType.toLowerCase() + ".svg"; sourceSize.width: 52; sourceSize.height: 52; visible: ["Claude", "Codex", "Cursor", "Grok", "OpenCodeGo"].indexOf(card.providerType) >= 0 }
@@ -320,7 +320,11 @@ Rectangle {
                         palette.mid: Theme.selection; palette.dark: Theme.comment
                         separatorsCollapsible: true
                         onClosed: card.Window.window.restoreEscapeFocus()
-                        MenuItem { text: "Move to top / use in tray"; onTriggered: backend.setPrimary(card.name) }
+                        MenuItem {
+                            // A tray that follows the closest limit doesn't take its provider from the order.
+                            text: backend.settings.trayProvider === "constrained" ? "Move to top" : "Move to top / use in tray"
+                            onTriggered: backend.setPrimary(card.name)
+                        }
                     }
                 }
                 Item {

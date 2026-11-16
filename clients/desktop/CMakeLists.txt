@@ -71,7 +71,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp resetaction.cpp resetpolicy.cpp usage.cpp warning.cpp trayvisual.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
+    controller.cpp controllerrefresh.cpp controllerreadings.cpp notifications.cpp reminderledger.cpp reminders.cpp resetaction.cpp resetpolicy.cpp usage.cpp warning.cpp trayvisual.cpp trayicon.cpp trayattention.cpp stabletray.cpp startup.cpp appinfo.cpp updateservice.cpp remoteupdate.cpp popup.cpp displayplatform.cpp tlssmoke.cpp
     settings.cpp instance.cpp managedserver.cpp serverrestart.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp tlsproof.cpp logincopy.cpp usagedetails.cpp usagedetailssummary.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -201,7 +201,7 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
     set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
-    foreach(feature usagedetails notifications stabletray startup appinfo update remoteupdate tray trayattention popup displayplatform settings instance login)
+    foreach(feature usagedetails notifications reminders reminderledger stabletray startup appinfo update remoteupdate tray trayselection trayattention popup displayplatform settings instance login)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)

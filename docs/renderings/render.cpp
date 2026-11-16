@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
     }
     const auto desktop = window->grabWindow();
     if (desktop.isNull() || !desktop.save(output.filePath("headroom-desktop.png"))) qFatal("UI render failed");
-    const auto model = TrayVisual::build(backend.state(), backend.providers(), scene["primary"].toString(),
+    const auto model = TrayVisual::build(backend.state(), backend.providers(), scene["primary"].toString(), {},
         [&](const QString &provider, const QVariantMap &bucket) { return backend.concern(provider, bucket); }, backend.now());
     if (model.kind != TrayVisual::Kind::Usage) qFatal("Tray scene requires a usage meter");
     // Match the visible-artwork crop used by providerPixmap() in trayvisual.cpp.

@@ -11,6 +11,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QUuid>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -346,8 +347,7 @@ private slots:
         controller.replaceSnapshot(renamed);
         QCOMPARE(controller.providers().first().toMap()["provider_name"].toString(), "Claude (Office)");
         QCOMPARE(controller.primary(), "Claude (Office)");
-        QVERIFY(controller.saveSettings("local", "", "", 60, true,
-            controller.settings()["primary"].toString(), false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"interval", 60}, {"notifications", true}}).isEmpty());
         SettingsService afterPanelSave(path, false);
         QCOMPARE(afterPanelSave.value().primary, "Claude:work");
         QCOMPARE(afterPanelSave.value().order, moved.value().order);
@@ -356,6 +356,24 @@ private slots:
         ControllerFixture beforeFirstSnapshot(path, renamed);
         QVERIFY(beforeFirstSnapshot.providers().isEmpty());
         QCOMPARE(beforeFirstSnapshot.primary(), "Claude");
+    }
+    void settingsPatchKeepsAbsentFieldsAndRejectsUnknownKeys() {
+        QTemporaryDir dir;
+        ControllerFixture controller(dir.filePath("settings.json"));
+        QVERIFY(controller.saveSettings({{"mode", "local"}, {"interval", 120.0}, {"trayProvider", "constrained"},
+            {"unusedReminders", true}}).isEmpty());
+        QVERIFY(controller.saveSettings({{"notifications", false}}).isEmpty());
+        const auto settings = controller.settings();
+        QCOMPARE(settings["mode"].toString(), "local"); QCOMPARE(settings["interval"].toInt(), 120);
+        QCOMPARE(settings["trayProvider"].toString(), "constrained"); QVERIFY(settings["unusedReminders"].toBool());
+        QVERIFY(!settings["notifications"].toBool());
+        for (const auto &invalid : {QVariantMap{{"primary", "Codex"}}, QVariantMap{{"interval", "60"}},
+                QVariantMap{{"interval", 60.5}}, QVariantMap{{"notifications", 1}}, QVariantMap{{"mode", "ftp"}},
+                QVariantMap{{"trayProvider", "busiest"}}})
+            QVERIFY(!controller.saveSettings(invalid).isEmpty());
+        QCOMPARE(controller.settings(), settings);
+        SettingsService saved(controller.settingsPath(), false);
+        QCOMPARE(saved.value().trayProvider, QStringLiteral("constrained")); QVERIFY(saved.value().unusedReminders);
     }
     void accountIdentityNormalizationAndPrivateBridge() {
         auto rows = QJsonDocument::fromJson(TestUsage::snapshot()).array();
@@ -456,10 +474,72 @@ private slots:
         QVERIFY(controller.notifications()->presented().isEmpty());
         controller.replaceSnapshot(payload(0, QString(64, 'b')));
         QCOMPARE(alerts.size(), 3);
-        QVERIFY(controller.saveSettings("remote", "https://different.example.test", "", 60, true,
-            "Claude", false).isEmpty()); // Fixture refresh is synthetic; no network request.
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", "https://different.example.test"}, {"interval", 60}, {"notifications", true}}).isEmpty()); // Fixture refresh is synthetic; no network request.
         QCOMPARE(alerts.size(), 3);
         QCOMPARE(controller.notifications()->unreadCount(), 0);
+    }
+    void remindersSurviveBaselinesAndSupersedeMeterAlerts() {
+        QTemporaryDir dir;
+        const auto now = QDateTime::currentDateTimeUtc();
+        const auto session = now.addSecs(2 * 3600).toString(Qt::ISODateWithMs);
+        const auto weekly = now.addDays(3).toString(Qt::ISODateWithMs);
+        const auto expires = now.addSecs(6 * 3600).toString(Qt::ISODateWithMs);
+        const auto payload = [&](double used, const QString &sessionReset) {
+            const QJsonArray kinds{TestUsage::claudeResetKind("weekly", "weekly reset", 2, true, QJsonArray{"weekly"}, false, expires)};
+            return QJsonDocument(QJsonArray{QJsonObject{{"provider_name", "Claude"}, {"error", QJsonValue::Null},
+                {"is_success", true}, {"needs_reauth", false},
+                {"buckets", QJsonArray{
+                    QJsonObject{{"id", "session"}, {"label", "5-Hour"}, {"utilization", used}, {"resets_at", sessionReset}},
+                    QJsonObject{{"id", "weekly"}, {"label", "Weekly"}, {"utilization", 20}, {"resets_at", weekly}}}},
+                {"rate_limit_reset_credits", QJsonObject{{"available_count", 2}, {"account_fingerprint", QString(64, 'b')},
+                    {"usable_now", true}, {"kinds", kinds}}}}}).toJson();
+        };
+        ControllerFixture controller(dir.filePath("settings.json"), payload(40, session));
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(controller.providers().size(), 1);
+        // The first fingerprinted reading resets the banked-count baseline, which
+        // clears that counter's events; the expiry reminder posted after it stays.
+        QCOMPARE(alerts.size(), 1);
+        QVERIFY(alerts.last()[0].toString().endsWith("Banked reset expiring"));
+        QCOMPARE(controller.notifications()->unreadCount(), 1);
+        controller.notifications()->present();
+        QCOMPARE(controller.notifications()->presented().first().toMap()["target"].toString(), "bankedResets_Claude");
+        controller.notifications()->endPresentation();
+        // Reaching the limit enters Critical too; one notification says the session is used up.
+        controller.replaceSnapshot(payload(100, session));
+        QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "session"}})["severity"].toInt(), 3);
+        QCOMPARE(alerts.size(), 2);
+        QVERIFY(alerts.last()[0].toString().endsWith("Limit reached"));
+        QCOMPARE(alerts.last()[2].toInt(), 3);
+        // An early reset of a depleted session is reported once, as available again.
+        controller.replaceSnapshot(payload(0, now.addSecs(5 * 3600).toString(Qt::ISODateWithMs)));
+        QCOMPARE(alerts.size(), 3);
+        QVERIFY(alerts.last()[0].toString().endsWith("Available again"));
+        QVERIFY(QFileInfo::exists(dir.filePath("settings.reminders.json")));
+        // A restarted desktop does not repeat what was already shown.
+        ControllerFixture restarted(dir.filePath("settings.json"), payload(40, session));
+        QSignalSpy restartedAlerts(restarted.notifications(), &Notifications::desktopNotification);
+        QTRY_COMPARE(restarted.providers().size(), 1);
+        QCOMPARE(restartedAlerts.size(), 0);
+    }
+    void recoveredProviderEvaluatesReminders() {
+        QTemporaryDir dir;
+        const auto now = QDateTime::currentDateTimeUtc();
+        const QJsonObject failed{{"provider_name", "Grok"}, {"error", "Sign in to Grok again."}, {"is_success", false},
+            {"needs_reauth", true}, {"buckets", QJsonArray{}}};
+        ControllerFixture controller(dir.filePath("settings.json"), QJsonDocument(QJsonArray{failed}).toJson());
+        QTRY_COMPARE(controller.providers().size(), 1);
+        QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
+        const QVariantMap window{{"count", 1}, {"valid_from", now.addSecs(-3600).toString(Qt::ISODateWithMs)},
+            {"expires_at", now.addSecs(2 * 3600).toString(Qt::ISODateWithMs)}};
+        const QVariantMap recovered{{"provider_name", "Grok"}, {"is_success", true}, {"needs_reauth", false},
+            {"buckets", QVariantList{}}, {"usage_details", QVariantMap{{"reset_inventory",
+                QVariantMap{{"state", "ok"}, {"reported_count", 1}, {"windows", QVariantList{window}}}}}}};
+        auto credentials = controller.findChild<CredentialService *>(); QVERIFY(credentials);
+        emit credentials->providerRecovered(recovered);
+        // A browser sign-in recovered between polls is checked at once, not at the next poll.
+        QCOMPARE(alerts.size(), 1);
+        QVERIFY(alerts.last()[0].toString().endsWith("Banked reset expiring"));
     }
     void earlyUsageResetNotificationsObserveSnapshotsAndConnectionBaselines() {
         QTemporaryDir dir;
@@ -500,13 +580,11 @@ private slots:
         replaceSnapshot(payload(0, now.addDays(7)));
         QCOMPARE(alerts.size(), 2);
         QCOMPARE(controller.notifications()->unreadCount(), 1);
-        QVERIFY(controller.saveSettings("remote", "https://different.example.test", "", 60, true,
-            "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", "https://different.example.test"}, {"interval", 60}, {"notifications", true}}).isEmpty());
         QCOMPARE(controller.notifications()->unreadCount(), 0);
         QCOMPARE(alerts.size(), 2);
         replaceSnapshot(payload(42, now.addDays(1)));
-        QVERIFY(controller.saveSettings("remote", "https://another.example.test", "", 60, true,
-            "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", "https://another.example.test"}, {"interval", 60}, {"notifications", true}}).isEmpty());
         replaceSnapshot(payload(0, now.addDays(7)));
         QCOMPARE(alerts.size(), 2);
         replaceSnapshot(payload(42, now.addSecs(600)));
@@ -1587,7 +1665,7 @@ private slots:
         Controller controller(dir.filePath("settings.json"), nullptr, true, {}, disabledCredentials());
         QSignalSpy alerts(controller.notifications(), &Notifications::desktopNotification);
         const QString url = QString("http://127.0.0.1:%1").arg(server.serverPort());
-        QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"interval", 60}, {"notifications", true}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
         auto concern = [&] { return controller.concern("Claude", QVariantMap{{"id", "session"}}); };
         QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 0);
@@ -1608,12 +1686,12 @@ private slots:
         QCOMPARE(event["target"].toString(), "meter_Claude_session");
         QVERIFY(event["title"].toString().contains("Critical"));
         controller.notifications()->endPresentation();
-        QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool());
         used = 80; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
         QCOMPARE(controller.notifications()->unreadCount(), 0);
-        QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", url}, {"interval", 60}, {"notifications", true}}).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(alerts.size(), 3);
         httpStatus = 503; controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "offline");
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
@@ -1647,7 +1725,7 @@ private slots:
             });
         });
         Controller controller(path, nullptr, true, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1/base/").arg(server.serverPort()), "test-secret", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", QString("http://127.0.0.1:%1/base/").arg(server.serverPort())}, {"token", "test-secret"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
         QVERIFY(received.startsWith("GET /base/api/v1/usage "));
         QVERIFY(HttpAssertions::hasHeader(received, "Authorization", "Bearer test-secret"));
@@ -1854,7 +1932,7 @@ private slots:
         saved.connectionMode = "remote"; saved.url = "https://example.test/base";
         QVERIFY(service.save(saved, true).isEmpty());
         Controller controller(path, nullptr, false, options, disabledCredentials());
-        QVERIFY(controller.saveSettings("local", "not a valid hidden URL", "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"url", "not a valid hidden URL"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QCOMPARE(controller.settings()["mode"].toString(), QString("local"));
         QCOMPARE(controller.settings()["url"].toString(), QString("https://example.test/base"));
         QCOMPARE(controller.backendUrl(), options.localUrl.toString());
@@ -1870,7 +1948,7 @@ private slots:
         options.probeTimeoutMs = 8000; options.readinessProbeTimeoutMs = 750;
         options.readinessIntervalMs = 50; options.readinessAttempts = 30; options.restartLimit = 2;
         Controller controller(dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
-        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(controller.state()["errorKind"].toString(), QString("restart"), 30000);
         QCOMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(!controller.state()["loading"].toBool());
@@ -1904,8 +1982,7 @@ private slots:
             }
         });
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(origin.serverPort()),
-            "synthetic-bearer", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", QString("http://127.0.0.1:%1").arg(origin.serverPort())}, {"token", "synthetic-bearer"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(controller.state()["message"].toString().contains("redirected"));
         QCOMPARE(destinationRequests, 0);
@@ -1924,8 +2001,7 @@ private slots:
             });
         });
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(origin.serverPort()),
-            "synthetic-bearer", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", QString("http://127.0.0.1:%1").arg(origin.serverPort())}, {"token", "synthetic-bearer"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(controller.state()["message"].toString().contains("redirected")); QCOMPARE(redirectedRequests, 0);
     }
@@ -1957,12 +2033,10 @@ private slots:
             });
         });
         Controller controller(dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
-        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(oldServer.serverPort()),
-            "old-token", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", QString("http://127.0.0.1:%1").arg(oldServer.serverPort())}, {"token", "old-token"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_VERIFY(held && oldRequest.contains("\r\n\r\n"));
         QVERIFY(HttpAssertions::hasHeader(oldRequest, "Authorization", "Bearer old-token"));
-        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(newServer.serverPort()),
-            "new-token", 60, false, "Codex", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "remote"}, {"url", QString("http://127.0.0.1:%1").arg(newServer.serverPort())}, {"token", "new-token"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
         QVERIFY(HttpAssertions::hasHeader(newRequest, "Authorization", "Bearer new-token"));
         QCOMPARE(controller.providers().first().toMap()["provider_name"].toString(), QString("Codex"));
@@ -1990,7 +2064,7 @@ private slots:
         options.probeTimeoutMs = 8000; options.readinessProbeTimeoutMs = 750;
         options.readinessIntervalMs = 50; options.readinessAttempts = 30;
         Controller controller(dir.filePath("settings.json"), nullptr, false, options, credentials);
-        QVERIFY(controller.saveSettings("local", "", "saved-token-must-not-be-used", 60, false, "Cursor", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"token", "saved-token-must-not-be-used"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         const auto providerNamed = [&](const QString &name) {
             for (const auto &provider : controller.providers())
                 if (provider.toMap()["provider_name"].toString() == name) return provider.toMap();
@@ -2021,11 +2095,9 @@ private slots:
         QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
         QCOMPARE(controller.backendUrl(), QStringLiteral("ssh://valid"));
         QVERIFY(controller.backendToken().isEmpty());
-        QVERIFY(controller.saveSettings(QStringLiteral("ssh"), QStringLiteral("https://unsaved.example.test"),
-            QStringLiteral("unsaved-hidden-token"), 60, false, QStringLiteral("Claude"), true, QStringLiteral("ssh://valid")).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", QStringLiteral("ssh")}, {"url", QStringLiteral("https://unsaved.example.test")}, {"token", QStringLiteral("unsaved-hidden-token")}, {"interval", 60}, {"notifications", false}, {"forgetToken", true}, {"sshUrl", QStringLiteral("ssh://valid")}}).isEmpty());
         QCOMPARE(controller.settings()["url"].toString(), saved.url);
-        QVERIFY(controller.saveSettings(QStringLiteral("remote"), QStringLiteral("https://http.example.test"), {},
-            60, false, QStringLiteral("Claude"), false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", QStringLiteral("remote")}, {"url", QStringLiteral("https://http.example.test")}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QCOMPARE(controller.backendToken(), QStringLiteral("saved-http-token"));
     }
     void freshSshConnectionDoesNotRequireHttpAddress()

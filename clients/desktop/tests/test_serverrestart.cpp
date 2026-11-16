@@ -82,7 +82,7 @@ private slots:
         QFile config(path); QVERIFY(config.open(QIODevice::WriteOnly)); config.close();
         qputenv("HEADROOM_FIXTURE_CONFIG_PATH", path.toUtf8());
         Controller controller(dir.filePath("settings.json"), nullptr, false, options(), TestUsage::disabledCredentials());
-        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings(QVariantMap{{"mode", "local"}, {"interval", 60}, {"notifications", false}}).isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(controller.state()["status"].toString(), QString("ready"), 15000);
         QCOMPARE(controller.providers().size(), 0);
         const auto originalPid = controller.ownedServerProcessId();

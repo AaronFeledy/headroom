@@ -92,8 +92,9 @@ configuration and the API, ChatGPT is named `Codex` and OpenCode Go is named
 `OpenCodeGo`.
 
 Click the tray icon to see your meters. Drag your main provider to the top to use
-it for the tray meter, and enable **Start Headroom when I sign in** in Settings
-if you'd like it available at login. Usage pace is an estimate; the
+it for the tray meter, or set **Tray icon** to **Nearest limit** in Settings
+to follow whichever provider is nearest its limit. Enable **Start Headroom when
+I sign in** in Settings if you'd like it available at login. Usage pace is an estimate; the
 [desktop guide](clients/desktop/README.md) explains the indicators and alerts.
 
 ### Multiple Claude accounts

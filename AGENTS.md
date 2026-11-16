@@ -210,6 +210,30 @@ normal Windows launch it may import
 `%APPDATA%\ClaudeUsageWidget\settings.json`; the retained WinForms project is not
 the default packaged UI.
 
+Desktop settings saves pass one named patch map to `Controller::saveSettings`
+(`mode`, `url`, `token`, `interval`, `notifications`, `forgetToken`, `sshUrl`,
+`shareBrowserSignIns`, `trayProvider`, `unusedReminders`): absent keys keep their
+values, and unknown keys or wrong types are rejected. An absent or empty token
+keeps the saved token only for the same address; never carry a token to another
+server. The tray shows the first provider (`trayProvider: first`, the default)
+or, with `constrained`, the provider whose most constrained fresh percent meter
+has the highest shared warning tier, then percent used, and its ring shows that
+meter. A challenger needs a higher tier or a five-point lead; failed, stale,
+status-only, and expired-window readings never rank or hold the tray, and the
+selection is kept during an outage. Desktop reminders fire once per boundary,
+24 hours and 1 hour ahead, for banked reset expiry (Claude `kinds[].expires_at`
+and currently valid Grok `reset_inventory` windows), unused weekly allowance
+(`unusedReminders`, default off), and a session used up or available again.
+They run after the banked-count observe and before early-reset detection, on
+snapshots, credential recoveries, and the 30-second tick while Ready, and make no
+requests. Disabled reminders are recorded silently so enabling never replays
+them. The ledger `<settings basename>.reminders.json` beside `settings.json`
+stores only a hashed scope (row key and account fingerprint), type, meter,
+boundary, and phase bits; it matches boundaries within 60 seconds, keeps two
+days and at most 512 records, is owner-only, replaces a corrupt file, leaves a
+newer schema untouched in memory only, and retries a failed write on the next
+evaluation. Reminders never consume resets or keep redemption handles.
+
 The API contract is frozen in `server/internal/usage`: optional strings and
 reset timestamps are explicit `null`; `is_success` is derived from
 `error == null`; `buckets` is always present and empty on error; `auth` is

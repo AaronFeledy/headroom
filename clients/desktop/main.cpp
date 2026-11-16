@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
     };
     QObject::connect(&attention, &TrayAttention::frameChanged, &app, renderTray);
     auto updateTray = [&] {
-        trayModel = TrayVisual::build(controller.state(), controller.providers(), controller.primary(),
+        trayModel = TrayVisual::build(controller.state(), controller.providers(), controller.trayProvider(), controller.trayMeter(),
             [&](const QString &provider, const QVariantMap &bucket) { return controller.concern(provider, bucket); });
         const int unread = controller.notifications()->unreadCount();
         trayModel.unread = unread > 0;
