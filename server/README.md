@@ -377,6 +377,12 @@ or mixed credential contexts use `null`; clients must not associate older meters
 with them. Failure responses still have `is_success: false`, empty `buckets`, and
 null `rate_limit_reset_credits`.
 
+`resets_at` stays fixed for a window. When a successful reading for the same
+row, `credential_epoch`, and meter reports a reset within a minute of the
+previous one, the server keeps the previous time; a larger change is a new
+window. Clients can therefore compare `resets_at` exactly. A `null` epoch never
+inherits an older reset.
+
 `fetch_status.diagnostics` optionally describes the last attempt: nullable
 `operation` (`usage`, `reset_status`, `profile`), `http_status`, `retry_after`,
 `cooldown_until`, and `cooldown_source` (`retry_after`, `backoff`), plus
@@ -761,11 +767,6 @@ and accepts either kind, told apart by the SQLite file header; an explicit
 database is read without the migration check. For a service or container, point
 it at a small file holding only the key, as shown in the
 [systemd sample](#raspberry-pi-systemd-sample).
-
-When OpenCode Go reports a window as seconds until its reset, each poll would
-produce a slightly different `resets_at`. The provider keeps the reset time it
-first reported for that window while later polls land within a minute of it, for
-the same key, so clients see one stable window for warning tiers and reminders.
 
 ## HTTPS identity and verification
 

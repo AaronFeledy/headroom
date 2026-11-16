@@ -13,6 +13,9 @@ func (s *providerState) normalize(data usage.UsageData, err error) usage.UsageDa
 	}
 	if err == nil && data.Error == nil {
 		s.stampIdentity(&data)
+		if s.hasLastGood && sameCredentialEpoch(s.lastGood.CredentialEpoch, data.CredentialEpoch) {
+			data = keepWindowResets(s.lastGood, data)
+		}
 		s.lastGood = copyUsageData(data)
 		s.hasLastGood = true
 		return copyUsageData(data)

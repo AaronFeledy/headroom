@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -40,11 +39,6 @@ type Provider struct {
 	httpClient  *http.Client
 	usageURL    string
 	now         func() time.Time
-
-	// Reset times last reported per bucket, for the credential in resetsEpoch.
-	resetsMu    sync.Mutex
-	resetsEpoch string
-	resets      map[string]time.Time
 }
 
 func NewProvider(opts Options) *Provider {
@@ -148,20 +142,9 @@ func (p *Provider) fetchUsage(ctx context.Context, data usage.UsageData, token s
 	if len(body) > maxUsageResponseBytes {
 		return responseChanged(data), nil
 	}
-	p.resetsMu.Lock()
-	defer p.resetsMu.Unlock()
-	if epoch := *data.CredentialEpoch; epoch != p.resetsEpoch {
-		p.resetsEpoch, p.resets = epoch, nil
-	}
-	buckets, err := decodeUsage(body, p.now(), p.resets)
+	buckets, err := decodeUsage(body, p.now())
 	if err != nil {
 		return responseChanged(data), nil
-	}
-	p.resets = make(map[string]time.Time, len(buckets))
-	for _, bucket := range buckets {
-		if bucket.ResetsAt != nil {
-			p.resets[bucket.ID] = *bucket.ResetsAt
-		}
 	}
 	return data.WithBuckets(buckets), nil
 }

@@ -189,11 +189,8 @@ write, refresh, or rotate that store. Each poll makes one
 redirect to another origin. Reported percentages are already 0-100 and are never
 scaled. Its `session` (`5-Hour`), `weekly`, and `monthly` meters carry no
 reported window start, so clients assume five hours, seven days, and the calendar
-month ending at the reset. A reset derived from `resetInSec` keeps the first
-reported time for the same bucket and credential while later polls land within a
-minute of it, so clients see one window. It has no browser-credential push,
-credential route, SSH forward, usage details, or resets; do not add them without
-an explicit task.
+month ending at the reset. It has no browser-credential push, credential route,
+SSH forward, usage details, or resets; do not add them without an explicit task.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider
@@ -224,6 +221,10 @@ through `usage.FromBuckets` / `WithBuckets`, which normalize order, remove
 duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
 `credits`, `weekly`, `weekly_<slug>`, `monthly`, `extra`, and `on_demand`. Cursor Grok Bot
 is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
+The poller keeps `resets_at` stable for a window. A successful reading whose
+reset lands within a minute of the previous reading's for the same provider row,
+non-null credential epoch, and meter keeps the previous time, so clients compare
+it exactly and any change is a new window.
 
 Additive `usage_details` and nullable bucket `measurement` are defined in
 `server/internal/usage/details.go` and `types.go`. Preserve legacy fields, stable

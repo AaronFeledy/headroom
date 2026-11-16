@@ -30,7 +30,7 @@ type usageWindow struct {
 // used-percent in 0..100 units, so a reported 0.5 is half a percent and is
 // never multiplied. A missing rolling window is a parse failure; weekly and
 // monthly are optional and simply omit their bucket.
-func decodeUsage(body []byte, now time.Time, reported map[string]time.Time) ([]usage.Bucket, error) {
+func decodeUsage(body []byte, now time.Time) ([]usage.Bucket, error) {
 	var envelope usageEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode OpenCode Go usage: %w", err)
@@ -51,7 +51,7 @@ func decodeUsage(body []byte, now time.Time, reported map[string]time.Time) ([]u
 		if window.value == nil {
 			continue
 		}
-		bucket, err := windowBucket(window.value, window.id, window.label, now, reported)
+		bucket, err := windowBucket(window.value, window.id, window.label, now)
 		if err != nil {
 			return nil, err
 		}
@@ -60,11 +60,7 @@ func decodeUsage(body []byte, now time.Time, reported map[string]time.Time) ([]u
 	return buckets, nil
 }
 
-// relativeResetTolerance absorbs the drift of a reset computed from
-// resetInSec on each poll; a larger change is a new window.
-const relativeResetTolerance = time.Minute
-
-func windowBucket(window *usageWindow, id string, label string, now time.Time, reported map[string]time.Time) (usage.Bucket, error) {
+func windowBucket(window *usageWindow, id string, label string, now time.Time) (usage.Bucket, error) {
 	if window == nil || window.Percent == nil {
 		return usage.Bucket{}, errUsageResponse
 	}
@@ -82,11 +78,6 @@ func windowBucket(window *usageWindow, id string, label string, now time.Time, r
 	case window.ResetInSec != nil:
 		seconds := math.Max(0, *window.ResetInSec)
 		reset := now.Add(time.Duration(seconds * float64(time.Second))).UTC()
-		// Clients key warning state and reminders to the reset time, so the
-		// same window keeps the reset it was first reported with.
-		if previous, ok := reported[id]; ok && reset.Sub(previous).Abs() <= relativeResetTolerance {
-			reset = previous
-		}
 		bucket.ResetsAt = &reset
 	case window.ResetsAt != "":
 		bucket.ResetsAt = parseResetTime(window.ResetsAt)
