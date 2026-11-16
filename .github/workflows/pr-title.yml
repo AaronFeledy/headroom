@@ -1,0 +1,46 @@
+name: PR title
+
+# Squash merges use the pull request title as the commit header, and the
+# Release workflow derives the next version and release notes from those headers.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-commit:
+    name: Conventional Commit title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read # Read the pull request title.
+    steps:
+      - uses: amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6 # v6.1.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Scopes already used on main, plus Renovate's `deps`. Add a scope
+          # here only when none of these fits.
+          scopes: |
+            api
+            auth
+            claude
+            deps
+            desktop
+            install
+            manager
+            notifications
+            poller
+            providers
+            repo
+            resets
+            server
+            streamdeck
+            updates
+            usage
+            windows

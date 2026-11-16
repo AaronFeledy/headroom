@@ -338,7 +338,18 @@ falls back to the patch default. Squash-merge PRs with a
 `type(scope): summary (#PR)` subject, using an existing scope such as `desktop`,
 `server`, `claude`, or `manager`, and a short prose body instead of the
 branch's commit list. Never write `BREAKING CHANGE` in a body unless the release
-is intentionally major.
+is intentionally major. The `PR title` workflow (`.github/workflows/pr-title.yml`)
+checks that header and lists the allowed scopes; add one there only when none fits.
+
+Workflows pin every action to a full commit SHA with its release as a trailing
+comment, and call this repository's reusable workflows with `$/` self-repository
+references. Checkouts set `persist-credentials: false` except in the release
+publish job, which pushes the tag. zizmor (`.github/workflows/zizmor.yml`, with
+ignores in `.github/zizmor.yml`) audits workflow changes and runs weekly.
+Renovate (`.github/renovate.json`) proposes pin and dependency updates weekly
+once a release is seven days old, and security fixes sooner. It groups Go
+toolchain references, leaves runner images alone, skips the pinned
+`proper-lockfile` fixture, and auto-merges nothing.
 
 The published v2.0.0 updater predates the repository rename and rejects the old
 GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
@@ -372,6 +383,8 @@ home and user profile; keep new tests on temp paths.
 The complete CI verification inventory, from the repository root:
 
 ```bash
+zizmor .github/workflows/
+
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build clients/desktop/build --parallel
 ctest --test-dir clients/desktop/build --output-on-failure -E headroom-reset-prohibited-tests

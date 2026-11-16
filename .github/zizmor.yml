@@ -1,0 +1,6 @@
+rules:
+  superfluous-actions:
+    ignore:
+      # A rerun of the publish job must update the existing release for its
+      # tag, which action-gh-release does and `gh release create` doesn't.
+      - release.yml

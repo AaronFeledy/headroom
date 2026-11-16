@@ -186,6 +186,8 @@ an HTTPS server with a verified certificate, or an SSH connection. See the
 - **Need to report a problem?** [Open an issue](https://github.com/AaronFeledy/headroom/issues)
   with your OS, Headroom version, and redacted diagnostics. Never include tokens,
   provider credentials, or browser cookies.
+- **Found a security vulnerability?** Report it privately as described in the
+  [security policy](SECURITY.md), not in a public issue.
 
 ## Documentation
 
