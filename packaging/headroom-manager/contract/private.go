@@ -70,6 +70,18 @@ func WritePrivateJSON(installRoot, relativeName string, value any) error {
 }
 
 func ReadPrivateJSON(installRoot, relativeName string, value any) error {
+	return readPrivateJSON(installRoot, relativeName, value, true)
+}
+
+// readPrivateJSONRelaxed decodes a private file a later release may extend, so
+// an earlier release can still read it. Only unknown fields are tolerated:
+// duplicate keys, trailing data, ownership, permissions, and size limits are
+// enforced exactly as for every other private file.
+func readPrivateJSONRelaxed(installRoot, relativeName string, value any) error {
+	return readPrivateJSON(installRoot, relativeName, value, false)
+}
+
+func readPrivateJSON(installRoot, relativeName string, value any, strictFields bool) error {
 	root, path, err := privateJSONPath(installRoot, relativeName)
 	if err != nil {
 		return err
@@ -91,7 +103,9 @@ func ReadPrivateJSON(installRoot, relativeName string, value any) error {
 		return err
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
+	if strictFields {
+		decoder.DisallowUnknownFields()
+	}
 	if decoder.Decode(value) != nil || ensureEOF(decoder) != nil {
 		return errors.New("private JSON is invalid")
 	}
