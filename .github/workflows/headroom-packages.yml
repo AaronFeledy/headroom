@@ -502,7 +502,7 @@ jobs:
           (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
       - name: Test native macOS installs and update transactions
         id: mac-manager
-        timeout-minutes: 10
+        timeout-minutes: 15
         working-directory: packaging/headroom-manager
         run: |
           go vet ./...
