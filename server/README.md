@@ -555,6 +555,7 @@ providers:
     #   - id: work                                 # required, ^[a-z0-9][a-z0-9_-]{0,31}$
     #     label: Work                              # optional, default = id (1-32 chars)
     #     config_dir: ~/.claude-work               # required, absolute or ~/
+    #     # deprecated 3.5 spelling: credentials_path: ~/.claude-work/.credentials.json
     #     enabled: true                            # optional, default true
   codex:
     enabled: true
@@ -696,6 +697,9 @@ default Claude file while the default account is enabled. File access and
 uniqueness checks use cleaned paths. Symlinked directories and symlinks or hard
 links to the same existing credentials file count as duplicates; a missing
 directory or file is valid configuration.
+For compatibility, an extra account that sets only
+`credentials_path: <dir>/.credentials.json` (the 3.5 spelling) loads as
+`config_dir: <dir>` with a deprecation warning; write `config_dir` instead.
 
 In `GET /api/v1/usage`, account rows follow all default rows and carry
 `provider_type` `Claude` and `account` `{"id":"work","label":"Work"}`. Request one

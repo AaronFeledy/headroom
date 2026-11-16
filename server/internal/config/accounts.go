@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,7 +13,8 @@ import (
 
 var accountIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
-func validateAccounts(cfg Config, goos, dir string) error {
+func validateAccounts(cfg Config, goos string, opts LoadOptions) error {
+	validator := accountValidator{logger: opts.Logger}
 	for name, provider := range cfg.Providers {
 		if len(provider.Accounts) == 0 {
 			continue
@@ -22,7 +24,7 @@ func validateAccounts(cfg Config, goos, dir string) error {
 		}
 		seenIDs := map[string]int{}
 		for i := range provider.Accounts {
-			if err := validateAccountEntry(name, i, &provider); err != nil {
+			if err := validator.validateEntry(name, i, &provider); err != nil {
 				return err
 			}
 			id := provider.Accounts[i].ID
@@ -37,10 +39,14 @@ func validateAccounts(cfg Config, goos, dir string) error {
 			}
 		}
 	}
-	return validateAccountCredentialUniqueness(cfg, goos, dir)
+	return validateAccountCredentialUniqueness(cfg, goos, opts.Dir)
 }
 
-func validateAccountEntry(name string, index int, provider *ProviderConfig) error {
+type accountValidator struct {
+	logger *slog.Logger
+}
+
+func (v accountValidator) validateEntry(name string, index int, provider *ProviderConfig) error {
 	prefix := fmt.Sprintf("providers.%s.accounts[%d]", name, index)
 	account := &provider.Accounts[index]
 	if !accountIDPattern.MatchString(account.ID) {
@@ -50,7 +56,17 @@ func validateAccountEntry(name string, index int, provider *ProviderConfig) erro
 		return err
 	}
 	if strings.TrimSpace(account.ConfigDir) == "" {
-		return fmt.Errorf("%s: config_dir is required: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountDir)
+		if account.legacyCredentialsPath == "" {
+			return fmt.Errorf("%s: config_dir is required: %w: %w", prefix, ErrInvalidConfig, ErrInvalidAccountDir)
+		}
+		dir, err := legacyAccountConfigDir(prefix, account.legacyCredentialsPath)
+		if err != nil {
+			return err
+		}
+		account.ConfigDir = dir
+		logAccountWarning(v.logger, account.ID,
+			"claude account uses deprecated credentials_path", "config_dir: "+dir)
+		return nil
 	}
 	expanded, err := expandHomePath(account.ConfigDir)
 	if err != nil {
@@ -61,6 +77,11 @@ func validateAccountEntry(name string, index int, provider *ProviderConfig) erro
 	}
 	// Keep the raw expanded spelling (trailing slash included) for Keychain and commands.
 	account.ConfigDir = expanded
+	if account.legacyCredentialsPath != "" && !legacyCredentialsMatchesConfigDir(account.legacyCredentialsPath, account.ConfigDir) {
+		logAccountWarning(v.logger, account.ID,
+			"claude account credentials_path is ignored because config_dir is set",
+			"remove credentials_path or make it <config_dir>/.credentials.json")
+	}
 	return nil
 }
 

@@ -149,7 +149,6 @@ func Test_Load_rejects_invalid_accounts(t *testing.T) {
 		{"empty-dir", "providers:\n  claude:\n    accounts:\n      - id: work\n        config_dir: \"\"\n"},
 		{"whitespace-dir", "providers:\n  claude:\n    accounts:\n      - id: work\n        config_dir: \"   \"\n"},
 		{"relative-dir", "providers:\n  claude:\n    accounts:\n      - id: work\n        config_dir: relative/side\n"},
-		{"legacy-credentials-path", "providers:\n  claude:\n    accounts:\n      - id: work\n        credentials_path: ~/.claude-work/.credentials.json\n"},
 		{"dup-default-dir", "providers:\n  claude:\n    enabled: true\n    accounts:\n      - id: work\n        config_dir: ~/.claude\n"},
 		{"dup-default-explicit-file", "providers:\n  claude:\n    enabled: true\n    credentials_path: ~/.claude-alt/.credentials.json\n    accounts:\n      - id: work\n        config_dir: ~/.claude-alt\n"},
 	}
@@ -163,9 +162,6 @@ func Test_Load_rejects_invalid_accounts(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), "providers.") {
 				t.Fatalf("error should name providers path: %v", err)
-			}
-			if tt.name == "legacy-credentials-path" && !strings.Contains(err.Error(), "config_dir is required") {
-				t.Fatalf("legacy credentials_path error = %v, want config_dir is required", err)
 			}
 		})
 	}
