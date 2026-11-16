@@ -377,6 +377,12 @@ or mixed credential contexts use `null`; clients must not associate older meters
 with them. Failure responses still have `is_success: false`, empty `buckets`, and
 null `rate_limit_reset_credits`.
 
+`resets_at` stays fixed for a window. When a successful reading for the same
+row, `credential_epoch`, and meter reports a reset within a minute of the
+previous one, the server keeps the previous time; a larger change is a new
+window. Clients can therefore compare `resets_at` exactly. A `null` epoch never
+inherits an older reset.
+
 `fetch_status.diagnostics` optionally describes the last attempt: nullable
 `operation` (`usage`, `reset_status`, `profile`), `http_status`, `retry_after`,
 `cooldown_until`, and `cooldown_source` (`retry_after`, `backoff`), plus

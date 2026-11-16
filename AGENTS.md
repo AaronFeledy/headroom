@@ -245,6 +245,10 @@ through `usage.FromBuckets` / `WithBuckets`, which normalize order, remove
 duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
 `credits`, `weekly`, `weekly_<slug>`, `monthly`, `extra`, and `on_demand`. Cursor Grok Bot
 is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
+The poller keeps `resets_at` stable for a window. A successful reading whose
+reset lands within a minute of the previous reading's for the same provider row,
+non-null credential epoch, and meter keeps the previous time, so clients compare
+it exactly and any change is a new window.
 
 Additive `usage_details` and nullable bucket `measurement` are defined in
 `server/internal/usage/details.go` and `types.go`. Preserve legacy fields, stable
