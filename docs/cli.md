@@ -137,7 +137,8 @@ the server's `auth` metadata.
 ## Install without a desktop
 
 CLI-only packages contain the usage client, server, and package manager without
-Qt. They support Windows x64/ARM64, Linux x86_64/ARM64, and macOS Intel/Apple Silicon.
+Qt. They support Windows x64/ARM64, Linux x86_64/ARM64, and macOS 13+ on Intel and
+Apple Silicon.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh -s -- --cli

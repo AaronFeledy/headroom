@@ -2,6 +2,8 @@ module github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager
 
 go 1.25.0
 
+toolchain go1.27.4
+
 require (
 	golang.org/x/sys v0.36.0
 	golang.org/x/term v0.18.0

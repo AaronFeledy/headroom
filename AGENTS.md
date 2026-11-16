@@ -24,7 +24,7 @@ branding cleanup.
   sources, package contract, and fixtures.
 - `clients/windows/` — retained .NET 8 WinForms reference/rollback client and the
   Windows credential-helper sources used by Headroom packages.
-- `server/` — Go 1.25 usage API, provider integrations, configuration, and
+- `server/` — Go usage API, provider integrations, configuration, and
   Dockerfile. `server/app` is the shared runtime used by `headroom serve` and
   the retained `usage-server` shim.
 - `tests/windows/` — Linux-runnable C# lifecycle and browser fixtures.
@@ -379,6 +379,16 @@ once a release is seven days old, and security fixes sooner. It groups Go
 toolchain references, leaves runner images alone, skips the pinned
 `proper-lockfile` fixture, and auto-merges nothing.
 
+Both Go modules keep `go 1.25.0` as their minimum language version, so a
+toolchain update doesn't change Go's GODEBUG behavior defaults, and name the
+build Go in a `toolchain` line. Every CI `setup-go` reads that line from `go.mod`,
+and the Docker build image uses the same Go release; Renovate updates them
+together. The CLI package baseline is derived from the build Go. Go 1.27 needs
+macOS 13 or later, which CLI packages therefore require. govulncheck
+(`.github/workflows/govulncheck.yml`) checks both modules for Linux, Windows, and
+macOS on Go changes and weekly; Renovate updates its version through the
+workflow's `# renovate:` comment.
+
 The published v2.0.0 updater predates the repository rename and rejects the old
 GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
 users to rerun a current external installer once; builds after v2.0.0 use the
@@ -425,12 +435,14 @@ go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
 go vet ./...
 go build ./...
 go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 cd ../../server
 go test -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
 go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ClaudeResetEndpoint|ConsumeResetCredit' ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 cd ..
 dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release -r win-x64

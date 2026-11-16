@@ -1,0 +1,59 @@
+name: Go vulnerabilities
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'packaging/headroom-manager/**'
+      - '.github/workflows/govulncheck.yml'
+  pull_request:
+    branches: [main, 'codex/**']
+    paths:
+      - 'server/**'
+      - 'packaging/headroom-manager/**'
+      - '.github/workflows/govulncheck.yml'
+  # New advisories can affect unchanged code, including the Go standard library.
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Check out the code.
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [server, packaging/headroom-manager]
+    env:
+      # renovate: datasource=go depName=golang.org/x/vuln
+      GOVULNCHECK_VERSION: v1.9.0
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: false
+      - name: Install govulncheck
+        run: go install "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION"
+      # Platform-specific files are only analyzed for their own GOOS.
+      - name: Check Linux build
+        run: GOOS=linux govulncheck ./...
+      - name: Check Windows build
+        run: GOOS=windows govulncheck ./...
+      - name: Check macOS build
+        run: GOOS=darwin govulncheck ./...

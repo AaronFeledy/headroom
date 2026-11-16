@@ -5,7 +5,8 @@
     ":semanticCommits",
     ":enableVulnerabilityAlerts",
     "helpers:pinGitHubActionDigests",
-    "docker:pinDigests"
+    "docker:pinDigests",
+    "customManagers:githubActionsVersions"
   ],
   "timezone": "America/Chicago",
   "schedule": ["before 6am on monday"],
