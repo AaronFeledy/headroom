@@ -247,6 +247,15 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	if len(request.ManagedServiceArguments) != 0 && !seenRole[RoleManagedServer] {
 		return PreparedApply{}, errors.New("managed service arguments have no participant")
 	}
+
+	// The candidate must accept the running managed serve's configuration
+	// before this transaction can stop that service. Nothing is stopped or
+	// changed when the staged CLI rejects it.
+	if hasManagedService(request) {
+		if err = checkStagedServerConfig(stage, manifest, request); err != nil {
+			return PreparedApply{}, err
+		}
+	}
 	if request.OwnedChildPID > 0 {
 		request.OwnedChildExecutable, err = normalizeAbsolutePath(request.OwnedChildExecutable, "owned child executable")
 		if err != nil {
@@ -1687,13 +1696,13 @@ func launchManagedService(request ApplyRequest, state InstallState, onLaunch fun
 		_, _ = process.Wait()
 		return err
 	}
-	done := make(chan error, 1)
-	go func() { _, waitErr := process.Wait(); done <- waitErr }()
+	done := make(chan processExit, 1)
+	go func() { state, waitErr := process.Wait(); done <- processExit{state, waitErr} }()
 	deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
 	for time.Now().Before(deadline) {
 		select {
-		case waitErr := <-done:
-			return fmt.Errorf("managed service exited during startup: %v", waitErr)
+		case exit := <-done:
+			return fmt.Errorf("managed service exited during startup: %v", exit)
 		default:
 		}
 		ready, readyErr := ReadManagedService(request.InstallRoot)

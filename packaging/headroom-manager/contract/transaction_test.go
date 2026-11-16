@@ -394,7 +394,7 @@ func TestTransactionalApplyRollsBackAfterCandidateCrash(t *testing.T) {
 	authorizePreparedApply(t, prepared)
 	_ = current.Process.Kill()
 	_, _ = current.Process.Wait()
-	if err = <-done; err == nil || !strings.Contains(err.Error(), "exited before readiness") {
+	if err = <-done; err == nil || !strings.Contains(err.Error(), "exited before readiness") || !strings.Contains(err.Error(), "exit status 8") {
 		t.Fatalf("candidate crash = %v", err)
 	}
 	inspection := InspectInstall(installRoot)

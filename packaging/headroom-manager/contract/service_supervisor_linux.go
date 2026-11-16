@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +89,40 @@ func startManagedServiceSupervisor(supervisor string) error {
 	}
 	_, err := runUserSystemctl("start", managedUserUnit)
 	return err
+}
+
+// supervisedManagedServiceFailure reports a failed or exited unit so a
+// restart helper can stop waiting instead of timing out. It never reads
+// journal contents; the caller points the operator at journalctl.
+func supervisedManagedServiceFailure(supervisor string) (error, bool) {
+	if supervisor != managedSystemdUser {
+		return nil, false
+	}
+	output, err := runUserSystemctl("show", "--property", "ActiveState", "--property", "Result", "--property", "ExecMainStatus", managedUserUnit)
+	if err != nil {
+		return nil, false
+	}
+	fields := map[string]string{}
+	var lines []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+		if key, value, ok := strings.Cut(line, "="); ok {
+			fields[key] = value
+		}
+	}
+	active, result, status := fields["ActiveState"], fields["Result"], fields["ExecMainStatus"]
+	if active == "" && len(lines) >= 3 {
+		// Tolerate value-only output used by supervisors and fixtures.
+		active, result, status = lines[0], lines[1], lines[2]
+	}
+	if active != "failed" && active != "inactive" {
+		return nil, false
+	}
+	return fmt.Errorf("%s exited before reporting readiness (%s/%s); see journalctl --user -u %s", managedUserUnit, result, status, managedUserUnit), true
 }
 
 func managedServiceSupervisorPID(supervisor string) (int, error) {

@@ -10,7 +10,7 @@ import (
 type readinessObservation struct {
 	path     string
 	expected readinessMarker
-	exited   <-chan error
+	exited   <-chan processExit
 }
 
 func (observation readinessObservation) wait(ctx context.Context) error {
@@ -18,8 +18,8 @@ func (observation readinessObservation) wait(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-observation.exited:
-			return fmt.Errorf("replacement app exited before readiness: %v", err)
+		case exit := <-observation.exited:
+			return fmt.Errorf("replacement app exited before readiness: %v", exit)
 		default:
 		}
 		data, err := readBoundedFile(observation.path, 4096)
@@ -37,9 +37,9 @@ func (observation readinessObservation) wait(ctx context.Context) error {
 					case <-ctx.Done():
 						timer.Stop()
 						return ctx.Err()
-					case err := <-observation.exited:
+					case exit := <-observation.exited:
 						timer.Stop()
-						return fmt.Errorf("replacement app exited during readiness: %v", err)
+						return fmt.Errorf("replacement app exited during readiness: %v", exit)
 					case <-timer.C:
 					}
 					got, captureErr := captureProcessToken(marker.PID, marker.Executable)

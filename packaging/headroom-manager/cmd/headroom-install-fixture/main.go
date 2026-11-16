@@ -52,6 +52,16 @@ func main() {
 	if err != nil {
 		os.Exit(2)
 	}
+	for _, argument := range os.Args[1:] {
+		if argument != "--check-config" {
+			continue
+		}
+		if os.Getenv("HEADROOM_FIXTURE_CHECK_CONFIG_FAIL_VERSION") == version {
+			fmt.Fprintln(os.Stderr, "headroom: providers.claude.accounts[0]: config_dir is required")
+			os.Exit(1)
+		}
+		return
+	}
 	info := primaryInfo{Schema: 1, Product: "Headroom", OK: true, Version: version, PID: os.Getpid(), Executable: executable, InstallRoot: root, Ready: true,
 		Busy: os.Getenv("HEADROOM_FIXTURE_BUSY") == "1"}
 	primary := filepath.Join(root, "fixture-primary.json")
