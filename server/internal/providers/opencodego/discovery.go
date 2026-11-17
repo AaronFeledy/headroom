@@ -16,14 +16,14 @@ const (
 )
 
 type credentialSource struct {
-	path string
-	name string
+	path   string
+	suffix string
 }
 
 type credentialGroup struct {
 	databasePath string
 	authPath     string
-	name         string
+	suffix       string
 }
 
 func localGroups(environment winprofile.Environment) []credentialGroup {
@@ -31,7 +31,7 @@ func localGroups(environment winprofile.Environment) []credentialGroup {
 	if directory == "" {
 		return nil
 	}
-	group := credentialGroup{authPath: filepath.Join(directory, "auth.json"), name: "OpenCode Go CLI"}
+	group := credentialGroup{authPath: filepath.Join(directory, "auth.json")}
 	if database, ok := databasePath(environment, directory); ok {
 		group.databasePath = database
 	}
@@ -55,7 +55,7 @@ func crossKernelGroups(environment winprofile.Environment) []credentialGroup {
 		groups = append(groups, credentialGroup{
 			databasePath: filepath.Join(directory, "opencode.db"),
 			authPath:     filepath.Join(directory, "auth.json"),
-			name:         "OpenCode Go CLI" + suffix,
+			suffix:       suffix,
 		})
 	}
 	return groups

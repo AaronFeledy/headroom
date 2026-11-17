@@ -18,6 +18,8 @@ const (
 	providerName          = "OpenCodeGo"
 	defaultUsageURL       = "https://opencode.ai/zen/go/v1/usage"
 	signInCommandText     = "opencode auth login"
+	consoleSignInCommand  = "opencode console login"
+	consoleSwitchCommand  = "opencode console switch"
 	userAgent             = "ClaudeUsageWidget"
 	defaultHTTPTimeout    = 10 * time.Second
 	maxUsageResponseBytes = 256 * 1024
@@ -80,11 +82,25 @@ func (p *Provider) Name() string { return providerName }
 func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr error) {
 	state := "signed_out"
 	var source *usage.AuthSource
+	var command *string
+	var checked []usage.AuthChecked
 	defer func() {
 		if result.NeedsReauth && source != nil {
 			state = "expired"
 		}
 		result.Auth = usage.NewAuth(providerName, state, source)
+		result.Auth.Checked = checked
+		// Unreadable credentials carry no command; guidance and selected
+		// credentials replace NewAuth's default with the matching one.
+		if command == nil {
+			result.Auth.SignInCommand = nil
+			result.ReauthCommand = nil
+			return
+		}
+		if result.Auth.SignInCommand != nil {
+			result.Auth.SignInCommand = command
+		}
+		result.ReauthCommand = command
 	}()
 	data := usage.UsageData{
 		ProviderName:   providerName,
@@ -92,27 +108,40 @@ func (p *Provider) Fetch(ctx context.Context) (result usage.UsageData, fetchErr 
 		SecondaryLabel: "Weekly",
 		ReauthCommand:  strPtr(signInCommandText),
 	}
-	loaded := loadCredentials(ctx, p.configured, p.environment, p.now())
-	source = loaded.source
-	creds, err := loaded.credential, loaded.err
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return data, err
+	loaded := p.loadCredentials(ctx)
+	source = loaded.authSource()
+	command = loaded.signInCommand()
+	checked = loaded.checked
+	if loaded.err != nil {
+		if errors.Is(loaded.err, context.Canceled) || errors.Is(loaded.err, context.DeadlineExceeded) {
+			return data, loaded.err
 		}
-		return credentialError(data, err), nil
+		return credentialError(data, loaded), nil
 	}
+	creds := loaded.credential
 	if !creds.expiresAt.IsZero() && !p.now().Before(creds.expiresAt) {
-		return credentialError(data, errCredentialExpired), nil
+		loaded.err = errCredentialExpired
+		return credentialError(data, loaded), nil
 	}
 	state = "signed_in"
 	// Clients keep last-good meters through a failed poll only while this
 	// identity matches, so it is set before the request can fail.
-	data.CredentialEpoch = usage.CredentialEpoch(providerName, source.Name, creds.token)
-	return p.fetchUsage(ctx, data, creds.token)
+	data.CredentialEpoch = credentialEpoch(source, creds)
+	return p.fetchUsage(ctx, data, loaded)
 }
 
-func (p *Provider) fetchUsage(ctx context.Context, data usage.UsageData, token string) (usage.UsageData, error) {
-	response, err := p.send(ctx, token)
+// credentialEpoch binds cached meters to the sign-in and, for console sign-ins,
+// the selected organization.
+func credentialEpoch(source *usage.AuthSource, creds credential) *string {
+	parts := []string{providerName, source.Name, creds.token}
+	if creds.orgID != "" {
+		parts = append(parts, creds.orgID)
+	}
+	return usage.CredentialEpoch(parts...)
+}
+
+func (p *Provider) fetchUsage(ctx context.Context, data usage.UsageData, loaded credentialResult) (usage.UsageData, error) {
+	response, err := p.send(ctx, loaded.credential)
 	if err != nil {
 		return data, usage.TransportFailure(err)
 	}
@@ -120,7 +149,11 @@ func (p *Provider) fetchUsage(ctx context.Context, data usage.UsageData, token s
 		if err := drainAndClose(response); err != nil {
 			return data, err
 		}
-		return reauth(data, "OpenCode Go auth expired. Run `opencode auth login` again."), nil
+		message := keyExpiredMessage
+		if loaded.kind.console() {
+			message = fmt.Sprintf(consoleRejectedFormat, loaded.kind.signInCommand())
+		}
+		return reauth(data, message), nil
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		data.FetchFailure = usage.HTTPFailure(response)
@@ -149,12 +182,15 @@ func (p *Provider) fetchUsage(ctx context.Context, data usage.UsageData, token s
 	return data.WithBuckets(buckets), nil
 }
 
-func (p *Provider) send(ctx context.Context, token string) (*http.Response, error) {
+func (p *Provider) send(ctx context.Context, creds credential) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.usageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create OpenCode Go request: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Authorization", "Bearer "+creds.token)
+	if creds.orgID != "" {
+		request.Header.Set("x-opencode-org-id", creds.orgID)
+	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
 	response, err := p.httpClient.Do(request)
@@ -177,20 +213,34 @@ func keepCredentialHost(request *http.Request, via []*http.Request) error {
 	return nil
 }
 
-func credentialError(data usage.UsageData, err error) usage.UsageData {
+// credentialError explains a load failure. Expired, invalid, and ambiguous
+// results keep the source and kind command; signed-out guidance names its own
+// recovery step; an unreadable result keeps no source or command.
+func credentialError(data usage.UsageData, loaded credentialResult) usage.UsageData {
 	data.FetchFailure = &usage.FetchFailure{Kind: usage.FailureOther}
+	command := loaded.kind.signInCommand()
+	var origin *consoleOriginError
 	switch {
-	case errors.Is(err, errCredentialExpired):
-		return reauth(data, "OpenCode Go auth expired. Run `opencode auth login` again.")
-	case errors.Is(err, errCredentialAmbiguous):
-		return reauth(data, "OpenCode Go credentials are ambiguous. Run `opencode auth login` again.")
-	case errors.Is(err, errCredentialInvalid):
-		return reauth(data, "OpenCode Go credentials are invalid. Run `opencode auth login` again.")
-	case errors.Is(err, errCredentialUnreadable):
+	case errors.Is(loaded.err, errCredentialUnreadable):
 		data.Error = strPtr("OpenCode Go credentials could not be read. Will retry.")
 		return data
+	case errors.Is(loaded.err, errCredentialExpired):
+		if loaded.kind.console() {
+			return reauth(data, fmt.Sprintf(consoleExpiredFormat, command))
+		}
+		return reauth(data, keyExpiredMessage)
+	case errors.Is(loaded.err, errCredentialAmbiguous):
+		return reauth(data, fmt.Sprintf(ambiguousCredentialsFormat, command))
+	case errors.Is(loaded.err, errCredentialInvalid):
+		return reauth(data, fmt.Sprintf(invalidCredentialsFormat, command))
+	case errors.Is(loaded.guidance, errConsoleNoWorkspace):
+		data.Error = strPtr(noWorkspaceMessage)
+		return data
+	case errors.As(loaded.guidance, &origin):
+		data.Error = strPtr(fmt.Sprintf(otherOriginFormat, origin.host()))
+		return data
 	default:
-		data.Error = strPtr("OpenCode Go is not signed in. Run `opencode auth login`.")
+		data.Error = strPtr(notSignedInMessage)
 		return data
 	}
 }

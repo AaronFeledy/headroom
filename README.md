@@ -82,7 +82,7 @@ startup needs attention. Settings and provider sign-ins are retained.
 | ChatGPT | Codex CLI credentials, with an OpenCode fallback |
 | Cursor | cursor-agent, the Cursor app, or supported browser sign-ins |
 | Grok | Grok CLI credentials, with a browser sign-in fallback |
-| OpenCode Go | OpenCode CLI credentials |
+| OpenCode Go | OpenCode CLI API key or console sign-in |
 
 Windows desktop packages can share supported Cursor and Grok browser sign-ins
 with the server. Control this with **Share browser sign-ins with the server** in

@@ -3,99 +3,152 @@ package opencodego
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
-	"github.com/AaronFeledy/claude-usage-widget/server/internal/winprofile"
 )
-
-const sqliteHeader = "SQLite format 3\x00"
 
 type credential struct {
 	token     string
+	orgID     string
 	expiresAt time.Time
 }
 
+// Guidance survives missing candidates so a later usable credential still wins.
 type credentialResult struct {
 	credential credential
-	source     *usage.AuthSource
+	kind       credentialKind
+	suffix     string
+	guidance   error
+	checked    []usage.AuthChecked
 	err        error
+}
+
+func (r credentialResult) authSource() *usage.AuthSource {
+	switch {
+	case r.err == nil,
+		errors.Is(r.err, errCredentialExpired),
+		errors.Is(r.err, errCredentialInvalid),
+		errors.Is(r.err, errCredentialAmbiguous):
+		return &usage.AuthSource{Kind: "cli", Name: r.kind.sourceName(r.suffix)}
+	default:
+		return nil
+	}
+}
+
+func (r credentialResult) signInCommand() *string {
+	command := r.kind.signInCommand()
+	switch {
+	case errors.Is(r.err, errCredentialUnreadable):
+		return nil
+	case errors.Is(r.guidance, errConsoleNoWorkspace):
+		command = consoleSwitchCommand
+	case errors.Is(r.err, errCredentialMissing):
+		command = signInCommandText
+	}
+	return &command
 }
 
 // loadCredentials discovers and rereads stores on every fetch so login changes
 // cannot hide behind unchanged file metadata. Other kernels remain a fallback.
-func loadCredentials(ctx context.Context, configured string, environment winprofile.Environment, now time.Time) credentialResult {
-	if configured != "" {
-		path := expandHome(configured, environment.Home)
-		name := "OpenCode Go CLI"
+func (p *Provider) loadCredentials(ctx context.Context) credentialResult {
+	now := p.now()
+	if p.configured != "" {
+		path := expandHome(p.configured, p.environment.Home)
+		suffix := ""
 		if strings.HasPrefix(path, `\\wsl.`) {
-			name += " (WSL)"
+			suffix = " (WSL)"
 		}
-		return loadConfigured(ctx, credentialSource{path: path, name: name}, now)
+		return p.loadConfigured(ctx, credentialSource{path: path, suffix: suffix}, now)
 	}
-	if result, ok := loadGroups(ctx, localGroups(environment), now); ok {
-		return result
+	local := p.loadGroups(ctx, localGroups(p.environment), now, credentialResult{})
+	if !errors.Is(local.err, errCredentialMissing) {
+		return local
 	}
-	if result, ok := loadGroups(ctx, crossKernelGroups(environment), now); ok {
-		return result
-	}
-	return credentialResult{err: errCredentialMissing}
+	return p.loadGroups(ctx, crossKernelGroups(p.environment), now, local)
 }
 
 // loadConfigured honors an explicit store without inferring its CLI generation.
-func loadConfigured(ctx context.Context, source credentialSource, now time.Time) credentialResult {
-	authSource := &usage.AuthSource{Kind: "cli", Name: source.name}
+func (p *Provider) loadConfigured(ctx context.Context, source credentialSource, now time.Time) credentialResult {
+	unreadableStore := func(err error) credentialResult {
+		result := credentialResult{kind: credentialKey, suffix: source.suffix, err: unreadable(err)}
+		result.checked = []usage.AuthChecked{keyCheck(source.suffix, result)}
+		return result
+	}
 	kind, err := detectSourceKind(source.path)
 	if err != nil {
-		return credentialResult{source: authSource, err: unreadable(err)}
+		return unreadableStore(err)
 	}
 	switch kind {
 	case credentialSourceJSON:
-		return loadLegacyFile(source.path, authSource)
+		result := loadLegacyFile(source.path, source.suffix)
+		result.checked = []usage.AuthChecked{keyCheck(source.suffix, result)}
+		return result
 	case credentialSourceSQLite:
-		table, hasTable, err := readCredentialTable(ctx, source.path, false)
+		table, _, err := readCredentialTable(ctx, source.path, false)
 		if err != nil {
-			return credentialResult{source: authSource, err: unreadable(err)}
+			return unreadableStore(err)
 		}
-		if !hasTable {
-			return credentialResult{source: authSource, err: errCredentialMissing}
+		// Rows win; a database with no OpenCode Go rows may still hold the
+		// CLI's console sign-in, read here without the migration check.
+		if len(table.rows) > 0 {
+			result := p.evaluateRows(table.rows, source.suffix, now)
+			result.checked = []usage.AuthChecked{keyCheck(source.suffix, result)}
+			return result
 		}
-		return evaluateRows(table.rows, authSource, now)
+		console := p.evaluateConsole(table, source.suffix, now)
+		console.checked = []usage.AuthChecked{
+			keyCheck(source.suffix, credentialResult{err: errCredentialMissing}),
+			consoleCheck(source.suffix, console.err),
+		}
+		return console
 	default:
-		return credentialResult{err: errCredentialMissing}
+		result := credentialResult{kind: credentialKey, suffix: source.suffix, err: errCredentialMissing}
+		result.checked = []usage.AuthChecked{keyCheck(source.suffix, result)}
+		return result
 	}
 }
 
-func loadGroups(ctx context.Context, groups []credentialGroup, now time.Time) (credentialResult, bool) {
+func (p *Provider) loadGroups(ctx context.Context, groups []credentialGroup, now time.Time, previous credentialResult) credentialResult {
+	checked, guidance := previous.checked, previous.guidance
 	for _, group := range groups {
-		result := loadGroup(ctx, group, now)
+		result := p.loadGroup(ctx, group, now, checked)
+		checked = result.checked
+		if guidance == nil {
+			guidance = result.guidance
+		}
 		// Only a missing candidate permits discovery in another directory.
 		if errors.Is(result.err, errCredentialMissing) {
 			continue
 		}
-		return result, true
+		return result
 	}
-	return credentialResult{}, false
+	return credentialResult{kind: credentialKey, err: errCredentialMissing, checked: checked, guidance: guidance}
 }
 
 // loadGroup excludes imported legacy files unless V1 has rewritten them since
 // V2 claimed the database, preventing V2 logout from reviving an imported key.
 // Live candidates compete by their own timestamps; a winner's error is final.
-func loadGroup(ctx context.Context, group credentialGroup, now time.Time) credentialResult {
-	authSource := &usage.AuthSource{Kind: "cli", Name: group.name}
+// The console sign-in is the directory's last candidate, after both keys.
+func (p *Provider) loadGroup(ctx context.Context, group credentialGroup, now time.Time, checked []usage.AuthChecked) credentialResult {
 	var table credentialTable
 	tableLive := false
+	databaseRead := false
 	if group.databasePath != "" && fileExists(group.databasePath) {
 		var hasTable bool
 		var err error
 		table, hasTable, err = readCredentialTable(ctx, group.databasePath, true)
 		if err != nil {
-			return credentialResult{source: authSource, err: unreadable(err)}
+			return credentialResult{
+				kind:    credentialKey,
+				suffix:  group.suffix,
+				err:     unreadable(err),
+				checked: append(checked, usage.AuthChecked{Kind: "cli", Name: credentialKey.sourceName(group.suffix), Status: "unreadable"}),
+			}
 		}
+		databaseRead = true
 		tableLive = hasTable && table.claimed && len(table.rows) > 0
 	}
 	var legacyMillis int64
@@ -106,87 +159,41 @@ func loadGroup(ctx context.Context, group credentialGroup, now time.Time) creden
 	}
 	var legacy credentialResult
 	if legacyLive {
-		legacy = loadLegacyFile(group.authPath, authSource)
+		legacy = loadLegacyFile(group.authPath, group.suffix)
 		legacyLive = !errors.Is(legacy.err, errCredentialMissing)
 	}
-	if tableLive && (!legacyLive || table.rows[0].updatedMS >= legacyMillis) {
-		return evaluateRows(table.rows, authSource, now)
+	var result credentialResult
+	switch {
+	case tableLive && (!legacyLive || table.rows[0].updatedMS >= legacyMillis):
+		result = p.evaluateRows(table.rows, group.suffix, now)
+	case legacyLive:
+		result = legacy
+	default:
+		result = credentialResult{kind: credentialKey, suffix: group.suffix, err: errCredentialMissing}
 	}
-	if legacyLive {
-		return legacy
+	checked = append(checked, keyCheck(group.suffix, result))
+	if !errors.Is(result.err, errCredentialMissing) || !databaseRead {
+		result.checked = checked
+		return result
 	}
-	return credentialResult{err: errCredentialMissing}
+	// Keys come first: OpenCode 1.x prefers the console token over an API key
+	// only when the console's remote config supplies OpenCode Go, and that
+	// config is not stored locally. See https://github.com/AaronFeledy/headroom/issues/115.
+	console := p.evaluateConsole(table, group.suffix, now)
+	console.checked = append(checked, consoleCheck(group.suffix, console.err))
+	return console
 }
 
-func loadLegacyFile(path string, source *usage.AuthSource) credentialResult {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return credentialResult{err: errCredentialMissing}
-		}
-		return credentialResult{source: source, err: unreadable(err)}
+// keyCheck names the key stores by the kind they produced; a store that held
+// nothing is still named as the CLI key store.
+func keyCheck(suffix string, result credentialResult) usage.AuthChecked {
+	kind := result.kind
+	if errors.Is(result.err, errCredentialMissing) {
+		kind = credentialKey
 	}
-	token, err := decodeLegacyAuth(data)
-	if err != nil {
-		return credentialResult{source: source, err: err}
-	}
-	return credentialResult{credential: credential{token: token}, source: source}
+	return usage.AuthChecked{Kind: "cli", Name: kind.sourceName(suffix), Status: checkedStatus(result.err)}
 }
 
-func detectSourceKind(path string) (credentialSourceKind, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return credentialSourceNone, nil
-		}
-		return credentialSourceNone, err
-	}
-	if info.IsDir() {
-		return credentialSourceNone, nil
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return credentialSourceNone, err
-	}
-	defer file.Close()
-	header := make([]byte, len(sqliteHeader))
-	n, err := io.ReadFull(file, header)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return credentialSourceNone, err
-	}
-	if n == len(sqliteHeader) && string(header) == sqliteHeader {
-		return credentialSourceSQLite, nil
-	}
-	return credentialSourceJSON, nil
-}
-
-func evaluateRows(rows []credentialRow, source *usage.AuthSource, now time.Time) credentialResult {
-	if len(rows) == 0 {
-		return credentialResult{err: errCredentialMissing}
-	}
-	first := rows[0]
-	// The CLI never leaves two active rows for one integration; refuse to guess.
-	active := 0
-	for _, row := range rows {
-		if row.integration == first.integration && row.active {
-			active++
-		}
-	}
-	if active > 1 {
-		return credentialResult{source: source, err: errCredentialAmbiguous}
-	}
-	creds, err := decodeCredentialValue(first.value, now)
-	if err != nil {
-		return credentialResult{source: source, err: err}
-	}
-	return credentialResult{credential: creds, source: source}
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func unreadable(err error) error {
-	return fmt.Errorf("%w: %w", errCredentialUnreadable, err)
+func consoleCheck(suffix string, err error) usage.AuthChecked {
+	return usage.AuthChecked{Kind: "cli", Name: credentialConsoleAccount.sourceName(suffix), Status: checkedStatus(err)}
 }

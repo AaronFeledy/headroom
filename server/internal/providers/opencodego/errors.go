@@ -8,5 +8,6 @@ var (
 	errCredentialAmbiguous  = errors.New("opencodego: credential ambiguous")
 	errCredentialInvalid    = errors.New("opencodego: credential invalid")
 	errCredentialUnreadable = errors.New("opencodego: credential unreadable")
+	errConsoleNoWorkspace   = errors.New("opencodego: console sign-in has no workspace")
 	errUsageResponse        = errors.New("opencodego: usage response changed")
 )

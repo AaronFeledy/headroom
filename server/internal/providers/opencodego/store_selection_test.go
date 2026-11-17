@@ -39,17 +39,17 @@ func Test_Provider_Fetch_selects_live_credential_candidates(t *testing.T) {
 		{
 			name:      "unclaimed rows without auth are signed out",
 			rows:      []credentialFixture{{id: "go", integration: "opencode-go", value: `{"type":"key","key":"ignored-token"}`, updatedMS: millisAt(0)}},
-			wantState: "signed_out", wantError: "OpenCode Go is not signed in. Run `opencode auth login`.",
+			wantState: "signed_out", wantError: notSignedInMessage,
 		},
 		{
 			name: "V2 logout cannot revive imported auth", claimed: true,
 			auth: `{"opencode-go":{"type":"api","key":"imported-token"}}`, authMillis: millisAt(-4 * time.Hour),
-			wantState: "signed_out", wantError: "OpenCode Go is not signed in. Run `opencode auth login`.",
+			wantState: "signed_out", wantError: notSignedInMessage,
 		},
 		{
 			name: "auth at the import boundary remains imported", claimed: true,
 			auth: `{"opencode-go":{"type":"api","key":"imported-token"}}`, authMillis: millisAt(-3 * time.Hour),
-			wantState: "signed_out", wantError: "OpenCode Go is not signed in. Run `opencode auth login`.",
+			wantState: "signed_out", wantError: notSignedInMessage,
 		},
 		{
 			name: "V1 sign-in after import survives an empty table", claimed: true,
@@ -78,7 +78,7 @@ func Test_Provider_Fetch_selects_live_credential_candidates(t *testing.T) {
 			name: "unrelated rows cannot revive imported auth", claimed: true,
 			auth: `{"opencode-go":{"type":"api","key":"imported-token"}}`, authMillis: millisAt(-4 * time.Hour),
 			rows:      []credentialFixture{{id: "cursor", integration: "cursor", value: `{"type":"key","key":"cursor-token"}`, updatedMS: millisAt(0)}},
-			wantState: "signed_out", wantError: "OpenCode Go is not signed in. Run `opencode auth login`.",
+			wantState: "signed_out", wantError: notSignedInMessage,
 		},
 		{
 			name: "V1 rewrite for another provider leaves V2 signed in", claimed: true,
