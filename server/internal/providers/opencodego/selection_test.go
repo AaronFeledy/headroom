@@ -125,7 +125,7 @@ func Test_Provider_Fetch_decodes_stored_credential_values(t *testing.T) {
 			name:      "expired oauth is refused",
 			value:     fmt.Sprintf(`{"type":"oauth","access":"oauth-token","expires":%d}`, fixedNow.Add(-time.Hour).UnixMilli()),
 			wantState: "expired", wantReauth: true,
-			wantError: "OpenCode Go auth expired. Run `opencode auth login` again.",
+			wantError: fmt.Sprintf(consoleExpiredFormat, signInCommandText),
 		},
 		{
 			name:      "an unusable stored type requires sign-in",

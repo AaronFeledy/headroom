@@ -177,28 +177,29 @@ report the app as `encrypted`; discovery continues and the value never goes
 upstream.
 WSL servers also check the Windows side. Discovery does not depend on a loopback bind.
 
-OpenCode Go reads the OpenCode CLI's own credential store read-only. Stable
-1.x CLIs keep keys only in `auth.json`; their database creates a `credential`
-table but never uses it. V2 imports `auth.json` once, records migration
-`20260805200742_import_legacy_credentials` in the `migration` table, then keeps
-keys only in that table and signs out by deleting the row. Both generations can
-share one data directory. The table counts only when that marker exists, and
-`auth.json` counts only without the marker or when written after it, so a V2
-sign-out never revives an imported key. When both offer an OpenCode Go key, the
-newer write wins (the row's `time_updated` against the file's modification
-time, ties to the table); never fall back to the other because the winner is
-invalid or expired. Table rows are chosen as the CLI chooses them: `opencode-go`
-before `opencode`, then `active DESC, time_created DESC, id DESC`, so legacy rows
-with a NULL flag stay eligible. Never filter on `active = 1`; two active rows
-for one integration are refused rather than guessed, and OAuth `expires: 0`
-means no expiry. Credentials are reread on every poll, without a cache. Never
-write, refresh, or rotate that store. Each poll makes one
-`GET https://opencode.ai/zen/go/v1/usage`; the bearer token must never follow a
-redirect to another origin. Reported percentages are already 0-100 and are never
-scaled. Its `session` (`5-Hour`), `weekly`, and `monthly` meters carry no
+OpenCode Go reads the OpenCode CLI's credential store read-only and rereads it
+every poll without a cache; never write, refresh, or rotate it, including console
+tokens. An API key (`auth.json`, or the V2 `credential` table) comes before a
+console sign-in (the 1.x `account_state`/`account` rows, or a V2 row with
+`metadata.orgID`). Migration `20260805200742_import_legacy_credentials` gates the
+generations during discovery: the table counts only with it, `auth.json` only
+without it or when written after it, and a 1.x console account only when
+refreshed after it, so a V2 sign-out never revives anything; an explicit
+database skips that check. When both stores hold a key the newer write wins
+(ties to the table), and a winner that is invalid or expired is reported, never
+replaced. Rows sort as the CLI sorts them (`opencode-go` before `opencode`, then
+`active DESC, time_created DESC, id DESC`): never filter `active = 1`, refuse two
+active rows for one integration, and treat OAuth `expires: 0` as no expiry. A
+console credential is used only on the usage endpoint's own origin and sends
+`x-opencode-org-id`. Each poll makes exactly one
+`GET https://opencode.ai/zen/go/v1/usage`; the bearer token never follows a
+redirect to another origin, and reported percentages are already 0-100 and never
+scaled. The `session` (`5-Hour`), `weekly`, and `monthly` meters carry no
 reported window start, so clients assume five hours, seven days, and the calendar
 month ending at the reset. It has no browser-credential push, credential route,
 SSH forward, usage details, or resets; do not add them without an explicit task.
+Full rules, source names, sign-in guidance, and the upstream contract test are
+in `server/internal/providers/opencodego/doc.go`.
 
 Keep these compatibility contracts unless the task explicitly changes them: Go
 modules/imports, `usage-server` binary, legacy service names/paths, API provider
@@ -433,7 +434,10 @@ each test file): `HEADROOM_PROPER_LOCKFILE_FIXTURE=1` runs Headroom's Claude Cod
 lock against the pinned `proper-lockfile` package after `npm ci --ignore-scripts`
 in `server/internal/providers/claude/testdata/lockfile-interop`, and
 `HEADROOM_WSL_LOCK_FIXTURE=1` runs a Windows test binary from WSL against a
-`\\wsl.localhost` directory. From WSL, native Windows tests run as
+`\\wsl.localhost` directory. `HEADROOM_OPENCODE_DB=<path>` runs the OpenCode Go
+contract test against a database a real OpenCode CLI created in a throwaway
+profile; `.github/workflows/opencode-contract.yml` runs it weekly against the
+`latest` and `dev` CLIs. From WSL, native Windows tests run as
 `GOOS=windows go test -c -o /mnt/c/<temp dir>/pkg.test.exe ./internal/<pkg>` and
 then the `.exe`. Claude tests' `TestMain` keeps discovery away from the real WSL
 home and user profile; keep new tests on temp paths.

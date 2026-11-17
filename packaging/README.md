@@ -393,6 +393,13 @@ locally with Python 3 and npm, or add `--binary /path/to/claude` for an offline
 check. It prints the package version and fails with named missing markers when
 the upstream contract changes; it does not run on pull requests.
 
+The weekly `.github/workflows/opencode-contract.yml` canary installs the `latest`
+and `dev` OpenCode CLIs from npm, lets each create a database in a fresh offline
+profile, and runs `TestOpenCodeDatabaseContract` against it. It also runs on pull
+requests that change the OpenCode Go provider. To run it locally, create a
+throwaway profile the same way and pass its `opencode db path` as
+`HEADROOM_OPENCODE_DB`. The test expects a fresh database with no sign-in.
+
 ## Focused installation checks
 
 Use the focused tests while changing installation code; leave the full native

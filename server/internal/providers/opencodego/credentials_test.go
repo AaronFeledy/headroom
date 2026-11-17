@@ -6,9 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 func Test_Provider_Fetch_signed_out_when_no_store_exists(t *testing.T) {
@@ -23,11 +26,15 @@ func Test_Provider_Fetch_signed_out_when_no_store_exists(t *testing.T) {
 	if data.Auth.State != "signed_out" || data.NeedsReauth || data.Auth.Source != nil {
 		t.Fatalf("auth = %#v", data.Auth)
 	}
-	if errorText(data) != "OpenCode Go is not signed in. Run `opencode auth login`." {
+	if errorText(data) != notSignedInMessage {
 		t.Fatalf("error = %q", errorText(data))
 	}
 	if data.Auth.SignInCommand == nil || *data.Auth.SignInCommand != "opencode auth login" || data.Auth.SignInURL != nil {
 		t.Fatalf("sign-in = %#v", data.Auth)
+	}
+	want := []usage.AuthChecked{{Kind: "cli", Name: "OpenCode Go CLI", Status: "signed_out"}}
+	if !slices.Equal(data.Auth.Checked, want) {
+		t.Fatalf("checked = %#v, want %#v", data.Auth.Checked, want)
 	}
 	if _, _, requests := server.recorded(); requests != 0 {
 		t.Fatalf("requests = %d, want none", requests)

@@ -1,0 +1,75 @@
+name: OpenCode contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/internal/providers/opencodego/**'
+      - '.github/workflows/opencode-contract.yml'
+  # Headroom reads OpenCode's private database; a new CLI can change it
+  # without any change here.
+  schedule:
+    - cron: '41 8 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  database:
+    name: OpenCode ${{ matrix.tag }} database
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Check out the code.
+    strategy:
+      fail-fast: false
+      matrix:
+        # latest is the release users run; dev shows storage changes before they ship.
+        tag: [latest, dev]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Create a database with the OpenCode CLI
+        env:
+          TAG: ${{ matrix.tag }}
+          OPENCODE_SANDBOX: ${{ runner.temp }}/opencode
+        run: |
+          npm install --prefix "$OPENCODE_SANDBOX/cli" --no-audit --no-fund "opencode-ai@$TAG"
+          home="$OPENCODE_SANDBOX/home"
+          mkdir -p "$home"
+          # A fresh, offline profile: no sign-in, plugins, or user config.
+          opencode() {
+            env -i PATH="$PATH" HOME="$home" XDG_DATA_HOME="$home/data" XDG_CONFIG_HOME="$home/config" \
+              XDG_CACHE_HOME="$home/cache" XDG_STATE_HOME="$home/state" \
+              "$OPENCODE_SANDBOX/cli/node_modules/.bin/opencode" "$@"
+          }
+          echo "OpenCode $(opencode --version)"
+          opencode --pure session list > /dev/null
+          opencode db path > "$OPENCODE_SANDBOX/database-path"
+          database="$(cat "$OPENCODE_SANDBOX/database-path")"
+          if [ ! -f "$database" ]; then
+            echo "::error::OpenCode did not create its database at $database"
+            exit 1
+          fi
+      - name: Check Headroom's reads against it
+        working-directory: server
+        shell: bash
+        env:
+          OPENCODE_SANDBOX: ${{ runner.temp }}/opencode
+        run: |
+          HEADROOM_OPENCODE_DB="$(cat "$OPENCODE_SANDBOX/database-path")" \
+            go test -run '^TestOpenCodeDatabaseContract$' -count=1 -v ./internal/providers/opencodego/ \
+            | tee "$OPENCODE_SANDBOX/contract.log"
+          # A renamed or skipped test must not pass silently.
+          grep -q -- '--- PASS: TestOpenCodeDatabaseContract' "$OPENCODE_SANDBOX/contract.log"

@@ -4,3 +4,8 @@ rules:
       # A rerun of the publish job must update the existing release for its
       # tag, which action-gh-release does and `gh release create` doesn't.
       - release.yml
+  adhoc-packages:
+    ignore:
+      # The OpenCode contract canary installs the newest CLI on purpose: it
+      # exists to catch upstream storage changes before users run them.
+      - opencode-contract.yml

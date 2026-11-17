@@ -42,6 +42,7 @@ type usageServer struct {
 	paths          []string
 	accepts        []string
 	agents         []string
+	orgIDs         []string
 	requests       int
 }
 
@@ -55,6 +56,7 @@ func newUsageServer(t *testing.T, status int, body string) *usageServer {
 		recorder.paths = append(recorder.paths, request.URL.Path)
 		recorder.accepts = append(recorder.accepts, request.Header.Get("Accept"))
 		recorder.agents = append(recorder.agents, request.Header.Get("User-Agent"))
+		recorder.orgIDs = append(recorder.orgIDs, request.Header.Get("x-opencode-org-id"))
 		recorder.mu.Unlock()
 		if status != 0 {
 			writer.WriteHeader(status)
@@ -79,6 +81,12 @@ func (s *usageServer) headers() ([]string, []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.accepts...), append([]string(nil), s.agents...)
+}
+
+func (s *usageServer) orgHeaders() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.orgIDs...)
 }
 
 func testEnvironment(t *testing.T, home string, variables map[string]string) winprofile.Environment {

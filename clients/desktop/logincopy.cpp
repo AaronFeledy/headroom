@@ -28,8 +28,11 @@ QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode,
     const QString name = Usage::displayName(text(source.value(QStringLiteral("name")), 80));
     QStringList lines;
     result[QStringLiteral("title")] = state == QStringLiteral("expired") ? QStringLiteral("Sign-in expired") : QStringLiteral("Not signed in");
-    if (state == QStringLiteral("signed_out"))
-        lines.append(QStringLiteral("Headroom couldn't find a %1 sign-in.").arg(Usage::displayName(provider.value(QStringLiteral("provider_name")).toString())));
+    if (state == QStringLiteral("signed_out")) {
+        const QString display = Usage::displayName(provider.value(QStringLiteral("provider_name")).toString());
+        const bool vowel = !display.isEmpty() && QStringLiteral("AEIOU").contains(display.front().toUpper());
+        lines.append(QStringLiteral("Headroom couldn't find %1 %2 sign-in.").arg(vowel ? QStringLiteral("an") : QStringLiteral("a"), display));
+    }
     else if (kind == QStringLiteral("cli")) lines.append(QStringLiteral("Your %1 login %2 expired.").arg(name, location));
     else if (kind == QStringLiteral("app")) lines.append(QStringLiteral("Your %1 app sign-in %2 expired.").arg(name, location));
     else if (kind == QStringLiteral("browser")) lines.append(QStringLiteral("Your %1 sign-in to cursor.com %2 expired.").arg(name, location));

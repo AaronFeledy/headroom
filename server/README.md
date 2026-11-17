@@ -741,36 +741,27 @@ primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json`
 or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback
 when CLI weekly data is unavailable.
 
-OpenCode Go reads the OpenCode CLI's own credential store and never writes,
-refreshes, or rotates it. The data directory is `$XDG_DATA_HOME/opencode` when
-`XDG_DATA_HOME` is an absolute path, otherwise `~/.local/share/opencode`. Its
-SQLite database is `$OPENCODE_DB` (an absolute path, or a filename relative to
-that directory; `:memory:` disables it) and defaults to `opencode.db`.
+OpenCode Go reads the OpenCode CLI's sign-in on the server's computer and never
+writes, refreshes, or rotates it. It looks in `$XDG_DATA_HOME/opencode` (default
+`~/.local/share/opencode`), where `$OPENCODE_DB` names the SQLite database
+(default `opencode.db`; `:memory:` disables it), and in the other kernel's home
+on Windows/WSL. Sign in with `opencode auth login` and choose OpenCode Go,
+OpenCode's documented path; an `opencode console login` sign-in in the same
+database also works. When both exist, Headroom uses the API key. When a sign-in
+isn't usable, the card says so and names the command that fixes it:
+`opencode auth login` when nothing is found or a console sign-in belongs to
+another OpenCode server, and `opencode console switch` when the console sign-in
+has no active workspace. An unreadable store shows a retry message.
 
-Stable 1.x CLIs keep keys in `auth.json` (an `opencode-go` entry with
-`"type":"api"`). OpenCode V2 imports that file once, records the
-`20260805200742_import_legacy_credentials` migration, and from then on keeps keys
-only in the database's `credential` table; signing out deletes the row. Both
-generations can share one data directory, so the provider reads the table only
-when the database carries that migration, and reads `auth.json` only when there
-is no such migration or the file was written after it. A V2 sign-out therefore
-never brings back a key that was imported earlier. When both offer an OpenCode Go
-key, the newer write wins: the row's `time_updated` against the file's
-modification time, with ties going to the table. A winner that is invalid or
-expired is reported as such rather than replaced by the other key. Rows are
-selected the way the CLI selects them: `opencode-go` before `opencode`, then
-`active DESC, time_created DESC, id DESC`, so legacy rows without an active flag
-are still eligible. Two active rows for the chosen integration are reported as
-ambiguous. An OAuth `expires` of `0` means the issuer reported no lifetime, so
-the access token never expires. Credentials are reread on every poll. Live SQLite
-databases, including WAL sidecars, are read read-only or through a private
-disposable snapshot. On Windows the provider also checks WSL homes; on WSL it
-checks Windows profiles. Cross-kernel source names include `(Windows)` or
-`(WSL)`. An explicit `providers.opencodego.credentials_path` replaces discovery
-and accepts either kind, told apart by the SQLite file header; an explicit
-database is read without the migration check. For a service or container, point
-it at a small file holding only the key, as shown in the
-[systemd sample](#raspberry-pi-systemd-sample).
+An empty `providers.opencodego.credentials_path` uses discovery; a path may name
+either an `auth.json`-format file or the SQLite database (told apart by the file
+header), and a database without an OpenCode Go key falls back to its console
+sign-in. Live databases are read read-only or from a
+disposable snapshot. For a service or container, point it at a small file
+holding only the key, as shown in the
+[systemd sample](#raspberry-pi-systemd-sample). Exact rules, source names, and
+sign-in status values are in the
+[provider package reference](internal/providers/opencodego/doc.go).
 
 ## HTTPS identity and verification
 

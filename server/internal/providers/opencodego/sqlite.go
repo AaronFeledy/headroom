@@ -32,6 +32,17 @@ type credentialTable struct {
 	rows      []credentialRow
 	claimed   bool
 	claimedAt int64
+	console   *consoleAccount
+}
+
+// consoleAccount is the CLI's console sign-in: a token and organization kept in
+// the same database. The CLI refreshes it itself, so it is never written here.
+type consoleAccount struct {
+	token     string
+	url       string
+	orgID     string
+	expiryMS  *int64
+	updatedMS int64
 }
 
 // readCredentialTable reads the live database read-only first and falls back to
@@ -85,8 +96,9 @@ func withDatabase(ctx context.Context, path string, query func(*sql.DB) error) (
 	return query(database)
 }
 
-// loadCredentialTable ignores V1's unused schema during discovery; explicit
-// paths retain direct row selection without consulting migration metadata.
+// loadCredentialTable ignores V1's unused credential table during discovery but
+// still reads the console sign-in it may hold; explicit paths retain direct row
+// selection without consulting migration metadata.
 func loadCredentialTable(ctx context.Context, database *sql.DB, discovered bool) (credentialTable, bool, error) {
 	var table credentialTable
 	var marker int
@@ -102,11 +114,16 @@ func loadCredentialTable(ctx context.Context, database *sql.DB, discovered bool)
 			}
 			table.claimed = err == nil
 		}
-		if !table.claimed {
-			return table, false, nil
-		}
 	}
-	err := database.QueryRowContext(ctx, `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'`).Scan(&marker)
+	console, err := loadConsoleAccount(ctx, database)
+	if err != nil {
+		return credentialTable{}, false, err
+	}
+	table.console = console
+	if discovered && !table.claimed {
+		return table, false, nil
+	}
+	err = database.QueryRowContext(ctx, `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credential'`).Scan(&marker)
 	if errors.Is(err, sql.ErrNoRows) {
 		return table, false, nil
 	}
@@ -137,4 +154,44 @@ func loadCredentialTable(ctx context.Context, database *sql.DB, discovered bool)
 		return credentialTable{}, true, err
 	}
 	return table, true, nil
+}
+
+// loadConsoleAccount reports the CLI's console sign-in. A missing schema or
+// active account means the directory has none; an account whose active
+// organization is null, blank, or not a header token is returned with an empty
+// organization so the caller can explain the missing workspace.
+func loadConsoleAccount(ctx context.Context, database *sql.DB) (*consoleAccount, error) {
+	for _, name := range []string{"account_state", "account"} {
+		var marker int
+		err := database.QueryRowContext(ctx, `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&marker)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var account consoleAccount
+	var orgID sql.NullString
+	var expiryMS sql.NullInt64
+	err := database.QueryRowContext(ctx, `SELECT a.access_token, a.url, a.token_expiry, a.time_updated, s.active_org_id
+		FROM account_state AS s JOIN account AS a ON a.id = s.active_account_id
+		WHERE s.id = 1 AND s.active_account_id IS NOT NULL`).Scan(
+		&account.token, &account.url, &expiryMS, &account.updatedMS, &orgID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The organization becomes a request header, so it must be a single token.
+	account.orgID = strings.TrimSpace(orgID.String)
+	if !validToken(account.orgID) {
+		account.orgID = ""
+	}
+	if expiryMS.Valid {
+		value := expiryMS.Int64
+		account.expiryMS = &value
+	}
+	return &account, nil
 }
