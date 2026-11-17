@@ -193,6 +193,11 @@ QString Usage::rowKey(const QVariantMap &row) {
         : providerType(row) + ":" + row.value("account").toMap().value("id").toString();
 }
 
+bool Usage::isAbsent(const QVariantMap &row) {
+    const auto presence = row.value("account_presence");
+    return presence.metaType().id() == QMetaType::QString && presence.toString() == "absent";
+}
+
 QUrl Usage::endpoint(const QString &base) {
     QUrl ssh;
     if (SshTransport::parseAddress(base.trimmed(), &ssh)) {
@@ -229,6 +234,11 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             || !p["is_success"].isBool() || p["is_success"].toBool() != p["error"].isNull()
             || !p["needs_reauth"].isBool()) return false;
         names.insert(name.toLower());
+        // Additive presence metadata. Older servers omit it, and any value other
+        // than the exact string "absent" stays visible: never hide the unknown.
+        const auto presence = p.value("account_presence");
+        p["account_presence"] = presence.isString() && presence.toString() == QStringLiteral("absent")
+            ? QStringLiteral("absent") : QStringLiteral("present");
         const auto type = p["provider_type"];
         if (!type.isString() || type.toString().isEmpty() || type.toString().toUcs4().size() > 32)
             p["provider_type"] = name;

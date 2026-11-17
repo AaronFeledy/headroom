@@ -129,7 +129,7 @@ void Controller::retainReadings(const QVariantList &providers, bool removeMissin
 QVariantList Controller::displayProviders() const {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     QVariantList result;
-    for (const auto &value : providers()) {
+    for (const auto &value : visibleProviders()) {
         auto provider = value.toMap();
         const auto reading = m_retained.constFind(provider["provider_name"].toString());
         if (!provider["is_success"].toBool() && reading != m_retained.cend() && !reading->buckets.isEmpty()

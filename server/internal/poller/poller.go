@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/presence"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -20,6 +21,9 @@ type Options struct {
 	Logger    *slog.Logger
 	Clock     Clock
 	NewTicker func(time.Duration) Ticker
+	// Presence remembers providers that proved they have an account. Nil
+	// leaves every row with the evidence in its own reading only.
+	Presence *presence.Store
 	// AfterPoll observes a completed fetch after its fetch lock is released.
 	AfterPoll func(string, Entry)
 }
@@ -30,6 +34,7 @@ type Poller struct {
 	newTicker    func(time.Duration) Ticker
 	mu           sync.RWMutex
 	providers    map[string]*providerState
+	presence     *presence.Store
 	afterPoll    func(string, Entry)
 	serviceCtx   context.Context
 	refreshUntil time.Time
@@ -73,7 +78,7 @@ func New(opts Options) *Poller {
 	if newTicker == nil {
 		newTicker = newRealTicker
 	}
-	return &Poller{logger: opts.Logger, clock: clock, newTicker: newTicker, afterPoll: opts.AfterPoll, providers: map[string]*providerState{}}
+	return &Poller{logger: opts.Logger, clock: clock, newTicker: newTicker, presence: opts.Presence, afterPoll: opts.AfterPoll, providers: map[string]*providerState{}}
 }
 
 func (p *Poller) Register(provider usage.Provider, enabled bool) error {
@@ -235,6 +240,29 @@ func fetchProvider(ctx context.Context, name string, provider usage.Provider) (d
 func (s *providerState) stampIdentity(data *usage.UsageData) {
 	data.ProviderType = s.providerType
 	data.Account = s.account.Clone()
+}
+
+// accountPresence applies the evidence rule and the durable memory to one
+// completed reading. The caller holds the provider lock; the memory lookup is
+// in-memory only.
+func (s *providerState) accountPresence(data usage.UsageData) string {
+	if data.AccountEvidence() {
+		return usage.PresencePresent
+	}
+	if s.owner.presence != nil && s.owner.presence.Present(data.RowKey()) {
+		return usage.PresencePresent
+	}
+	return usage.PresenceAbsent
+}
+
+// rememberPresence durably records a row that proved it has an account. Extra
+// account rows are already present by configuration, and the store never
+// writes an unchanged row.
+func (p *Poller) rememberPresence(data usage.UsageData) {
+	if p.presence == nil || data.Account != nil || !data.AccountEvidence() {
+		return
+	}
+	p.presence.Record(data.RowKey())
 }
 
 func providerKey(name string) string {

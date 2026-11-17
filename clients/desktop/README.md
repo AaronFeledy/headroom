@@ -304,6 +304,18 @@ for its listen address and mandatory authentication on non-loopback binds.
 
 ## Provider ordering and tray
 
+Headroom shows a card only for a provider whose sign-in it found. A provider the
+server reports without any sign-in keeps its row in **Settings > Providers** as
+**Not found**, with the command to copy, instead of adding a reconnect card. When
+no card is visible, the dashboard explains how to get started and lists each
+provider's sign-in command (`on this computer`, or `on the server` when you are
+not using Local mode). A sign-in card can be dismissed with **Hide card** until
+that provider signs in again; **N hidden · Show in Settings** opens Settings to
+bring it back. Settings lists every provider the server reports as
+**Connected**, **Needs sign-in**, **Hidden until you sign in** (with **Show**),
+or **Not found** with its command and, for Cursor, an **Open cursor.com** link.
+The hidden row keys are saved in `hiddenProviders` in the settings file.
+
 Provider meters are the first content in the popup. A compact sticky footer
 contains provider filtering, Refresh, connection status, and Settings, keeping
 controls available while the meters scroll. Providers occupy full-width rows. Meters share the available width and wrap
@@ -320,7 +332,7 @@ Orders are local to each client, and the default order is Claude, ChatGPT,
 Cursor, Grok, then OpenCode Go. The provider shown in the tray has a subtle glow
 on its card.
 
-By default the first provider supplies the tray meter. A provider without usable
+By default the first visible provider supplies the tray meter. A provider without usable
 data then produces an unknown tray meter instead of silently switching providers.
 Set **Tray icon** to **Nearest limit** in Settings to have the tray follow
 whichever provider is nearest a limit: the highest shared warning tier first,
@@ -331,7 +343,7 @@ the labelled stale readings kept during an error never take the tray. To avoid f
 switches only when another provider reaches a higher tier or leads by at least
 five percentage points in the same tier. While the server is unreachable, the
 tray keeps the provider it was showing. If no provider has a usable meter, the
-first provider is shown.
+first visible provider is shown; with no visible cards the tray is idle.
 
 On managed Windows installations, the stable launcher owns the tray icon with a
 persistent GUID, so versioned desktop updates keep the same Windows tray identity.

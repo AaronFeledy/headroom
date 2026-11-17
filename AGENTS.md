@@ -264,6 +264,24 @@ reset lands within a minute of the previous reading's for the same provider row,
 non-null credential epoch, and meter keeps the previous time, so clients compare
 it exactly and any change is a new window.
 
+Every usage row carries `account_presence` (`present` or `absent`) so clients
+show only providers the user has. A row is present when it is an extra Claude
+account, when this server has seen it present before, or when its reading
+proves a sign-in exists: state `signed_in` or `expired`, a selected source, or a
+`checked` entry that is `signed_in`, `expired`, or `encrypted` (never `locked`,
+`unreadable`, or `signed_out`). The rule lives in `server/internal/usage`, and
+providers stay free of presence special cases. The add-only memory is
+`provider-presence/seen.json` beside `reset-automation/`; it stores only row
+keys and first-seen times, never blocks startup or a poll, and stays read-only
+under a newer schema. Absent rows remain in the API: Home Assistant indexes and
+the desktop's Cursor browser-sign-in push depend on them, and absent providers
+never make `/api/v1/health` degraded. Clients treat a missing or unknown value as
+present. The desktop and CLI text dashboard hide absent rows; the desktop also
+excludes them from the tray, attention count, and filter, and keeps every row
+for IPC, credential sharing, notifications, and resets. Its `hiddenProviders`
+setting (saved like the order, outside the `saveSettings` patch map) hides a
+signed-out or expired card until that row signs in again.
+
 Additive `usage_details` and nullable bucket `measurement` are defined in
 `server/internal/usage/details.go` and `types.go`. Preserve legacy fields, stable
 IDs, `current`/`weekly`, and `detail_text` fallbacks. Missing/null measurement

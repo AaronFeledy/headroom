@@ -232,6 +232,22 @@ QStringList SettingsService::normalizeOrder(const QStringList &values, const QSt
     return result;
 }
 
+QStringList SettingsService::normalizeHiddenProviders(const QStringList &hidden)
+{
+    QStringList result;
+    for (const auto &value : hidden) {
+        const QString key = value.trimmed();
+        if (key.isEmpty() || key.size() > 128 || result.contains(key)) continue;
+        bool printable = true;
+        for (const QChar character : key)
+            if (character.unicode() < 32 || character.unicode() == 127) { printable = false; break; }
+        if (!printable) continue;
+        result.append(key);
+        if (result.size() == 64) break;
+    }
+    return result;
+}
+
 bool SettingsService::loadHeadroom()
 {
     QFile file(m_path);
@@ -283,6 +299,9 @@ bool SettingsService::loadHeadroom()
     m_value.primary = normalizeProvider(readString(m_document, "primary", "Claude"));
     m_value.order = normalizeOrder(readOrder(m_document.value("order")), m_value.primary);
     m_value.primary = m_value.order.first();
+    // Hidden cards are row keys, not provider names: extra account rows keep
+    // their exact key. Invalid or excess entries never hide anything.
+    m_value.hiddenProviders = normalizeHiddenProviders(readOrder(m_document.value("hiddenProviders")));
     m_value.startup = readBool(m_document, "startup", false);
     m_value.startupMigrationPending = readBool(m_document, "startupMigrationPending", false);
     const int windowWidth = readInt(m_document, "windowWidth", 0);
@@ -392,6 +411,8 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["trayProvider"] = settings.trayProvider;
     result["primary"] = settings.primary;
     result["order"] = QJsonArray::fromStringList(settings.order);
+    if (settings.hiddenProviders.isEmpty()) result.remove("hiddenProviders");
+    else result["hiddenProviders"] = QJsonArray::fromStringList(settings.hiddenProviders);
     result["startup"] = settings.startup;
     result["startupMigrationPending"] = settings.startupMigrationPending;
     if (settings.windowSize.isValid()) {
@@ -445,6 +466,7 @@ QString SettingsService::save(const DesktopSettings &settings, bool explicitUser
     if (!validTrayProvider(normalized.trayProvider)) normalized.trayProvider = QStringLiteral("first");
     normalized.order = normalizeOrder(normalized.order, normalized.primary);
     normalized.primary = normalized.order.first();
+    normalized.hiddenProviders = normalizeHiddenProviders(normalized.hiddenProviders);
     const QString error = write(normalized);
     if (error.isEmpty()) {
         m_value = normalized;
@@ -459,6 +481,13 @@ QString SettingsService::saveOrder(const QStringList &order, const QString &prim
     DesktopSettings updated = m_value;
     updated.order = normalizeOrder(order, primary);
     updated.primary = updated.order.first();
+    return save(updated);
+}
+
+QString SettingsService::saveHiddenProviders(const QStringList &hidden)
+{
+    DesktopSettings updated = m_value;
+    updated.hiddenProviders = normalizeHiddenProviders(hidden);
     return save(updated);
 }
 

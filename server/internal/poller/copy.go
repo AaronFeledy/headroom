@@ -33,6 +33,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		FetchFailure:          copyFetchFailure(data.FetchFailure),
 		CredentialEpoch:       copyString(data.CredentialEpoch),
 		Auth:                  copyAuth(data.Auth),
+		AccountPresence:       data.AccountPresence,
 		ProviderName:          data.ProviderName,
 		ProviderType:          data.ProviderType,
 		Account:               data.Account.Clone(),

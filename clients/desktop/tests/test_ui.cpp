@@ -2150,6 +2150,246 @@ private slots:
         marker = findItem(window->contentItem(), "paceMarker_Grok_weekly"); QVERIFY(marker); QTRY_VERIFY(marker->isVisible());
         QCOMPARE(window->property("healthy").toInt(), 4);
     }
+private:
+    struct RowEdit {
+        QString presence, auth, command, url;
+        bool failed = false;
+    };
+    // Synthetic snapshot with per-row presence/auth overrides. Real absent rows
+    // are failed, so a visibility bug would surface as an error card.
+    static QByteArray payloadWith(const QHash<QString, RowEdit> &edits, bool zeroUsage = false) {
+        auto rows = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        for (int i = 0; i < rows.size(); ++i) {
+            auto row = rows[i].toObject();
+            const QString name = row[QStringLiteral("provider_name")].toString();
+            if (zeroUsage) {
+                auto buckets = row[QStringLiteral("buckets")].toArray();
+                for (int b = 0; b < buckets.size(); ++b) {
+                    auto bucket = buckets[b].toObject();
+                    bucket[QStringLiteral("utilization")] = 0; buckets[b] = bucket;
+                }
+                row[QStringLiteral("buckets")] = buckets;
+            }
+            if (edits.contains(name)) {
+                const auto edit = edits.value(name);
+                if (!edit.presence.isEmpty()) row[QStringLiteral("account_presence")] = edit.presence;
+                if (!edit.auth.isEmpty()) row[QStringLiteral("auth")] = QJsonObject{
+                    {QStringLiteral("state"), edit.auth},
+                    {QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("cli")},
+                        {QStringLiteral("name"), QStringLiteral("Sample CLI")}}},
+                    {QStringLiteral("sign_in_command"), edit.command},
+                    {QStringLiteral("sign_in_url"), edit.url},
+                    {QStringLiteral("accepts_browser_credentials"), name == QStringLiteral("Cursor")},
+                    {QStringLiteral("checked"), QJsonArray{}}};
+                if (edit.failed) {
+                    row[QStringLiteral("is_success")] = false;
+                    row[QStringLiteral("error")] = QStringLiteral("Not signed in");
+                    row[QStringLiteral("needs_reauth")] = true;
+                    row[QStringLiteral("buckets")] = QJsonArray{};
+                }
+            }
+            rows[i] = row;
+        }
+        return QJsonDocument(rows).toJson();
+    }
+
+private slots:
+    void absentProvidersLeaveTheBoardButStayForIpcAndCredentials() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QHash<QString, RowEdit> edits{
+            {QStringLiteral("Claude"), {"absent", "signed_out", "claude auth login", {}, true}},
+            {QStringLiteral("Cursor"), {"absent", "signed_out", "cursor-agent login", {}, true}}};
+        ControllerFixture controller(dir.filePath("settings.json"), payloadWith(edits, true));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QVERIFY(findItem(window->contentItem(), "providerCard_Codex"));
+        QVERIFY(findItem(window->contentItem(), "providerCard_Grok"));
+        QTRY_VERIFY(!findItem(window->contentItem(), "providerCard_Claude"));
+        QVERIFY(!findItem(window->contentItem(), "providerCard_Cursor"));
+        QCOMPARE(controller.visibleProviders().size(), 2);
+        QCOMPARE(controller.displayProviders().size(), 2);
+        QCOMPARE(controller.primary(), QStringLiteral("Codex"));
+        QCOMPARE(window->property("healthy").toInt(), 2);
+        QCOMPARE(window->property("attention").toInt(), 0);
+        QCOMPARE(window->property("concernLevel").toInt(), 0);
+        // The IPC reply and CredentialService::consider read providers(): the
+        // Cursor browser sign-in push still sees its signed-out absent row.
+        QVariantMap absentCursor, absentClaude;
+        for (const auto &value : controller.providers()) {
+            const auto row = value.toMap();
+            if (row[QStringLiteral("provider_name")] == QStringLiteral("Cursor")) absentCursor = row;
+            if (row[QStringLiteral("provider_name")] == QStringLiteral("Claude")) absentClaude = row;
+        }
+        QCOMPARE(absentClaude.value(QStringLiteral("account_presence")).toString(), QStringLiteral("absent"));
+        QCOMPARE(absentCursor.value(QStringLiteral("auth")).toMap().value(QStringLiteral("state")).toString(), QStringLiteral("signed_out"));
+        QVERIFY(absentCursor.value(QStringLiteral("auth")).toMap().value(QStringLiteral("accepts_browser_credentials")).toBool());
+        // The filter menu offers only visible providers.
+        auto filterButton = findItem(window->contentItem(), "providerFilter"); QVERIFY(filterButton);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                          filterButton->mapToScene(QPointF(filterButton->width() / 2, filterButton->height() / 2)).toPoint());
+        auto filterMenu = window->findChild<QObject *>("providerFilterMenu"); QVERIFY(filterMenu);
+        QTRY_VERIFY(filterMenu->property("opened").toBool());
+        QCOMPARE(filterMenu->property("count").toInt(), 3);
+        QQuickItem *firstChoice = nullptr;
+        QVERIFY(QMetaObject::invokeMethod(filterMenu, "itemAt", Q_RETURN_ARG(QQuickItem *, firstChoice), Q_ARG(int, 1)));
+        QVERIFY(firstChoice);
+        QCOMPARE(firstChoice->property("text").toString(), QStringLiteral("ChatGPT"));
+        QVERIFY(QMetaObject::invokeMethod(filterMenu, "close"));
+        }
+
+    void emptyAccountsStateShowsCommandsAndSettingsProviders() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString settingsPath = dir.filePath("settings.json");
+        QFile settings(settingsPath); QVERIFY(settings.open(QIODevice::WriteOnly));
+        QVERIFY(settings.write(QByteArrayLiteral("{\"schemaVersion\":1,\"connectionMode\":\"local\",\"hiddenProviders\":[\"Codex\"]}")) > 0);
+        settings.close();
+        const QHash<QString, RowEdit> edits{
+            {QStringLiteral("Claude"), {"absent", "signed_out", "claude auth login", "http://cursor.com/login", true}},
+            {QStringLiteral("Codex"), {"", "signed_out", "codex login", {}, true}},
+            {QStringLiteral("Cursor"), {"absent", "signed_out", "cursor-agent login", "https://cursor.com/login", true}},
+            {QStringLiteral("Grok"), {"absent", "signed_out", "grok login", {}, true}}};
+        ControllerFixture controller(settingsPath, payloadWith(edits));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(controller.visibleProviders().size(), 0);
+        auto panelItem = findItem(window->contentItem(), "emptyAccountsPanel"); QVERIFY(panelItem);
+        QTRY_VERIFY(panelItem->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "providerCard_Codex"));
+        auto title = findItem(window->contentItem(), "emptyAccountsTitle"); QVERIFY(title);
+        QCOMPARE(title->property("text").toString(), QStringLiteral("No AI accounts found yet"));
+        auto body = findItem(window->contentItem(), "emptyAccountsBody"); QVERIFY(body);
+        QVERIFY(body->property("text").toString().contains("on this computer"));
+        QVERIFY(findItem(window->contentItem(), "emptyProvider_Claude"));
+        QCOMPARE(findItem(window->contentItem(), "emptyProviderCommand_Claude")->property("text").toString(),
+                 QStringLiteral("claude auth login"));
+        QVERIFY(!findItem(window->contentItem(), "emptyProvider_Codex"));
+        QVERIFY(findItem(window->contentItem(), "emptyProviderOpen_Cursor")->isVisible());
+        QVERIFY(!findItem(window->contentItem(), "emptyProviderOpen_Claude")->isVisible());
+        auto hidden = findItem(window->contentItem(), "emptyProvidersHidden"); QVERIFY(hidden);
+        QVERIFY(hidden->isVisible());
+        QCOMPARE(hidden->property("text").toString(), QStringLiteral("1 hidden · Show in Settings"));
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-empty-accounts.png")));
+        QGuiApplication::clipboard()->clear();
+        QVERIFY(QMetaObject::invokeMethod(findItem(window->contentItem(), "emptyProviderCopy_Claude"), "clicked"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("claude auth login"));
+        QVERIFY(QMetaObject::invokeMethod(hidden, "clicked"));
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        QTRY_VERIFY(panel->property("opened").toBool());
+        auto hint = findItem(window->contentItem(), "providersHint"); QVERIFY(hint);
+        QCOMPARE(hint->property("text").toString(),
+                 QStringLiteral("Headroom shows a card for each provider it finds a sign-in for."));
+        QVERIFY(!findItem(window->contentItem(), "providersConnectHint")->isVisible());
+        auto claudeStatus = findItem(window->contentItem(), "providerSettingStatus_Claude"); QVERIFY(claudeStatus);
+        QCOMPARE(claudeStatus->property("text").toString(), QStringLiteral("Not found"));
+        QCOMPARE(findItem(window->contentItem(), "providerSettingCommand_Claude")->property("text").toString(),
+                 QStringLiteral("claude auth login"));
+        auto codexStatus = findItem(window->contentItem(), "providerSettingStatus_Codex"); QVERIFY(codexStatus);
+        QCOMPARE(codexStatus->property("text").toString(), QStringLiteral("Hidden until you sign in"));
+        auto show = findItem(window->contentItem(), "providerSettingShow_Codex"); QVERIFY(show);
+        QVERIFY(show->isVisible());
+        QVERIFY(findItem(window->contentItem(), "providerSettingOpen_Cursor")->isVisible());
+        auto settingsScroll = window->findChild<QObject *>("settingsScroll"); QVERIFY(settingsScroll);
+        auto flickable = settingsScroll->property("contentItem").value<QObject *>(); QVERIFY(flickable);
+        auto codexRow = findItem(window->contentItem(), "providerSetting_Codex"); QVERIFY(codexRow);
+        flickable->setProperty("contentY", qMax(0.0, codexRow->y() - 140)); QTest::qWait(50);
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-settings-providers.png")));
+        QVERIFY(QMetaObject::invokeMethod(show, "clicked"));
+        QTRY_VERIFY(findItem(window->contentItem(), "providerCard_Codex"));
+        QTRY_VERIFY(SettingsService(settingsPath, false).value().hiddenProviders.isEmpty());
+        // The Repeater rebuilds its delegates on the visibility change.
+        QTRY_VERIFY(findItem(window->contentItem(), "providerSettingStatus_Codex"));
+        QCOMPARE(findItem(window->contentItem(), "providerSettingStatus_Codex")->property("text").toString(),
+                 QStringLiteral("Needs sign-in"));
+        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+    }
+
+    void hideCardPersistsNotifiesAndReturnsWhenSignedInAgain() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QHash<QString, RowEdit> edits{
+            {QStringLiteral("Claude"), {"", "signed_out", "claude auth login", {}, true}}};
+        ControllerFixture controller(dir.filePath("settings.json"), payloadWith(edits));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        window->resize(900, 860);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QVERIFY(findItem(window->contentItem(), "providerCard_Claude"));
+        auto hide = findItem(window->contentItem(), "providerHide_Claude"); QVERIFY(hide);
+        QVERIFY(hide->isVisible());
+        QQmlExpression description(qmlContext(hide), hide, "Accessible.description");
+        QCOMPARE(description.evaluate().toString(), QStringLiteral("Hide this card until you sign in again"));
+        QSignalSpy notices(controller.notifications(), &Notifications::desktopNotification);
+        QVERIFY(QMetaObject::invokeMethod(hide, "clicked"));
+        QTRY_VERIFY(!findItem(window->contentItem(), "providerCard_Claude"));
+        QCOMPARE(SettingsService(controller.settingsPath(), false).value().hiddenProviders, QStringList{"Claude"});
+        QCOMPARE(controller.providers().size(), 4);
+        QCOMPARE(controller.visibleProviders().size(), 3);
+        bool notified = false;
+        for (const auto &arguments : notices) {
+            if (arguments.value(0).toString() == QStringLiteral("Claude hidden")) {
+                QCOMPARE(arguments.value(1).toString(),
+                         QStringLiteral("It comes back when you sign in again. You can show it from Settings."));
+                notified = true;
+            }
+        }
+        QVERIFY(notified);
+        controller.notifications()->present();
+        auto popup = window->findChild<QObject *>("notificationPopup"); QVERIFY(popup);
+        QVERIFY(QMetaObject::invokeMethod(popup, "open"));
+        QTRY_VERIFY(popup->property("opened").toBool());
+        settleFrame(window);
+        QVERIFY(window->grabWindow().save(capturePath(dir, "headroom-hidden-notice.png")));
+        QVERIFY(QMetaObject::invokeMethod(popup, "close"));
+        // A signed-in row is no longer hidden, and the change is saved and logged.
+        controller.replaceSnapshot(payloadWith({
+            {QStringLiteral("Claude"), {"", "signed_in", {}, {}, false}}}));
+        QTRY_VERIFY(findItem(window->contentItem(), "providerCard_Claude"));
+        QVERIFY(SettingsService(controller.settingsPath(), false).value().hiddenProviders.isEmpty());
+        QVERIFY(controller.diagnosticText().contains(QStringLiteral("signed in again")));
+    }
+
+    void settingsProvidersAskForAConnectionUntilReady() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        Controller controller(dir.filePath("settings.json"), nullptr, false, {},
+                              TestUsage::disabledCredentials(), {}, false);
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false); RemoteUpdateService remoteUpdate;
+        QQmlApplicationEngine engine;
+        loadDashboard(engine, controller, startup, appInfo, updateService, remoteUpdate, false);
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QCOMPARE(controller.state().value(QStringLiteral("status")).toString(), QStringLiteral("setup"));
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
+        QVERIFY(QMetaObject::invokeMethod(panel, "open"));
+        QTRY_VERIFY(panel->property("opened").toBool());
+        auto connectHint = findItem(window->contentItem(), "providersConnectHint"); QVERIFY(connectHint);
+        QVERIFY(connectHint->isVisible());
+        QCOMPARE(connectHint->property("text").toString(), QStringLiteral("Connect to a server to see its providers."));
+        QVERIFY(!findItem(window->contentItem(), "providerSettingsList")->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+    }
+
 };
 int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QQuickWindow::setDefaultAlphaBuffer(true); QApplication app(argc, argv); app.setPalette(headroomPalette()); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
 #include "test_ui.moc"

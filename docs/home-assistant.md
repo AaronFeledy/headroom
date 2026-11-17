@@ -26,6 +26,10 @@ account rows such as `Claude (Work)` are appended after these, so adding an
 account does not shift existing indexes. `Codex` is the compatible API name for
 the provider Headroom displays as ChatGPT, and `OpenCodeGo` is the API name for
 OpenCode Go; it sorts last, so existing sensor names and indexes do not change.
+Rows still exist for every enabled provider, so indexes stay unchanged even
+when a provider is not signed in. The additive `account_presence` field is
+`present` when Headroom found an account for that row and `absent` when it did
+not.
 
 The additive `auth` object describes sign-in state, source, and recovery hints;
 existing sensor fields and plain HTTP keep working. Current servers can also

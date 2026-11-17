@@ -13,6 +13,8 @@ export type Provider = {
   is_success: boolean;
   needs_reauth: boolean;
   auth?: { state: string; source?: { readonly kind?: string; readonly name?: string } | null };
+  // "absent" when the server has never found a sign-in; anything else counts as present.
+  account_presence?: unknown;
   primary_status_text?: unknown;
   secondary_status_text?: unknown;
   buckets: Bucket[];
@@ -118,6 +120,7 @@ export function keyView(snapshot: Snapshot | undefined, raw: Settings, now = Dat
   if (snapshot.status !== "ready") return unavailable("Offline");
   const p = matchingProvider(snapshot, config);
   if (!p) return unavailable("Disabled", "Enable in app");
+  if (p.account_presence === "absent") return unavailable("Not found", "Sign in to add");
   if (p.needs_reauth || ["signed_out", "expired"].includes(p.auth?.state ?? "")) return unavailable("Sign in");
   if (p.error !== null || !p.is_success) return unavailable("No data");
   if (p.fetch_status?.failure_kind) return unavailable("Retrying", "Reading unavailable");

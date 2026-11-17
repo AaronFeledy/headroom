@@ -21,6 +21,8 @@ struct DesktopSettings {
     QString trayProvider = "first";
     QString primary = "Claude";
     QStringList order;
+    // Row keys whose card the user hid until that provider signs in again.
+    QStringList hiddenProviders;
     bool startup = false;
     bool startupMigrationPending = false;
     QSize windowSize;
@@ -44,6 +46,7 @@ public:
 
     QString save(const DesktopSettings &settings, bool explicitUserSave = false);
     QString saveOrder(const QStringList &order, const QString &primary);
+    QString saveHiddenProviders(const QStringList &hidden);
     QString saveStartupPreference(bool enabled);
     QString completeStartupMigration();
     QString saveWindowSize(const QSize &size);
@@ -53,6 +56,8 @@ public:
     static QString instanceIdentityPath();
     static QString defaultLegacyPath();
     static QStringList normalizeOrder(const QStringList &order, const QString &legacyPrimary = {});
+    // At most 64 distinct row keys of up to 128 printable characters.
+    static QStringList normalizeHiddenProviders(const QStringList &hidden);
     static QString normalizeProvider(const QString &provider);
     static bool validTrayProvider(const QString &value);
 

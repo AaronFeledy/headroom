@@ -84,6 +84,8 @@ func decodeUsage(body []byte) ([]Provider, error) {
 		raw := rawProviders[index]
 		provider.ProviderType = decodeProviderType(raw["provider_type"])
 		provider.Account = decodeProviderAccount(raw["account"])
+		var presence string
+		provider.AccountAbsent = json.Unmarshal(raw["account_presence"], &presence) == nil && presence == "absent"
 		if _, ok := raw["error"]; !ok {
 			return nil, errors.New("usage server omitted provider status")
 		}

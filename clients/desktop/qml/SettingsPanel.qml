@@ -167,6 +167,83 @@ Popup {
                 Text { text: "Stored locally in your current-user settings file."; color: Theme.muted; font.pixelSize: 11 }
                 Check { id: forget; visible: backend.settings.hasToken; text: "Remove saved token"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
             }
+            ColumnLayout { Layout.fillWidth: true; spacing: 8
+                Caption { text: "PROVIDERS" }
+                Text {
+                    objectName: "providersHint"
+                    text: "Headroom shows a card for each provider it finds a sign-in for."
+                    color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                Text {
+                    objectName: "providersConnectHint"
+                    visible: backend.state.status !== "ready"
+                    text: "Connect to a server to see its providers."
+                    color: Theme.muted; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                ColumnLayout {
+                    objectName: "providerSettingsList"
+                    visible: backend.state.status === "ready"
+                    Layout.fillWidth: true; spacing: 10
+                    Repeater {
+                        model: backend.providerStatus
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            objectName: "providerSetting_" + modelData.provider_name
+                            Layout.fillWidth: true; spacing: 4
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 8
+                                Text {
+                                    text: modelData.display_name; textFormat: Text.PlainText
+                                    color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium
+                                    Layout.fillWidth: true; elide: Text.ElideRight
+                                }
+                                Text {
+                                    objectName: "providerSettingStatus_" + modelData.provider_name
+                                    text: modelData.status_text; textFormat: Text.PlainText
+                                    color: modelData.status === "connected" ? Theme.green
+                                        : modelData.status === "hidden" ? Theme.comment : Theme.orange
+                                    font.pixelSize: 11
+                                }
+                                ActionButton {
+                                    objectName: "providerSettingShow_" + modelData.provider_name
+                                    visible: modelData.status === "hidden"
+                                    text: "Show"; quiet: true; implicitHeight: 26; font.pixelSize: 11
+                                    Accessible.name: "Show " + modelData.display_name + " card"
+                                    onClicked: backend.showProvider(modelData.provider_name)
+                                }
+                            }
+                            RowLayout {
+                                visible: modelData.status === "not_found" && modelData.command.length > 0
+                                Layout.fillWidth: true; spacing: 8
+                                Rectangle {
+                                    Layout.fillWidth: true; implicitHeight: 26; radius: 6
+                                    color: Theme.inset; border.color: Theme.selection
+                                    Text {
+                                        objectName: "providerSettingCommand_" + modelData.provider_name
+                                        anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                                        text: modelData.command; textFormat: Text.PlainText
+                                        color: Theme.muted; font.family: "monospace"; font.pixelSize: 11
+                                        elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                                ActionButton {
+                                    objectName: "providerSettingCopy_" + modelData.provider_name
+                                    text: "Copy"; quiet: true; implicitHeight: 26; font.pixelSize: 11
+                                    Accessible.name: "Copy sign-in command for " + modelData.display_name
+                                    onClicked: backend.copyText(modelData.command)
+                                }
+                            }
+                            ActionButton {
+                                objectName: "providerSettingOpen_" + modelData.provider_name
+                                visible: modelData.status === "not_found" && modelData.url.length > 0
+                                text: "Open cursor.com"; quiet: true; implicitHeight: 26; font.pixelSize: 11
+                                Accessible.name: "Open cursor.com"
+                                onClicked: Qt.openUrlExternally(modelData.url)
+                            }
+                        }
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 ColumnLayout { Layout.fillWidth: true; spacing: 6

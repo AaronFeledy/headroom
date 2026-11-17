@@ -19,6 +19,17 @@ test("ChatGPT keys select stable bucket IDs and show used or remaining with rese
   assert.equal(keyView(snapshot, { provider: "Codex", bucket: "api" }, now).value, "No meter");
   assert.equal(keyView(snapshot, { provider: "Claude" }, now).value, "Disabled");
 });
+test("a provider the server never found a sign-in for says so instead of asking to sign in again", () => {
+  const signedOut = { ...provider, error: "Run `codex` to sign in.", is_success: false, buckets: [],
+    auth: { state: "signed_out" } };
+  const absent: Snapshot = { status: "ready", providers: [{ ...signedOut, account_presence: "absent" }] };
+  assert.deepEqual(keyView(absent, { provider: "Codex" }, now),
+    { provider: "ChatGPT", label: "", value: "Not found", detail: "Sign in to add" });
+  for (const presence of ["present", undefined, 7]) {
+    const row = { ...signedOut, account_presence: presence };
+    assert.equal(keyView({ status: "ready", providers: [row] }, { provider: "Codex" }, now).value, "Sign in");
+  }
+});
 test("Cursor auto is a real meter, distinct from first available", () => {
   const p = { ...provider, provider_name: "Cursor", buckets: [
     { ...provider.buckets[0], id: "plan" }, { ...provider.buckets[1], id: "auto" }] };

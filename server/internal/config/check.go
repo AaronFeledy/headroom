@@ -63,6 +63,7 @@ func buildConfig(data []byte, opts LoadOptions, source buildContext) (Config, er
 		cfg.TLSDir = tlsDirectory(defaultPath)
 		cfg.ResetStateDir = filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
 		cfg.ResetAutomationDir = filepath.Join(filepath.Dir(defaultPath), "reset-automation")
+		cfg.ProviderPresenceDir = filepath.Join(filepath.Dir(defaultPath), "provider-presence")
 	}
 	if err := validateAccounts(cfg, source.goos, opts); err != nil {
 		return Config{}, err

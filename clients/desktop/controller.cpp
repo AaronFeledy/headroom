@@ -22,6 +22,12 @@ QString remindersPath(const QString &settingsPath) {
     const QFileInfo settings(settingsPath);
     return settings.absoluteDir().filePath(settings.completeBaseName() + QStringLiteral(".reminders.json"));
 }
+// Diagnostics name extra accounts by their config id only; labels are user text.
+QString diagnosticRowName(const QVariantMap &row) {
+    const auto account = row.value("account").toMap();
+    return Usage::displayName(Usage::providerType(row))
+        + (account.isEmpty() ? QString() : ":" + account.value("id").toString());
+}
 }
 
 Controller::Controller(const QString &configPath, QObject *parent, bool allowAutomaticMigration,
@@ -447,6 +453,7 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     m_waitingForUsageRetry = false;
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
     m_providers = providers; m_maskedProviders.clear(); m_lastGood = now; m_status = ConnectionStatus::Ready; m_message.clear();
+    restoreSignedInProviders();
     // An accepted refresh never counts as fresh data by itself; only a snapshot
     // whose every attempt time advanced proves the server finished the round.
     if (m_recovery.isActive() && refreshObserved(providers)) endRefreshWindow();
@@ -566,12 +573,119 @@ QVariantList Controller::providers() const {
     });
     return result;
 }
+
+QVariantList Controller::visibleProviders() const {
+    QVariantList result;
+    const auto hidden = m_settingsService.value().hiddenProviders;
+    for (const auto &value : providers()) {
+        const auto row = value.toMap();
+        if (Usage::isAbsent(row) || hidden.contains(Usage::rowKey(row))) continue;
+        result.append(value);
+    }
+    return result;
+}
+
+QVariantList Controller::providerStatus() const {
+    QVariantList result;
+    const auto hidden = m_settingsService.value().hiddenProviders;
+    for (const auto &value : providers()) {
+        const auto row = value.toMap();
+        const QString name = row["provider_name"].toString();
+        const QString key = Usage::rowKey(row);
+        const QString state = row.value("auth").toMap().value("state").toString();
+        QString status = QStringLiteral("connected"), text = QStringLiteral("Connected");
+        if (hidden.contains(key)) { status = QStringLiteral("hidden"); text = QStringLiteral("Hidden until you sign in"); }
+        else if (Usage::isAbsent(row)) { status = QStringLiteral("not_found"); text = QStringLiteral("Not found"); }
+        else if (state == QStringLiteral("signed_out") || state == QStringLiteral("expired")
+                 || (state.isEmpty() && row.value("needs_reauth").toBool())) {
+            status = QStringLiteral("needs_sign_in"); text = QStringLiteral("Needs sign-in");
+        }
+        result.append(QVariantMap{{"provider_name", name}, {"display_name", Usage::displayName(name)},
+            {"row_key", key}, {"status", status}, {"status_text", text},
+            {"command", LoginCopy::command(row)}, {"url", LoginCopy::signInUrl(row)}});
+    }
+    return result;
+}
 QString Controller::primary() const {
-    const auto ordered = providers();
-    if (!ordered.isEmpty()) return ordered.first().toMap()["provider_name"].toString();
+    if (!m_providers.isEmpty()) {
+        // The tray and footer only ever name a card the dashboard actually shows.
+        const auto visible = visibleProviders();
+        return visible.isEmpty() ? QString() : visible.first().toMap()["provider_name"].toString();
+    }
     if (m_order.isEmpty()) return m_settingsService.value().primary;
     // Without rows an account key ("Claude:work") has no label; the tray shows its provider type.
     return m_order.first().section(':', 0, 0);
+}
+
+bool Controller::hideProvider(const QString &name) {
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        if (row["provider_name"].toString() != name) continue;
+        const QString state = row.value("auth").toMap().value("state").toString();
+        if (state != QStringLiteral("signed_out") && state != QStringLiteral("expired")) return false;
+        const QString key = Usage::rowKey(row);
+        auto hidden = m_settingsService.value().hiddenProviders;
+        if (hidden.contains(key)) return true;
+        if (hidden.size() >= 64) return false;
+        hidden.append(key);
+        const QString error = m_settingsService.saveHiddenProviders(hidden);
+        if (!error.isEmpty()) {
+            log(QStringLiteral("Settings"), QStringLiteral("Could not save the hidden card: ") + error);
+            return false;
+        }
+        log(QStringLiteral("Settings"), diagnosticRowName(row) + QStringLiteral(" card hidden until sign-in."));
+        // Never leave the tray pointing at a card the user just hid, even offline.
+        if (m_tray.key == key) m_tray = {};
+        updateTrayProvider();
+        m_notificationCenter.post("providerVisibility_" + key, Usage::displayName(name) + " hidden",
+            "It comes back when you sign in again. You can show it from Settings.");
+        emit settingsChanged(); emit providersChanged(); emit changed();
+        return true;
+    }
+    return false;
+}
+
+bool Controller::showProvider(const QString &name) {
+    for (const auto &value : providers()) {
+        const auto row = value.toMap();
+        if (row["provider_name"].toString() != name) continue;
+        const QString key = Usage::rowKey(row);
+        auto hidden = m_settingsService.value().hiddenProviders;
+        if (!hidden.contains(key)) return true;
+        hidden.removeAll(key);
+        const QString error = m_settingsService.saveHiddenProviders(hidden);
+        if (!error.isEmpty()) {
+            log(QStringLiteral("Settings"), QStringLiteral("Could not show the hidden card: ") + error);
+            return false;
+        }
+        log(QStringLiteral("Settings"), diagnosticRowName(row) + QStringLiteral(" card shown from Settings."));
+        updateTrayProvider();
+        emit settingsChanged(); emit providersChanged(); emit changed();
+        return true;
+    }
+    return false;
+}
+
+void Controller::restoreSignedInProviders() {
+    auto hidden = m_settingsService.value().hiddenProviders;
+    if (hidden.isEmpty()) return;
+    QStringList restored;
+    for (const auto &value : m_providers) {
+        const auto row = value.toMap();
+        const QString key = Usage::rowKey(row);
+        if (!hidden.contains(key)) continue;
+        if (row.value("auth").toMap().value("state").toString() != QStringLiteral("signed_in")) continue;
+        hidden.removeAll(key);
+        restored.append(diagnosticRowName(row));
+    }
+    if (restored.isEmpty()) return;
+    const QString error = m_settingsService.saveHiddenProviders(hidden);
+    if (!error.isEmpty()) {
+        log(QStringLiteral("Settings"), QStringLiteral("Could not save the provider visibility change: ") + error);
+        return;
+    }
+    for (const auto &name : restored)
+        log(QStringLiteral("Settings"), name + QStringLiteral(" is signed in again; its card is shown."));
 }
 void Controller::moveProvider(const QString &source, const QString &target, bool after) {
     if (source == target) return;
@@ -702,7 +816,7 @@ void Controller::updateTrayProvider() {
     // Masked rows during an outage carry no readings; keep the selection until
     // the server answers again, like the warning tiers.
     if (m_status != ConnectionStatus::Ready) return;
-    m_tray = TrayVisual::constrainedProvider(providers(), m_tray.key,
+    m_tray = TrayVisual::constrainedProvider(visibleProviders(), m_tray.key,
         [this](const QString &provider, const QVariantMap &bucket) { return concern(provider, bucket); });
 }
 QString Controller::trayProvider() const {

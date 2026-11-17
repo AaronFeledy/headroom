@@ -14,7 +14,13 @@ import (
 // treat the returned cached reading as a fresh observation.
 func (s *providerState) pollAndRelease(ctx context.Context, now func() time.Time) (Entry, bool) {
 	defer s.release()
-	return s.pollLocked(ctx, now)
+	entry, fetched := s.pollLocked(ctx, now)
+	if fetched {
+		// The durable write happens here, with both the fetch lock and the
+		// provider lock released.
+		s.owner.rememberPresence(entry.Data)
+	}
+	return entry, fetched
 }
 
 func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) (Entry, bool) {
@@ -60,6 +66,8 @@ func (s *providerState) pollLocked(ctx context.Context, now func() time.Time) (E
 		kind = &value
 	}
 	entry = Entry{Data: s.normalize(data, err), FetchedAt: completed}
+	// Presence uses this reading's evidence plus the memory, never disk IO.
+	entry.Data.AccountPresence = s.accountPresence(entry.Data)
 	entry.Data.CredentialEpoch = copyString(data.CredentialEpoch)
 	entry.Data.FetchStatus = &usage.FetchStatus{FetchedAt: completed.Format(time.RFC3339Nano), FailureKind: kind, CredentialEpoch: copyString(data.CredentialEpoch)}
 	if kind != nil && failure == nil {

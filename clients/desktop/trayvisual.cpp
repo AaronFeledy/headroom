@@ -91,7 +91,9 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
         result.tooltip = QString("%1 · %2% used\n%3").arg(meterName).arg(qRound(result.used)).arg(resetText);
         const auto highest = Usage::WarningLevel(qMax(int(result.level), int(result.secondary)));
         if (highest != Usage::WarningLevel::Normal) result.tooltip += " · " + Usage::warningName(highest);
-    } else result.tooltip = name + "\n" + statusText(result.kind);
+    } else if (result.kind == Kind::Idle && shown.isEmpty() && status == "ready")
+        result.tooltip = name + "\n" + "No AI accounts found yet";
+    else result.tooltip = name + "\n" + statusText(result.kind);
     return result;
 }
 

@@ -257,11 +257,17 @@ func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
 	status := "ok"
 	for _, name := range h.providerNames {
 		entry, ok := h.cache.Get(name)
-		state := providerHealth{Name: name, OK: ok && entry.Data.Error == nil}
+		accountPresence := usage.PresencePresent
+		if ok && entry.Data.AccountPresence == usage.PresenceAbsent {
+			accountPresence = usage.PresenceAbsent
+		}
+		state := providerHealth{Name: name, OK: ok && entry.Data.Error == nil, AccountPresence: accountPresence}
 		if ok {
 			state.FetchedAt = formatFetchedAt(entry.FetchedAt)
 		}
-		if !state.OK {
+		// A provider without an account is not a problem to report; an entry
+		// that was not polled yet counts as present.
+		if !state.OK && accountPresence != usage.PresenceAbsent {
 			status = "degraded"
 		}
 		providers = append(providers, state)

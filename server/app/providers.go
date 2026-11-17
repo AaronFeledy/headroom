@@ -7,6 +7,7 @@ import (
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/presence"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/claude"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/codex"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
@@ -24,7 +25,8 @@ func buildPollerWithCursorDiscovery(cfg config.Config, discovery *cursor.Discove
 }
 
 func buildPollerWithDiagnostics(cfg config.Config, discovery *cursor.Discovery, logger *slog.Logger, env []string) (*poller.Poller, *codex.Client, *claude.Client, *cursor.Client, *grok.Provider, []string, error) {
-	providerPoller := poller.New(poller.Options{Logger: logger})
+	providerPresence := presence.New(presence.Options{Dir: cfg.ProviderPresenceDir, Logger: logger})
+	providerPoller := poller.New(poller.Options{Logger: logger, Presence: providerPresence})
 	var cursorClient *cursor.Client
 	var codexClient *codex.Client
 	var claudeClient *claude.Client

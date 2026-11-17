@@ -35,6 +35,9 @@ type Config struct {
 	ResetStateDir  string
 	// ResetAutomationDir holds the server-owned automatic reset authorization.
 	ResetAutomationDir string
+	// ProviderPresenceDir holds the durable record of providers the user has an
+	// account with. It follows the default config base, not --config.
+	ProviderPresenceDir string
 }
 
 type AccountConfig struct {

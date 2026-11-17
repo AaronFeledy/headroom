@@ -30,8 +30,14 @@ ApplicationWindow {
     // Cards may show a clearly labelled stale reading; health, attention, and
     // the tray only ever use the raw server model.
     property var providers: backend.displayProviders
-    property var liveProviders: backend.providers
+    property var liveProviders: backend.visibleProviders
+    property var providerDirectory: backend.providerStatus
     property var shownProviders: providers.filter(p => filter === "All providers" || p.provider_name === filter)
+    // A ready server that reports rows the user has no sign-in for yet.
+    readonly property bool accountsEmpty: window.state.status === "ready"
+        && providers.length === 0 && providerDirectory.length > 0
+    readonly property var absentProviders: providerDirectory.filter(row => row.status === "not_found")
+    readonly property int hiddenProviderCount: providerDirectory.filter(row => row.status === "hidden").length
     property int healthy: liveProviders.filter(p => p.is_success).length
     property int concernLevel: {
         window.state // Update severity as time advances, even between polls.
@@ -252,7 +258,7 @@ ApplicationWindow {
                     }
                     Rectangle {
                         objectName: "connectionPlaceholder"
-                        visible: window.providers.length === 0
+                        visible: window.providers.length === 0 && !window.accountsEmpty
                         Layout.fillWidth: true; implicitHeight: 300; radius: 12; color: Theme.surface
                         border.color: window.serverOffline ? Theme.red : Theme.selection
                         ColumnLayout {
@@ -268,6 +274,87 @@ ApplicationWindow {
                             Text { text: window.state.status === "ready" ? "No providers enabled" : window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing your local server" : "Connecting to your server") : "Connect your usage server"; color: Theme.foreground; font.pixelSize: 24; font.weight: Font.Medium; Layout.alignment: Qt.AlignHCenter }
                             Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : window.state.status === "connecting" || window.state.status === "offline" ? window.state.message : "Bring Claude, ChatGPT, Cursor, Grok, and OpenCode Go into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                             ActionButton { text: window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing…" : "Connecting…") : window.state.status === "offline" ? "Connection settings →" : "Connect your backend →"; accent: true; Layout.alignment: Qt.AlignHCenter; onClicked: settings.open() }
+                        }
+                    }
+                    Rectangle {
+                        objectName: "emptyAccountsPanel"
+                        visible: window.accountsEmpty
+                        Layout.fillWidth: true
+                        implicitHeight: emptyAccountsBody.implicitHeight + 48
+                        radius: 12; color: Theme.surface
+                        border.color: Theme.selection
+                        ColumnLayout {
+                            id: emptyAccountsBody
+                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
+                            spacing: 14
+                            Text {
+                                objectName: "emptyAccountsTitle"
+                                text: "No AI accounts found yet"
+                                color: Theme.foreground; font.pixelSize: 22; font.weight: Font.Medium
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                objectName: "emptyAccountsBody"
+                                text: "Headroom adds a card for each service you're signed in to "
+                                    + (backend.settings.mode === "local" ? "on this computer" : "on the server")
+                                    + ". Sign in to one of these and it appears here automatically."
+                                color: Theme.muted; font.pixelSize: 13
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                            }
+                            Repeater {
+                                model: window.absentProviders
+                                Rectangle {
+                                    required property var modelData
+                                    objectName: "emptyProvider_" + modelData.provider_name
+                                    Layout.fillWidth: true
+                                    implicitHeight: emptyProviderBody.implicitHeight + 20
+                                    radius: 9; color: Theme.inset
+                                    ColumnLayout {
+                                        id: emptyProviderBody
+                                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                                        spacing: 6
+                                        Text {
+                                            text: modelData.display_name; textFormat: Text.PlainText
+                                            color: Theme.foreground; font.pixelSize: 13; font.weight: Font.Medium
+                                        }
+                                        RowLayout {
+                                            visible: modelData.command.length > 0
+                                            Layout.fillWidth: true; spacing: 8
+                                            Rectangle {
+                                                Layout.fillWidth: true; implicitHeight: 26; radius: 6
+                                                color: Theme.background; border.color: Theme.selection
+                                                Text {
+                                                    objectName: "emptyProviderCommand_" + modelData.provider_name
+                                                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
+                                                    text: modelData.command; textFormat: Text.PlainText
+                                                    color: Theme.muted; font.family: "monospace"; font.pixelSize: 11
+                                                    elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
+                                                }
+                                            }
+                                            ActionButton {
+                                                objectName: "emptyProviderCopy_" + modelData.provider_name
+                                                text: "Copy"; quiet: true; implicitHeight: 26; font.pixelSize: 11
+                                                Accessible.name: "Copy sign-in command for " + modelData.display_name
+                                                onClicked: backend.copyText(modelData.command)
+                                            }
+                                        }
+                                        ActionButton {
+                                            objectName: "emptyProviderOpen_" + modelData.provider_name
+                                            visible: modelData.url.length > 0
+                                            text: "Open cursor.com"; quiet: true; implicitHeight: 26; font.pixelSize: 11
+                                            Accessible.name: "Open cursor.com"
+                                            onClicked: Qt.openUrlExternally(modelData.url)
+                                        }
+                                    }
+                                }
+                            }
+                            ActionButton {
+                                objectName: "emptyProvidersHidden"
+                                visible: window.hiddenProviderCount > 0
+                                text: window.hiddenProviderCount + " hidden · Show in Settings"
+                                quiet: true
+                                onClicked: settings.open()
+                            }
                         }
                     }
                 }

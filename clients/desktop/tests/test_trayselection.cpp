@@ -1,5 +1,11 @@
+#include "usagefixture.h"
 #include "trayvisual.h"
 #include "usage.h"
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTemporaryDir>
 #include <QtTest>
 #include "statemachine_assertions.h"
 
@@ -15,6 +21,23 @@ class TraySelectionTest : public QObject {
             {"resets_at", QDateTime::fromString("2026-09-08T12:00:00Z", Qt::ISODate).addSecs(remaining).toString(Qt::ISODate)}};
     }
     static QVariantMap byTier(const QString &, const QVariantMap &bucket) { return {{"severity", bucket["tier"]}}; }
+    static QByteArray snapshotWithAbsentClaude(double claudeWeekly, double codexWeekly = 41) {
+        auto rows = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        for (int i = 0; i < 2; ++i) {
+            auto row = rows[i].toObject();
+            auto buckets = row["buckets"].toArray();
+            for (int b = 0; b < buckets.size(); ++b) {
+                auto bucket = buckets[b].toObject();
+                if (bucket["id"] == "weekly")
+                    bucket["utilization"] = i == 0 ? claudeWeekly : codexWeekly;
+                buckets[b] = bucket;
+            }
+            row["buckets"] = buckets;
+            if (i == 0) row["account_presence"] = "absent";
+            rows[i] = row;
+        }
+        return QJsonDocument(rows).toJson();
+    }
 private slots:
     void init() {
         failOnStateMachineWarning();
@@ -81,6 +104,27 @@ private slots:
         const auto fallback = TrayVisual::build(ready(), rows, "Claude", "weekly_opus", byTier, now);
         QCOMPARE(fallback.used, 12);
         QCOMPARE(fallback.secondary, Usage::WarningLevel::Critical);
+    }
+    void firstVisibleProviderDrivesTheTray() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        ControllerFixture controller(dir.filePath("settings.json"), snapshotWithAbsentClaude(20));
+        QTRY_COMPARE(controller.providers().size(), 4);
+        QCOMPARE(controller.visibleProviders().size(), 3);
+        QCOMPARE(controller.primary(), QStringLiteral("Codex"));
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Codex"));
+    }
+
+    void constrainedTrayChoosesAmongVisibleRowsOnly() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath("settings.json");
+        QFile settings(path); QVERIFY(settings.open(QIODevice::WriteOnly));
+        QVERIFY(settings.write(QByteArrayLiteral("{\"schemaVersion\":1,\"connectionMode\":\"local\",\"trayProvider\":\"constrained\"}")) > 0);
+        settings.close();
+        // The absent row would win every comparison if it were still a candidate.
+        ControllerFixture controller(path, snapshotWithAbsentClaude(100, 90));
+        QTRY_COMPARE(controller.visibleProviders().size(), 3);
+        QCOMPARE(controller.primary(), QStringLiteral("Codex"));
+        QCOMPARE(controller.trayProvider(), QStringLiteral("Codex"));
     }
 };
 QTEST_MAIN(TraySelectionTest)
