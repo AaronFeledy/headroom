@@ -135,6 +135,16 @@ private slots:
         QCOMPARE(LoginCopy::compose(row, "local", "disabled", helper)["lines"].toStringList(),
             (QStringList{"Headroom couldn't find a Claude sign-in.", "Headroom couldn't read Firefox.", "Synthetic error"}));
     }
+    void openCodeGoSignInCopy() {
+        auto row = provider("signed_out", "cli", "OpenCode Go CLI"); row["provider_name"] = "OpenCodeGo";
+        row["error"] = "OpenCode's database could not be read. Will retry.";
+        auto auth = row["auth"].toMap(); auth["sign_in_command"] = "opencode auth login"; row["auth"] = auth;
+        QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Headroom couldn't find an OpenCode Go sign-in.", "Run opencode auth login on this computer."}));
+        auth["sign_in_command"] = QVariant(); row["auth"] = auth;
+        QCOMPARE(LoginCopy::compose(row, "local", "disabled")["lines"].toStringList(),
+            (QStringList{"Headroom couldn't find an OpenCode Go sign-in.", "OpenCode's database could not be read. Will retry."}));
+    }
     void proofVerification() {
         const QByteArray nonce(64, 'a'), token("synthetic-token");
         const auto certificate = TlsFixture::certificate();
