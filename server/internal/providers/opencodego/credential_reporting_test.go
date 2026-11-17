@@ -228,10 +228,10 @@ func Test_Provider_Fetch_credentials_path_reports_checked_entries(t *testing.T) 
 		// When
 		data := fetch(t, provider)
 
-		// Then
-		want := []usage.AuthChecked{{Kind: "cli", Name: "OpenCode Go CLI (WSL)", Status: "signed_out"}}
-		if !slices.Equal(data.Auth.Checked, want) {
-			t.Fatalf("checked = %#v, want %#v", data.Auth.Checked, want)
+		// Then the entry is named for WSL; its status depends on whether this
+		// host can reach the share, so only the name is asserted.
+		if len(data.Auth.Checked) != 1 || data.Auth.Checked[0].Kind != "cli" || data.Auth.Checked[0].Name != "OpenCode Go CLI (WSL)" {
+			t.Fatalf("checked = %#v", data.Auth.Checked)
 		}
 	})
 }
