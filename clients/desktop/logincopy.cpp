@@ -12,6 +12,17 @@ QString text(const QVariant &value, int maximum = 200) {
 }
 }
 
+QString LoginCopy::command(const QVariantMap &provider) {
+    return text(provider.value(QStringLiteral("auth")).toMap().value(QStringLiteral("sign_in_command")));
+}
+
+QString LoginCopy::signInUrl(const QVariantMap &provider) {
+    const QString candidate = text(provider.value(QStringLiteral("auth")).toMap().value(QStringLiteral("sign_in_url")));
+    const QUrl url(candidate, QUrl::StrictMode);
+    return url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty()
+        && url.userInfo().isEmpty() ? candidate : QString();
+}
+
 QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode, const QString &sharing,
                              const QVariantList &helperChecked) {
     if (!provider.contains(QStringLiteral("auth"))) return {};
@@ -39,14 +50,13 @@ QVariantMap LoginCopy::compose(const QVariantMap &provider, const QString &mode,
     else if (kind == QStringLiteral("desktop")) lines.append(QStringLiteral("The %1 sign-in shared by Headroom expired.").arg(name));
     else if (kind == QStringLiteral("api")) lines.append(QStringLiteral("The credential sent to the server expired."));
     else lines.append(QStringLiteral("Your %1 sign-in %2 expired.").arg(Usage::displayName(provider.value(QStringLiteral("provider_name")).toString()), location));
-    const QString command = text(auth.value(QStringLiteral("sign_in_command")));
+    const QString command = LoginCopy::command(provider);
     if (!command.isEmpty()) {
         result[QStringLiteral("command")] = command;
         lines.append(QStringLiteral("Run %1 %2.").arg(command, location));
     }
-    const QString signInUrl = text(auth.value(QStringLiteral("sign_in_url")));
-    const QUrl url(signInUrl, QUrl::StrictMode);
-    const bool validUrl = url.isValid() && url.scheme() == QStringLiteral("https") && !url.host().isEmpty() && url.userInfo().isEmpty();
+    const QString signInUrl = LoginCopy::signInUrl(provider);
+    const bool validUrl = !signInUrl.isEmpty();
     const auto checked = auth.value(QStringLiteral("checked")).toList();
     bool browserOnServer = false;
     for (const auto &value : checked.mid(0, 12))

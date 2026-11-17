@@ -19,6 +19,8 @@ func (p *Poller) UpdateCredentials(ctx context.Context, name string, update func
 	defer func() {
 		state.release()
 		if fetched {
+			// Record after both the fetch lock and the provider lock are released.
+			p.rememberPresence(entry.Data)
 			p.notifyAfterPoll(state.name, entry)
 		}
 	}()

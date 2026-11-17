@@ -44,6 +44,10 @@ type Provider struct {
 	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 	UsageDetails          *UsageDetails          `json:"usage_details"`
 	ResetAutomation       *ResetAutomation       `json:"reset_automation"`
+	// AccountAbsent is true only when the server reports account_presence
+	// "absent": it has never found a sign-in for this provider. Older servers,
+	// unknown values, and malformed values leave the row shown.
+	AccountAbsent bool `json:"-"`
 }
 
 type ProviderAuth struct {

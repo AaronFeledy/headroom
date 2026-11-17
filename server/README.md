@@ -335,6 +335,23 @@ coexist with a network or upstream error. Existing fields remain unchanged; Curs
 `needs_reauth` is true when signed out or expired, and `reauth_command` mirrors
 its sign-in command.
 
+Each entry also includes `account_presence`: `present` when Headroom found an
+account for that row, `absent` when it did not. A row is present when it is an
+extra Claude account, when this server has seen it present before, or when the
+current reading proves an account: `auth.state` is `signed_in` or `expired`,
+`auth.source` is set, or a `checked` entry is `signed_in`, `expired`, or
+`encrypted`. The `locked`, `unreadable`, and `signed_out` statuses prove
+nothing. Rows are never omitted and every enabled provider keeps polling, so a
+new sign-in is noticed without a restart. Clients show only `present` rows, so
+a provider that had an account and lost its sign-in keeps its reconnect card.
+The memory is one owner-only file,
+`<default config directory>/provider-presence/seen.json`, independent of
+`--config`; it holds only row keys and first-seen times, and deleting it resets
+the memory. In `GET /api/v1/health`, each `providers[]` entry carries the same
+`account_presence`, and top-level `status` becomes `degraded` only when a
+failing provider is not `absent`. An entry that has not been polled yet reports
+`present`.
+
 Usage reads remain cache-only. Providers run independently, with at most one
 fetch per provider and a 30-second service deadline for background attempts.
 Read-only usage network failures and HTTP 408/5xx retry after 10, 20, and 40
@@ -581,6 +598,10 @@ OpenCode SQLite database or an `auth.json`-format file; an empty path uses
 discovery. Disable unwanted providers with `enabled: false` or
 `USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
 retained while Headroom displays it as ChatGPT.
+
+Clients show only providers that have an account. An enabled provider without
+one keeps polling locally so a new sign-in is noticed, and still appears in the
+API with `account_presence` `absent`.
 
 On macOS, Claude Code keeps its sign-in in the login Keychain. Headroom reads it
 with `/usr/bin/security` and never writes, deletes, or unlocks Keychain items. If

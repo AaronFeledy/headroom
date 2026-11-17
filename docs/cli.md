@@ -132,7 +132,10 @@ with a token first try HTTPS on the same host and port, silently retaining HTTP
 for older servers when the proof is unavailable. Failed upgrade attempts are
 limited to once per six hours per connection during the process lifetime.
 Providers needing sign-in show `Run: <command>` or `Sign in: <url>` hints from
-the server's `auth` metadata.
+the server's `auth` metadata. The text dashboard leaves out providers the server
+has never found a sign-in for (`account_presence: "absent"`); when no provider
+has one yet, it lists each provider's sign-in command instead. `--json` still
+includes every enabled provider.
 
 ## Install without a desktop
 

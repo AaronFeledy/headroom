@@ -73,5 +73,5 @@ func Test_Usage_and_health_include_claude_account_rows(t *testing.T) {
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
 	assertStatus(t, rec, http.StatusOK)
-	assertJSON(t, rec, `{"status":"ok","version":"dev","providers":[{"name":"Claude","ok":true,"fetched_at":"2026-07-12T10:00:00Z"},{"name":"Claude (Work)","ok":true,"fetched_at":"2026-07-12T10:00:00Z"}]}`)
+	assertJSON(t, rec, `{"status":"ok","version":"dev","providers":[{"name":"Claude","ok":true,"fetched_at":"2026-07-12T10:00:00Z","account_presence":"present"},{"name":"Claude (Work)","ok":true,"fetched_at":"2026-07-12T10:00:00Z","account_presence":"present"}]}`)
 }

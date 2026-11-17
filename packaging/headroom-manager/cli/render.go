@@ -22,13 +22,21 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		output.WriteString("No enabled providers.\n")
 		return output.String()
 	}
+	// Providers the server has never found a sign-in for stay out of the
+	// dashboard; they matter only when nothing else can be shown.
+	shown := make([]Provider, 0, len(providers))
 	for _, provider := range providers {
-		name := provider.ProviderName
-		if strings.EqualFold(name, "Codex") {
-			name = "ChatGPT"
-		} else if strings.EqualFold(name, "OpenCodeGo") {
-			name = "OpenCode Go"
+		if !provider.AccountAbsent {
+			shown = append(shown, provider)
 		}
+	}
+	if len(shown) == 0 {
+		clear(warnings)
+		output.WriteString(renderNoAccounts(providers))
+		return output.String()
+	}
+	for _, provider := range shown {
+		name := displayName(provider.ProviderName)
 		fmt.Fprintf(&output, "\n%s", terminalText(name))
 		if provider.Subtitle != nil && strings.TrimSpace(*provider.Subtitle) != "" {
 			fmt.Fprintf(&output, "  %s", terminalText(*provider.Subtitle))
@@ -144,6 +152,38 @@ func render(providers []Provider, now time.Time, color bool, warnings map[string
 		if !active[key] {
 			delete(warnings, key)
 		}
+	}
+	return output.String()
+}
+
+func displayName(name string) string {
+	if strings.EqualFold(name, "Codex") {
+		return "ChatGPT"
+	}
+	if strings.EqualFold(name, "OpenCodeGo") {
+		return "OpenCode Go"
+	}
+	return name
+}
+
+// renderNoAccounts lists how to sign in to each enabled provider when the
+// server has found no account for any of them.
+func renderNoAccounts(providers []Provider) string {
+	var output strings.Builder
+	output.WriteString("No provider sign-ins found yet. Sign in to one of these and it appears here:\n")
+	for _, provider := range providers {
+		var hints []string
+		if provider.Auth != nil && provider.Auth.SignInCommand != nil {
+			hints = append(hints, "Run: "+terminalText(*provider.Auth.SignInCommand))
+		}
+		if provider.Auth != nil && provider.Auth.SignInURL != nil {
+			hints = append(hints, "Sign in: "+terminalText(*provider.Auth.SignInURL))
+		}
+		line := "  " + terminalText(displayName(provider.ProviderName))
+		if len(hints) > 0 {
+			line = fmt.Sprintf("  %-12s %s", terminalText(displayName(provider.ProviderName)), strings.Join(hints, " · "))
+		}
+		output.WriteString(line + "\n")
 	}
 	return output.String()
 }

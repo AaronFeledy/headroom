@@ -28,4 +28,7 @@ QVariantMap concern(const QString &provider, const QVariantMap &bucket,
 QString displayName(const QString &provider);
 QString providerType(const QVariantMap &provider);
 QString rowKey(const QVariantMap &row);
+// True only for an explicit account_presence "absent". A missing field or any
+// other value keeps the row visible for forward compatibility.
+bool isAbsent(const QVariantMap &row);
 }

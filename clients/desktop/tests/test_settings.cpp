@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QStandardPaths>
@@ -516,6 +517,45 @@ private slots:
         SettingsService retry({}, true, SettingsService::Platform::Windows, legacy, target, dir.filePath("absent-previous.json"));
         QVERIFY(retry.importedLegacy());
         QCOMPARE(readFile(retry.legacyBackupPath()), backup);
+    }
+    void hiddenProvidersRoundTripAndKeepUnrelatedKeys() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"connectionMode\":\"local\",\"custom\":{\"keep\":true}}")));
+        SettingsService service(path, false);
+        QVERIFY(service.value().hiddenProviders.isEmpty());
+        QVERIFY(service.saveHiddenProviders({"Claude:work", "Cursor"}).isEmpty());
+        SettingsService reopened(path, false);
+        QCOMPARE(reopened.value().hiddenProviders, (QStringList{"Claude:work", "Cursor"}));
+        QCOMPARE(readObject(path).value("custom").toObject().value("keep").toBool(), true);
+        // Other saves preserve the list, and showing the last card removes the key.
+        QVERIFY(SettingsService(path, false).saveWindowSize(QSize(900, 700)).isEmpty());
+        QCOMPARE(readObject(path).value("hiddenProviders").toArray().size(), 2);
+        QVERIFY(SettingsService(path, false).saveHiddenProviders({}).isEmpty());
+        QVERIFY(!readObject(path).contains("hiddenProviders"));
+        QVERIFY(readObject(path).contains("custom"));
+    }
+
+    void invalidHiddenProvidersAreIgnoredAndBounded() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        QStringList values{QString(129, 'a'), "Bad\nKey", " Good ", "Good", "Good", ""};
+        for (int i = 0; i < 70; ++i) values.append(QString("Account %1").arg(i));
+        QVERIFY(writeFile(path, QJsonDocument(QJsonObject{{"connectionMode", "local"},
+            {"hiddenProviders", QJsonArray::fromStringList(values)}}).toJson()));
+        SettingsService service(path, false);
+        QVERIFY(service.loadError().isEmpty());
+        QCOMPARE(service.value().hiddenProviders.size(), 64);
+        QCOMPARE(service.value().hiddenProviders.first(), QString("Good"));
+        QVERIFY(!service.value().hiddenProviders.contains(QString(129, 'a')));
+        QVERIFY(!service.value().hiddenProviders.contains("Bad\nKey"));
+        // Non-string entries and a non-array value never hide anything.
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"connectionMode\":\"local\",\"hiddenProviders\":[\"Claude\",7,null]}")));
+        SettingsService mixed(path, false);
+        QCOMPARE(mixed.value().hiddenProviders, QStringList{"Claude"});
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"connectionMode\":\"local\",\"hiddenProviders\":\"Claude\"}")));
+        SettingsService malformed(path, false);
+        QVERIFY(malformed.value().hiddenProviders.isEmpty());
     }
 };
 

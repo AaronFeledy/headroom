@@ -7,6 +7,10 @@ QtObject {
     readonly property bool reducedMotion: reducedMotionOverride
         || Application.styleHints.accessibility.motionPreference === Qt.MotionPreference.ReducedMotion
     readonly property int windowRadius: 16
+    // A generic "monospace" family makes macOS and Windows build font aliases
+    // (about 600 ms) at the first command chip, so name an installed font there.
+    readonly property string monospaceFamily: Qt.platform.os === "osx" ? "Menlo"
+        : Qt.platform.os === "windows" ? "Consolas" : "monospace"
     // Dracula palette: https://draculatheme.com/contribute
     readonly property color background: "#282a36"
     readonly property color surface: "#303341"

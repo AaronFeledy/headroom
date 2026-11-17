@@ -26,6 +26,11 @@ class Controller : public QObject {
     // Dashboard model: raw providers, except that a transiently failed provider
     // may carry its last successful reading as clearly labelled stale meters.
     Q_PROPERTY(QVariantList displayProviders READ displayProviders NOTIFY providersChanged)
+    // Rows with a found sign-in that the user has not hidden, in saved order.
+    Q_PROPERTY(QVariantList visibleProviders READ visibleProviders NOTIFY providersChanged)
+    // Display-ready status for every reported row, including absent and hidden
+    // ones. Settings and the empty state share this one composition.
+    Q_PROPERTY(QVariantList providerStatus READ providerStatus NOTIFY providersChanged)
     Q_PROPERTY(QVariantMap refreshStatus READ refreshStatus NOTIFY refreshStatusChanged)
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
@@ -45,6 +50,8 @@ public:
     // credentials, and reset eligibility. Never carries stale readings.
     QVariantList providers() const;
     QVariantList displayProviders() const;
+    QVariantList visibleProviders() const;
+    QVariantList providerStatus() const;
     QVariantMap refreshStatus() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -113,6 +120,9 @@ public:
     Q_INVOKABLE QString countdown(const QString &timestamp) const;
     Q_INVOKABLE QString resetTimeLabel(const QString &timestamp) const;
     Q_INVOKABLE void setPrimary(const QString &name);
+    // Only a row whose auth state is signed_out or expired may be hidden.
+    Q_INVOKABLE bool hideProvider(const QString &name);
+    Q_INVOKABLE bool showProvider(const QString &name);
     Q_INVOKABLE void copyText(const QString &text);
     QString primary() const;
     QString trayProvider() const;
@@ -166,6 +176,7 @@ private:
     void invalidateConnection();
     void markBackendUnavailable(bool outage, const QString &message = {});
     void retainReadings(const QVariantList &providers, bool removeMissing);
+    void restoreSignedInProviders();
     bool transientRecoveryActive() const;
     void syncConnection();
     void verifyRemote(bool upgrade);

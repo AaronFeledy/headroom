@@ -17,6 +17,7 @@ func Test_Claude_reset_state_uses_stable_default_config_base(t *testing.T) {
 			}
 			want := filepath.Join(filepath.Dir(defaultPath), "claude-reset-state")
 			wantAutomation := filepath.Join(filepath.Dir(defaultPath), "reset-automation")
+			wantPresence := filepath.Join(filepath.Dir(defaultPath), "provider-presence")
 			for _, args := range [][]string{
 				{},
 				{"--config", filepath.Join(home, "other", "config.yaml"), "--listen-addr", "127.0.0.1:9944", "--auth-token", "fixture"},
@@ -27,6 +28,9 @@ func Test_Claude_reset_state_uses_stable_default_config_base(t *testing.T) {
 				}
 				if cfg.ResetAutomationDir != wantAutomation {
 					t.Fatalf("automation directory=%q, want %q", cfg.ResetAutomationDir, wantAutomation)
+				}
+				if cfg.ProviderPresenceDir != wantPresence {
+					t.Fatalf("presence directory=%q, want %q", cfg.ProviderPresenceDir, wantPresence)
 				}
 			}
 		})

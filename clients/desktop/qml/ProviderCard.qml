@@ -20,6 +20,9 @@ Rectangle {
     readonly property string readingAge: { card.clock; return backend.readingAgeLabel(provider.last_reading_at || 0) }
     readonly property var loginCopy: { backend.settings; return backend.loginCopy(provider) }
     readonly property bool hasAuthCopy: !!loginCopy.title
+    // Only a lost sign-in may be hidden; the sign-in copy already explains it.
+    readonly property string authState: (provider.auth && provider.auth.state) || ""
+    readonly property bool signInCard: authState === "signed_out" || authState === "expired"
     readonly property bool cursorLoginRequired: failed && providerType === "Cursor"
         && !hasAuthCopy
         && (provider.needs_reauth || (provider.error || "").startsWith("Log in to cursor.com"))
@@ -460,6 +463,14 @@ Rectangle {
                 visible: card.hasAuthCopy && (!!card.loginCopy.command || !!card.loginCopy.url)
                 ActionButton { objectName: "providerCopyCommand_" + card.name; visible: !!card.loginCopy.command; text: "Copy command"; Accessible.name: "Copy command"; onClicked: backend.copyText(card.loginCopy.command) }
                 ActionButton { objectName: "providerOpenLogin_" + card.name; visible: !!card.loginCopy.url; text: "Open cursor.com"; Accessible.name: "Open cursor.com"; onClicked: Qt.openUrlExternally(card.loginCopy.url) }
+            }
+            ActionButton {
+                objectName: "providerHide_" + card.name
+                visible: card.signInCard
+                text: "Hide card"; quiet: true
+                Accessible.name: "Hide card"
+                Accessible.description: "Hide this card until you sign in again"
+                onClicked: backend.hideProvider(card.name)
             }
         }
     }

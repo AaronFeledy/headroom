@@ -69,8 +69,10 @@ with the same credentials. The usage, pace marker, and meter details stay frozen
 until a successful reading returns; stale meters do not pulse.
 
 Other unavailable readings show an empty muted ring and a status: **Offline**, **Sign in**,
-**Retrying**, **No data**, **Disabled**, or **No meter**. If the CLI reports an
-offline connection, the key hides cached usage.
+**Not found**, **Retrying**, **No data**, **Disabled**, or **No meter**. **Not found**
+means the server has never found a sign-in for that provider; **Sign in** means
+a sign-in it found has expired or was removed. If the CLI reports an offline
+connection, the key hides cached usage.
 **Setup** means the CLI could not be found or its path is invalid. A warning
 triangle after a press means the desktop launch failed. Open Headroom for
 connection and sign-in details.

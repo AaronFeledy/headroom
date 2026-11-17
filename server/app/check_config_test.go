@@ -66,3 +66,39 @@ func Test_Run_check_config_validates_without_starting(t *testing.T) {
 		})
 	}
 }
+
+func Test_Run_check_config_creates_no_provider_presence_state(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("listen_addr: 127.0.0.1:7823\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defaultPath, err := config.DefaultPath(runtime.GOOS, []string{"HOME=" + home, "USERPROFILE=" + home, "APPDATA=" + home, "XDG_CONFIG_HOME=" + home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir := filepath.Join(filepath.Dir(defaultPath), "provider-presence")
+	var output bytes.Buffer
+
+	err = runContext(context.Background(), []string{"--check-config", "--config", path}, nil, discardLogger(), desktopSessionOptions{
+		output: &output, homeDir: home,
+		listen: func(string, string) (net.Listener, error) {
+			t.Error("check-config attempted to listen")
+			return nil, errors.New("unexpected listen")
+		},
+		ready: func(Ready) error {
+			t.Error("check-config acknowledged a server start")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("check-config error = %v", err)
+	}
+	if _, err := os.Stat(wantDir); !os.IsNotExist(err) {
+		t.Fatalf("check-config created %s: %v", wantDir, err)
+	}
+}

@@ -73,8 +73,10 @@ startup needs attention. Settings and provider sign-ins are retained.
    server or starts its bundled server automatically. No server setup is needed
    for the usual desktop installation.
 3. **Check your sign-ins.** Headroom reads existing provider credentials on the
-   computer running the server. If a provider needs attention, follow its sign-in
-   prompt; run any suggested command yourself on that computer.
+   computer running the server and shows a card for each provider it finds a
+   sign-in for. Sign in to another supported provider and its card appears on
+   its own. If a provider needs attention, follow its sign-in prompt; run any
+   suggested command yourself on that computer.
 
 | Provider | Where Headroom looks for a sign-in |
 | --- | --- |

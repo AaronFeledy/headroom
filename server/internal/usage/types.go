@@ -107,6 +107,7 @@ type UsageData struct {
 	FetchFailure          *FetchFailure `json:"-"`
 	CredentialEpoch       *string       `json:"-"`
 	Auth                  Auth
+	AccountPresence       string // computed by the poller; blank means unknown
 	ProviderName          string
 	ProviderType          string
 	Account               *Account
@@ -225,6 +226,7 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 		IsSuccess             bool                   `json:"is_success"`
 		RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 		Auth                  Auth                   `json:"auth"`
+		AccountPresence       string                 `json:"account_presence"`
 		UsageDetails          *UsageDetails          `json:"usage_details"`
 		ResetAutomation       *ResetAutomationState  `json:"reset_automation"`
 	}
@@ -249,9 +251,17 @@ func (d UsageData) MarshalJSON() ([]byte, error) {
 			auth.SignInCommand = nil
 		}
 	}
+	presence := d.AccountPresence
+	if presence != PresencePresent && presence != PresenceAbsent {
+		presence = PresenceAbsent
+		if d.AccountEvidence() {
+			presence = PresencePresent
+		}
+	}
 	return json.Marshal(usageJSON{
 		FetchStatus:           d.FetchStatus,
 		Auth:                  auth,
+		AccountPresence:       presence,
 		ProviderName:          d.ProviderName,
 		ProviderType:          providerType,
 		Account:               d.Account,

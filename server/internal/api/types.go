@@ -77,9 +77,10 @@ type healthResponse struct {
 }
 
 type providerHealth struct {
-	Name      string  `json:"name"`
-	OK        bool    `json:"ok"`
-	FetchedAt *string `json:"fetched_at"`
+	Name            string  `json:"name"`
+	OK              bool    `json:"ok"`
+	FetchedAt       *string `json:"fetched_at"`
+	AccountPresence string  `json:"account_presence"`
 }
 
 type errorResponse struct {

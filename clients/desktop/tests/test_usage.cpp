@@ -2113,6 +2113,34 @@ private slots:
                               SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
         QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
     }
+    void accountPresenceParsesAndDefaultsToPresent() {
+        auto data = QJsonDocument::fromJson(TestUsage::snapshot()).array();
+        auto absent = data[0].toObject(); absent["account_presence"] = "absent"; data[0] = absent;
+        auto present = data[1].toObject(); present["account_presence"] = "present"; data[1] = present;
+        auto wrongType = data[2].toObject(); wrongType["account_presence"] = 7; data[2] = wrongType;
+        // The fourth row omits the additive field like an older server.
+        QVariantList providers;
+        QVERIFY(Usage::parse(QJsonDocument(data).toJson(), providers));
+        QCOMPARE(providers.size(), 4);
+        const auto row = [&](const QString &name) {
+            for (const auto &value : providers)
+                if (value.toMap()["provider_name"].toString() == name) return value.toMap();
+            return QVariantMap{};
+        };
+        QVERIFY(Usage::isAbsent(row("Claude")));
+        QCOMPARE(row("Claude")["account_presence"].toString(), QString("absent"));
+        QVERIFY(!Usage::isAbsent(row("Codex")));
+        QCOMPARE(row("Codex")["account_presence"].toString(), QString("present"));
+        // A non-string value cannot reject the snapshot and stays visible.
+        QVERIFY(!Usage::isAbsent(row("Cursor")));
+        QCOMPARE(row("Cursor")["account_presence"].toString(), QString("present"));
+        QVERIFY(!Usage::isAbsent(row("Grok")));
+        QCOMPARE(row("Grok")["account_presence"].toString(), QString("present"));
+        QVERIFY(!Usage::isAbsent(QVariantMap{}));
+        QVERIFY(!Usage::isAbsent(QVariantMap{{"account_presence", QVariant()}}));
+        QVERIFY(!Usage::isAbsent(QVariantMap{{"account_presence", true}}));
+        QVERIFY(Usage::isAbsent(QVariantMap{{"account_presence", QString("absent")}}));
+    }
 };
 QTEST_GUILESS_MAIN(UsageTest)
 #include "test_usage.moc"
