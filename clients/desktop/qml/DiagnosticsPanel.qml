@@ -31,7 +31,7 @@ Popup {
                     property var entries: backend.diagnostics
                     onEntriesChanged: text = backend.diagnosticText()
                     readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
-                    color: Theme.foreground; font.family: "monospace"; font.pixelSize: 11
+                    color: Theme.foreground; font.family: Theme.monospaceFamily; font.pixelSize: 11
                     background: null
                     placeholderText: "No events recorded."; placeholderTextColor: Theme.muted
                     Accessible.name: "Diagnostic events"

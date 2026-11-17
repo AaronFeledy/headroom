@@ -327,7 +327,7 @@ ApplicationWindow {
                                                     objectName: "emptyProviderCommand_" + modelData.provider_name
                                                     anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
                                                     text: modelData.command; textFormat: Text.PlainText
-                                                    color: Theme.muted; font.family: "monospace"; font.pixelSize: 11
+                                                    color: Theme.muted; font.family: Theme.monospaceFamily; font.pixelSize: 11
                                                     elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
                                                 }
                                             }
